@@ -462,6 +462,8 @@ class postman(BaseHTTPRequestHandler):
       if 'hash' in post_vars:
         if self.origin.fast_uploads == True:
           # get file looking by file_name
+          if file_name not in self.origin.temp_file_obj:
+            self.origin.temp_file_obj[file_name] = ['', '']
           f.write(self.origin.temp_file_obj[file_name][0].replace('\r', ''))
           del self.origin.temp_file_obj[file_name]
           self.cleanup_uploads()
