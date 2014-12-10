@@ -1,21 +1,22 @@
 #!/usr/bin/python
 
-import time
-import random
-import string
-from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer
-from urllib import unquote
-from cgi import FieldStorage
-from hashlib import sha1, sha512
-from binascii import hexlify, unhexlify
-from datetime import datetime
-import os
-import threading
-import sqlite3
-import socket
-import nacl.signing
 import codecs
+import os
+import random
 import re
+import socket
+import sqlite3
+import string
+import threading
+import time
+from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer
+from binascii import hexlify, unhexlify
+from cgi import FieldStorage
+from datetime import datetime
+from hashlib import sha1, sha512
+from urllib import unquote
+
+import nacl.signing
 
 
 class censor(BaseHTTPRequestHandler):

@@ -1,24 +1,24 @@
 #!/usr/bin/python
+import codecs
 import os
 import sqlite3
-import time
 import threading
-from hashlib import sha1
+import time
+import traceback
+from calendar import timegm
 from datetime import datetime, timedelta
 from email.utils import parsedate_tz
-from calendar import timegm
-from pygments import highlight
-from pygments.formatters import HtmlFormatter
-from pygments.lexers import guess_lexer, guess_lexer_for_filename, get_lexer_by_name, ClassNotFound
-import codecs
-import traceback
+from hashlib import sha1
 
 if __name__ == '__main__':
-  import signal
   import fcntl
+  import signal
 else:
   import Queue
 
+from pygments import highlight
+from pygments.formatters import HtmlFormatter
+from pygments.lexers import guess_lexer, guess_lexer_for_filename, get_lexer_by_name, ClassNotFound
 
 class main(threading.Thread):
   

@@ -1,11 +1,11 @@
 #!/usr/bin/python
-from datetime import datetime
-import threading
-import string
-import Queue
 import json
-import time
+import Queue
+import string
 import sys
+import threading
+import time
+from datetime import datetime
 
 loglevel_all = (0, 1, 2, 3, 4, 5)
 loglevel_names = (

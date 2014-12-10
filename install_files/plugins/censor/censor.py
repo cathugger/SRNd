@@ -1,18 +1,20 @@
 #!/usr/bin/python
 
-from hashlib import sha512
+import os
+import Queue
+import sqlite3
+import threading
 import time
+import traceback
+from binascii import unhexlify
+from calendar import timegm
 from datetime import datetime, timedelta
 from email.utils import parsedate_tz
-from calendar import timegm
-from binascii import unhexlify
-import os
-import threading
-import sqlite3
+from hashlib import sha512
+
 import nacl.signing
-import Queue
+
 import censor_httpd
-import traceback
 
 class main(threading.Thread):
 

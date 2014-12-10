@@ -1,15 +1,16 @@
 #!/usr/bin/python
-import socket
-import sockssocket
+import os
+import Queue
+import random
 import select
+import socket
+import sqlite3
+import string
 import threading
 import time
-import os
-import sqlite3
-import random
-import string
-import Queue
 import traceback
+
+import sockssocket
 
 # send article:
 # f = open(os.path.join('invalid', item), 'r')

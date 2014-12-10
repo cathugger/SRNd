@@ -1,13 +1,13 @@
 #!/usr/bin/python
 
 import os
-import time
+import platform
 import signal
 import threading
-import platform
+import time
 
-import SRNd
 import logger
+import SRNd
 
 log_targets = (
   { 'target':   'stderr',
