@@ -3,10 +3,8 @@ import threading
 import sqlite3
 import os
 import time
-import codecs
 import random
 import string
-import signal
 from hashlib import sha1
 
 class dropper(threading.Thread):
@@ -179,7 +177,6 @@ class dropper(threading.Thread):
       if self.debug > 0: print "[dropper] trying to fix by moving old file to articles/invalid so new article can be processed correctly."
       os.rename(link, os.path.join('articles', 'invalid', message_id))
     if self.debug > 3: print "[dropper] writing to", link
-    #f = codecs.open(link, 'w', 'UTF-8')
     f = open(link, 'w')
     for index in xrange(0, len(additional_headers)):
       f.write(additional_headers[index])
@@ -272,4 +269,3 @@ class dropper(threading.Thread):
     self.running = True
     while self.running:
       time.sleep(5)
-      #signal.pause()

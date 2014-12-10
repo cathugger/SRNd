@@ -18,9 +18,7 @@ if __name__ == '__main__':
   import fcntl
 else:
   import Queue
-  from pygments.lexers import *
-  from pygments.lexers._phpbuiltins import MODULES
-  #from pygments.lexers._lassobuiltins import BUILTINS
+
 
 class main(threading.Thread):
   

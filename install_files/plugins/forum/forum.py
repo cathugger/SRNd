@@ -4,11 +4,9 @@ import time
 from datetime import datetime, timedelta
 from email.utils import parsedate_tz
 from calendar import timegm
-import random
 import string
 import os
 import threading
-import urllib
 from hashlib import sha1, sha512
 from email.feedparser import FeedParser
 import Image
@@ -581,8 +579,6 @@ class main(threading.Thread):
 
   def parse_message(self, message_id, fd):
     self.log(self.logger.INFO, 'new message: %s' % message_id)
-    hash_message_uid = sha1(message_id).hexdigest()
-    identifier = hash_message_uid[:10]
     subject = 'None'
     sent = 0
     sender = 'Anonymous'

@@ -5,7 +5,6 @@ import time
 import socket
 import pwd
 import threading
-import sqlite3
 import random
 from distutils.dir_util import copy_tree
 import traceback
@@ -49,7 +48,7 @@ class SRNd(threading.Thread):
     # install / update plugins
     self.log(self.logger.INFO, "installing / updating plugins")
     for directory in os.listdir('install_files'):
-      result = copy_tree(os.path.join('install_files', directory), os.path.join(self.data_dir, directory), preserve_times=True, update=True)
+      copy_tree(os.path.join('install_files', directory), os.path.join(self.data_dir, directory), preserve_times=True, update=True)
     if self.setuid != '':
       self.log(self.logger.INFO, "fixing plugin permissions")
       for directory in os.listdir(os.path.join(self.data_dir, 'plugins')):
@@ -482,7 +481,7 @@ class SRNd(threading.Thread):
               sync_on_startup = True
             elif lowerline.startswith('#start_param debug='):
               try:
-                debuglevel = int(lownerline.split('=')[1][0])
+                debuglevel = int(lowerline.split('=')[1][0])
               except:
                 pass
             elif lowerline.startswith('#start_param proxy_type='):
@@ -697,7 +696,7 @@ class SRNd(threading.Thread):
                   else:
                     self.log(self.logger.WARNING, 'unknown plugin detected. wtf? %s' % name)
                 else:
-                  self.log(self.logger.WARNING, 'unknown hook detected. wtf? %s' % hook)
+                  self.log(self.logger.WARNING, 'unknown hook detected. wtf? %s' % current_hook)
         # got all whitelist matching hooks for current group which are not matched by blacklist as well in current_sync_targets. hopefully.
         if len(current_sync_targets) > 0:
           # send fresh articles first
@@ -732,7 +731,7 @@ class SRNd(threading.Thread):
               elif current_hook.startswith('plugin-'):
                 self.plugins[current_hook].add_article(message_id)
               else:
-                self.log(self.logger.WARNING, 'unknown sync_hook detected. wtf? %s' % hook)
+                self.log(self.logger.WARNING, 'unknown sync_hook detected. wtf? %s' % current_hook)
           del synclist[group]['file_list'][:500]
       for group in empty_sync_group:
         del synclist[group]

@@ -3,11 +3,9 @@
 import time
 import random
 import string
-import urllib
 from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer
 from urllib import unquote
 from cgi import FieldStorage
-import base64
 from hashlib import sha1, sha512
 from binascii import hexlify, unhexlify
 from datetime import datetime
@@ -18,8 +16,7 @@ import socket
 import nacl.signing
 import codecs
 import re
-if __name__ == '__main__':
-  import nntplib
+
 
 class censor(BaseHTTPRequestHandler):
 
@@ -789,7 +786,7 @@ class censor(BaseHTTPRequestHandler):
     )
     
     if 'secret' not in post_vars:
-      self.die('local moderation request: %s not in post_vars' % item)
+      self.die('local moderation request: secret not in post_vars')
       return
     secret = post_vars['secret'].value
     if len(secret) != 64:

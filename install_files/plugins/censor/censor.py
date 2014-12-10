@@ -1,6 +1,6 @@
 #!/usr/bin/python
 
-from hashlib import sha1, sha512
+from hashlib import sha512
 import time
 from datetime import datetime, timedelta
 from email.utils import parsedate_tz
@@ -10,10 +10,8 @@ import os
 import threading
 import sqlite3
 import nacl.signing
-from hashlib import sha512
 import Queue
 import censor_httpd
-import sys
 import traceback
 
 class main(threading.Thread):

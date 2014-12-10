@@ -3,7 +3,6 @@
 import time
 import random
 import string
-import urllib
 from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer
 from urllib import unquote
 from cgi import FieldStorage
@@ -20,8 +19,7 @@ import re
 import Image, ImageDraw, ImageFilter, ImageFont
 import cStringIO
 import traceback
-if __name__ == '__main__':
-  import nntplib
+
 
 class postman(BaseHTTPRequestHandler):
 
