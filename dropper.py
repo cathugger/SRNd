@@ -212,7 +212,7 @@ class dropper(threading.Thread):
             group_id = int(self.sqlite.execute('SELECT group_id FROM groups WHERE group_name = ?', (group,)).fetchone()[0])
         except TypeError, e:
             if self.debug > 1:
-                print "[dropper] unable to get group_id for group", group
+                print "[dropper] unable to get group_id for group" % group
                 sys.exit(1)
         try:
           article_id = int(self.sqlite.execute('SELECT article_id FROM articles WHERE message_id = ? AND group_id = ?', (message_id, group_id)).fetchone()[0])
