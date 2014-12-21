@@ -338,7 +338,7 @@ class censor(BaseHTTPRequestHandler):
     flags = self.origin.sqlite_overchan.execute("SELECT flag_name, flag FROM flags").fetchall()
     cur_template = self.origin.template_log_flagnames
     flagset_template = self.origin.template_modify_key_flagset
-    out = self.origin.template_modify_board.replace("%%board_id%%", str(row[0])).replace("%%board%%", row[1])
+    form_data = dict()
     flaglist = list()
     counter = 0
     for flag in flags:
@@ -355,9 +355,11 @@ class censor(BaseHTTPRequestHandler):
       else:
         cur_template += "&nbsp;"
       flaglist.append(cur_template)
-    out = out.replace("%%modify_key_flagset%%", "".join(flaglist))
+    form_data['board_id'] = str(row[0])
+    form_data['board'] = row[1]
+    form_data['modify_key_flagset'] = ''.join(flaglist)
     del flaglist[:]
-    return out
+    return self.origin.t_engine_modify_board.substitute(form_data)
 
   def send_keys(self):
     out = self.origin.template_keys
@@ -1086,7 +1088,7 @@ class censor_httpd(threading.Thread):
     self.httpd.template_settings_lst = f.read()
     f.close()
     f = open(os.path.join(template_directory, 'modify_board.tmpl'), 'r')
-    self.httpd.template_modify_board = f.read()
+    self.httpd.t_engine_modify_board  = string.Template(f.read())
     f.close()
     f = open(os.path.join(template_directory, 'stats.tmpl'), 'r')
     self.httpd.t_engine_stats = string.Template(f.read())

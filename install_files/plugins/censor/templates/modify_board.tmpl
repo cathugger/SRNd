@@ -1,15 +1,15 @@
-      <form action="settings?%%board_id%%" enctype="multipart/form-data" method="POST" style="text-align: center;">
+      <form action="settings?${board_id}" enctype="multipart/form-data" method="POST" style="text-align: center;">
         <table class="datatable">
           <tr>
             <th align="right">ID</th>
-            <td>%%board_id%%</td>
+            <td>${board_id}</td>
           </tr>
           <tr>
             <th align="right">Board name</th>
-            <td>%%board%%</td>
+            <td>${board}</td>
           <tr>
             <th align="right">flags</th>
-            <td>%%modify_key_flagset%%</td>
+            <td>${modify_key_flagset}</td>
           </tr>
           <tr>
             <td>&nbsp;</td>
