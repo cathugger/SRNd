@@ -882,12 +882,14 @@ class censor(BaseHTTPRequestHandler):
       flags_available = int(self.origin.sqlite_censor.execute("SELECT flags FROM keys WHERE key=?", (pubkey,)).fetchone()[0])
       flag_delete = int(self.origin.sqlite_censor.execute('SELECT flag FROM commands WHERE command="delete"').fetchone()[0])
       flag_delete_a = int(self.origin.sqlite_censor.execute('SELECT flag FROM commands WHERE command="overchan-delete-attachment"').fetchone()[0])
+      flag_sticky = int(self.origin.sqlite_censor.execute('SELECT flag FROM commands WHERE command="overchan-sticky"').fetchone()[0])
     except Exception as e:
       self.die('local moderation request: invalid secret key received: %s' % e)
       return
-    if ((flags_available & flag_delete) != flag_delete) and ((flags_available & flag_delete_a) != flag_delete_a):
+    if ((flags_available & flag_delete) != flag_delete) and ((flags_available & flag_delete_a) != flag_delete_a) and ((flags_available & flag_sticky) != flag_sticky):
       self.die('local moderation request: public key rejected, no flags required')
       return
+    local_cmd = False
     for key in ('purge', 'purge_root'):
       if key in post_vars:
         purges = post_vars.getlist(key)
@@ -917,8 +919,21 @@ class censor(BaseHTTPRequestHandler):
         except Exception as e:
           self.origin.log(self.origin.logger.WARNING, "local moderation request: could not find message_id for hash %s: %s" % (item, e))
           self.origin.log(self.origin.logger.WARNING, self.headers)
+    if 'sticky' in post_vars:
+      sticky_thread = post_vars.getlist('sticky')
+      for item in sticky_thread:
+        try:
+          #lines.append("overchan-sticky %s" % self.__get_message_id_by_hash(item)) #only local
+          self.origin.censor.add_article((pubkey, "overchan-sticky {0}#sticky\unsticky thread request".format(self.__get_message_id_by_hash(item))), "httpd")
+          local_cmd = True
+        except Exception as e:
+          self.origin.log(self.origin.logger.WARNING, "local moderation request: could not find message_id for hash %s: %s" % (item, e))
+          self.origin.log(self.origin.logger.WARNING, self.headers)
     if len(lines) == 0:
-      self.die('local moderation request: nothing to do')
+      if local_cmd:
+        self.send_redirect(target, 'moderation request received. will redirect you in a moment.', 2)
+      else:
+        self.die('local moderation request: nothing to do')
       return
     #remove duplicates
     lines = list(set(lines))

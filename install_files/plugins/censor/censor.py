@@ -552,7 +552,11 @@ class main(threading.Thread):
     return (group_name, (group_name,))
 
   def handle_sticky(self, line):
-    self.log(self.logger.DEBUG, "got sticky request: %s" % line)
+    message_id = line.split(' ')[1]
+    groups = list()
+    for row in self.overchandb.execute('SELECT groups.group_name from articles, groups WHERE articles.article_uid = ? and groups.group_id = articles.group_id', (message_id,)).fetchall():
+      groups.append(row[0])
+    return (message_id, groups)
 
 if __name__ == '__main__':
   print "[%s] %s" % ("censor", "this plugin can't run as standalone version.")
