@@ -363,7 +363,7 @@ class main(threading.Thread):
     self.past_init()
     return True
 
-  def gen_thumbs(self, *sources):
+  def gen_template_thumbs(self, *sources):
     for source in sources:
       link = os.path.join(self.output_directory, 'thumbs', source)
       if not os.path.exists(link):
@@ -408,7 +408,7 @@ class main(threading.Thread):
     # ^ softlinks not gonna work because of nginx chroot
     # ^ => cp
     self.copy_out((self.css_file, 'styles.css'),('user.css', 'user.css'),(self.no_file, os.path.join('img', self.no_file)),('suicide.txt', 'suicide.txt'),)
-    self.gen_thumbs(self.invalid_file, self.document_file, self.audio_file, self.webm_file, self.no_file)
+    self.gen_template_thumbs(self.invalid_file, self.document_file, self.audio_file, self.webm_file, self.no_file)
 
     self.regenerate_boards = list()
     self.regenerate_threads = list()
@@ -907,6 +907,33 @@ class main(threading.Thread):
       f.close()
     return True
 
+  def gen_thumb(self, target, imagehash):
+    if target.split('.')[-1].lower() == 'gif' and os.path.getsize(target) < (128 * 1024 + 1):
+      thumb_name = imagehash + '.gif'
+      thumb_link = os.path.join(self.output_directory, 'thumbs', thumb_name)
+      o = open(thumb_link, 'w')
+      i = open(target, 'r')
+      o.write(i.read())
+      o.close()
+      i.close()
+      return thumb_name
+    thumb = Image.open(target)
+    modifier = float(180) / thumb.size[0]
+    x = int(thumb.size[0] * modifier)
+    y = int(thumb.size[1] * modifier)
+    self.log(self.logger.DEBUG, 'old image size: %ix%i, new image size: %ix%i' %  (thumb.size[0], thumb.size[1], x, y))
+    if thumb.mode == 'P': thumb = thumb.convert('RGBA')
+    if thumb.mode == 'RGBA' or thumb.mode == 'LA':
+      thumb_name = imagehash + '.png'
+    else:
+      thumb_name = imagehash + '.jpg'
+      thumb = thumb.convert('RGB')
+    thumb_link = os.path.join(self.output_directory, 'thumbs', thumb_name)
+    thumb = thumb.resize((x,y), Image.ANTIALIAS)
+    thumb.save(thumb_link, optimize=True)
+    return thumb_name
+
+
   def parse_message(self, message_id, fd):
     self.log(self.logger.INFO, 'new message: %s' % message_id)
     subject = 'None'
@@ -1037,42 +1064,11 @@ class main(threading.Thread):
           c.write(f.read())
           c.close()
           f.close()
-          if image_name_original.split('.')[-1].lower() == 'gif':
-            # copy to thumb directory with new filename
-            # FIXME: use relative link instead
-            thumb_link = os.path.join(self.output_directory, 'thumbs', image_name)
-            thumb_name = image_name
-            c = open(thumb_link, 'w')
-            f = open(tmp_link, 'r')
-            c.write(f.read())
-            c.close()
-            f.close()
-          else:
-            # create thumb, convert to RGB and use jpeg if no transparency involved, png if it is
-            try:
-              thumb = Image.open(out_link)
-              # always use width for modifier
-              modifier = float(180) / thumb.size[0]
-              #if thumb.size[0] > thumb.size[1]:
-              #  modifier = float(200) / thumb.size[0]
-              #else:
-              #  modifier = float(200) / thumb.size[1]
-              x = int(thumb.size[0] * modifier)
-              y = int(thumb.size[1] * modifier)
-              self.log(self.logger.DEBUG, 'old image size: %ix%i, new image size: %ix%i' %  (thumb.size[0], thumb.size[1], x, y))
-              if thumb.mode == 'RGBA' or thumb.mode == 'LA':
-                thumb_name = imagehash + '.png'
-              else:
-                thumb = thumb.convert('RGB')
-                thumb_name = imagehash + '.jpg'
-              thumb_link = os.path.join(self.output_directory, 'thumbs', thumb_name)
-              thumb = thumb.resize((x,y), Image.ANTIALIAS)
-              #thumb.thumbnail((200, 200), Image.ANTIALIAS)
-              thumb.save(thumb_link, optimize=True)
-              del thumb
-            except Exception as e:
-              self.log(e, 3)
-              thumb_name = 'invalid'
+          try:
+            thumb_name = self.gen_thumb(out_link, imagehash)
+          except Exception as e:
+            thumb_name = 'invalid'
+            self.log(e, 3)
           os.remove(tmp_link)
           #os.rename('tmp/tmpImage', 'html/img/' + imagelink) # damn remote file systems and stuff
         elif part.get_content_type().lower() in ('application/pdf', 'application/postscript', 'application/ps'):
