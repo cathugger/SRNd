@@ -449,11 +449,11 @@ class censor(BaseHTTPRequestHandler):
         cur_template = cur_template.replace("%%postid%%", data)
         cur_template = cur_template.replace("%%restore_link%%", '<a href="modify?%s">modify key</a>' % (row[3]))
         cur_template = cur_template.replace("%%delete_link%%", '')
-      elif row[2] == 'overchan-board-mod':
+      elif row[2] in ('overchan-board-mod', 'overchan-board-add', 'overchan-board-del'):
         cur_template = cur_template.replace("%%postid%%", data)
         cur_template = cur_template.replace("%%restore_link%%", '<a href="settings?name=%s">modify board</a>' % (row[3]))
         cur_template = cur_template.replace("%%delete_link%%", '')
-      elif row[2] != 'delete' and row[2] != 'overchan-delete-attachment':
+      elif row[2] not in ('delete', 'overchan-delete-attachment', 'overchan-sticky'):
         cur_template = cur_template.replace("%%postid%%", data)
         cur_template = cur_template.replace("%%restore_link%%", '').replace("%%delete_link%%", '')
       else:
@@ -461,7 +461,7 @@ class censor(BaseHTTPRequestHandler):
         try:
           if os.stat(os.path.join('articles', 'censored', row[3])).st_size > 0:
             cur_template = cur_template.replace("%%postid%%", '<a href="showmessage?%s" target="_blank">%s</a>' % (message_id, data))
-            if row[2] == 'delete' or row[2] == 'overchan-delete-attachment':
+            if row[2] in ('delete', 'overchan-delete-attachment'):
               cur_template = cur_template.replace("%%restore_link%%", '<a href="restore?%s">restore</a>&nbsp;' % message_id)
             else:
               cur_template = cur_template.replace("%%restore_link%%", '')
@@ -470,17 +470,19 @@ class censor(BaseHTTPRequestHandler):
             cur_template = cur_template.replace("%%postid%%", data)
             cur_template = cur_template.replace("%%restore_link%%", '').replace("%%delete_link%%", '')
         except:
+          cur_template = cur_template.replace("%%postid%%", data)
+          cur_template = cur_template.replace("%%delete_link%%", '')
           if os.path.isfile(os.path.join('articles', row[3])):
-            cur_template = cur_template.replace("%%postid%%", data)
             item_row = self.origin.sqlite_overchan.execute('SELECT parent FROM articles WHERE article_uid = ?', (row[3],)).fetchone()
             if item_row:
               if item_row[0] == '':
-                cur_template = cur_template.replace("%%restore_link%%", '<a href="/thread-%s.html" target="_blank">restored</a>&nbsp;' % sha1(row[3]).hexdigest()[:10])
+                cur_template = cur_template.replace("%%restore_link%%", '<a href="/thread-%s.html" target="_blank">view thread</a>&nbsp;' % sha1(row[3]).hexdigest()[:10])
               else:
-                cur_template = cur_template.replace("%%restore_link%%", '<a href="/thread-%s.html#%s" target="_blank">restored</a>&nbsp;' % (sha1(item_row[0]).hexdigest()[:10], sha1(row[3]).hexdigest()[:10]))
+                cur_template = cur_template.replace("%%restore_link%%", '<a href="/thread-%s.html#%s" target="_blank">view post</a>&nbsp;' % (sha1(item_row[0]).hexdigest()[:10], sha1(row[3]).hexdigest()[:10]))
             else:
               cur_template = cur_template.replace("%%restore_link%%", 'restored&nbsp;')
-            cur_template = cur_template.replace("%%delete_link%%", '')
+          else:
+            cur_template = cur_template.replace("%%restore_link%%", '')
       table.append(cur_template)
     out = out.replace("%%mod_accepted%%", "\n".join(table))
     del table[:]
