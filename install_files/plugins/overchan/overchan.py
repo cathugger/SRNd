@@ -1371,14 +1371,14 @@ class main(threading.Thread):
       author = data[1]
     if not single and len(data[4].split('\n')) > max_row:
       if father != '':
-        message = '\n'.join(data[4].split('\n')[:max_row]) + '\n[..] <a href="thread-%s.html#%s"><i>message too large</i></a>\n' % (father[:10], message_id_hash[:10])
+        message = '\n'.join(data[4].split('\n')[:max_row]) + '\n[..] <a href="thread-%s.html#%s"><i>message too large</i></a>' % (father[:10], message_id_hash[:10])
       else:
-        message = '\n'.join(data[4].split('\n')[:max_row]) + '\n[..] <a href="thread-%s.html"><i>message too large</i></a>\n' % message_id_hash[:10]
+        message = '\n'.join(data[4].split('\n')[:max_row]) + '\n[..] <a href="thread-%s.html"><i>message too large</i></a>' % message_id_hash[:10]
     elif not single and len(data[4]) > max_chars:
       if father != '':
-        message = data[4][:max_chars] + '\n[..] <a href="thread-%s.html#%s"><i>message too large</i></a>\n' % (father[:10], message_id_hash[:10])
+        message = data[4][:max_chars] + '\n[..] <a href="thread-%s.html#%s"><i>message too large</i></a>' % (father[:10], message_id_hash[:10])
       else:
-        message = data[4][:max_chars] + '\n[..] <a href="thread-%s.html"><i>message too large</i></a>\n' % message_id_hash[:10]
+        message = data[4][:max_chars] + '\n[..] <a href="thread-%s.html"><i>message too large</i></a>' % message_id_hash[:10]
     else:
       message = data[4]
     message = self.markup_parser(message)
@@ -1669,9 +1669,9 @@ class main(threading.Thread):
       news_board_link = '{0}-1.html'.format(news_board[1].replace('"', '').replace('/', '').split('.', 1)[1])
       parent = sha1(row[4]).hexdigest()[:10]
       if len(row[1].split('\n')) > 5:
-        message = '\n'.join(row[1].split('\n')[:5]) + '\n[..] <a href="thread-%s.html"><i>message too large</i></a>\n' % parent
+        message = '\n'.join(row[1].split('\n')[:5]) + '\n[..] <a href="thread-%s.html"><i>message too large</i></a>' % parent
       elif len(row[1]) > 1000:
-        message = row[1][:1000] + '\n[..] <a href="thread-%s.html"><i>message too large</i></a>\n' % parent
+        message = row[1][:1000] + '\n[..] <a href="thread-%s.html"><i>message too large</i></a>' % parent
       else:
         message = row[1]
       message = self.markup_parser(message)
