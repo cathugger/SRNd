@@ -1328,7 +1328,9 @@ class main(threading.Thread):
     return childs
 
   def generate_pagelist(self, count, current, board_name_unquoted, archive_link=False):
+    if count < 2: return ''
     pagelist = list()
+    pagelist.append('Pages: ')
     for page in xrange(1, count + 1):
       if page != current:
         pagelist.append('<a href="{0}-{1}.html">[{1}]</a> '.format(board_name_unquoted, page))
