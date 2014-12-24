@@ -130,61 +130,28 @@ class main(threading.Thread):
       try:   self.sqlite_synchronous = bool(args['sqlite_synchronous'])
       except: pass
 
-    # FIXME messy code is messy
-    if not os.path.exists(os.path.join(self.template_directory, self.no_file)):
-      self.die('replacement for root posts without picture not found: %s' % os.path.join(self.template_directory, self.no_file))
-    if not os.path.exists(os.path.join(self.template_directory, self.audio_file)):
-      self.die('replacement for posts with audio not found: %s' % os.path.join(self.template_directory, self.audio_file))
-    if not os.path.exists(os.path.join(self.template_directory, self.invalid_file)):
-      self.die('replacement for posts with invalid pictures not found: %s' % os.path.join(self.template_directory, self.invalid_file))
-    if not os.path.exists(os.path.join(self.template_directory, self.document_file)):
-      self.die('replacement for posts with documents attached (.pdf, .ps) not found: %s' % os.path.join(self.template_directory, self.document_file))
-    if not os.path.exists(os.path.join(self.template_directory, self.css_file)):
-      self.die('specified CSS file not found in template directory: %s' % os.path.join(self.template_directory, self.css_file))
-    error = ''
-    for template in ('board.tmpl', 'board_threads.tmpl', 'thread_single.tmpl', 'message_root.tmpl', 'message_child_pic.tmpl', 'message_child_nopic.tmpl', 'signed.tmpl', 'help.tmpl'):
-      template_file = os.path.join(self.template_directory, template)
-      if not os.path.exists(template_file):
-        error += '%s missing\n' % template_file
-    if error != '':
-      error = error.rstrip("\n")
-      self.die(error)
     self.sync_on_startup = False
     if 'sync_on_startup' in args:
       if args['sync_on_startup'].lower() == 'true':
         self.sync_on_startup = True
 
-    # TODO use tuple instead and load in above loop. seriously.
+
+    for x in (self.no_file, self.audio_file, self.invalid_file, self.document_file, self.css_file):
+      cheking_file = os.path.join(self.template_directory, x)
+      if not os.path.exists(cheking_file):
+        self.die('{0} file not found in {1}'.format(x, cheking_file))
+
     # statics
-    f = codecs.open(os.path.join(self.template_directory, 'help.tmpl'), "r", "utf-8")
-    self.template_help = f.read()
-    f.close()
-    
-    # still to convert
-    f = codecs.open(os.path.join(self.template_directory, 'stats_usage.tmpl'), "r", "utf-8")
-    self.template_stats_usage = f.read()
-    f.close()
-    f = codecs.open(os.path.join(self.template_directory, 'stats_usage_row.tmpl'), "r", "utf-8")
-    self.template_stats_usage_row = f.read()
-    f.close()
-    f = codecs.open(os.path.join(self.template_directory, 'latest_posts.tmpl'), "r", "utf-8")
-    self.template_latest_posts = f.read()
-    f.close()
-    f = codecs.open(os.path.join(self.template_directory, 'latest_posts_row.tmpl'), "r", "utf-8")
-    self.template_latest_posts_row = f.read()
-    f.close()
-    f = codecs.open(os.path.join(self.template_directory, 'stats_boards.tmpl'), "r", "utf-8")
-    self.template_stats_boards = f.read()
-    f.close()
-    f = codecs.open(os.path.join(self.template_directory, 'stats_boards_row.tmpl'), "r", "utf-8")
-    self.template_stats_boards_row = f.read()
-    f.close()
-    f = codecs.open(os.path.join(self.template_directory, 'base_pagelist.tmpl'), "r", "utf-8")
-    self.template_base_pagelist = f.read()
-    f.close()
-    f = codecs.open(os.path.join(self.template_directory, 'base_postform.tmpl'), "r", "utf-8")
-    self.template_base_postform = f.read()
-    f.close()
+    for x in ('help', 'stats_usage', 'stats_usage_row', 'latest_posts', 'latest_posts_row', 'stats_boards', 'stats_boards_row', 'base_pagelist', 'base_postform', 'base_footer'):
+      template_file = os.path.join(self.template_directory, '%s.tmpl' % x)
+      template_var = 'template_%s' % x
+      try:
+        f = codecs.open(template_file, "r", "utf-8")
+        self.__dict__.setdefault(template_var, f.read())
+        f.close()
+      except Exception as e:
+        self.die('Error loading template {0}: {1}'.format(template_file, e))
+
     f = codecs.open(os.path.join(self.template_directory, 'base_help.tmpl'), "r", "utf-8")
     self.template_base_help = string.Template(f.read()).safe_substitute(
       help=self.template_help
@@ -194,10 +161,6 @@ class main(threading.Thread):
       title=self.html_title
     )
     f.close()
-    f = codecs.open(os.path.join(self.template_directory, 'base_footer.tmpl'), "r", "utf-8")
-    self.template_base_footer = f.read()
-    f.close()
-    
     # template_engines
     f = codecs.open(os.path.join(self.template_directory, 'board.tmpl'), "r", "utf-8")
     self.t_engine_board = string.Template(
