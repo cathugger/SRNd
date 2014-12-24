@@ -135,6 +135,10 @@ class main(threading.Thread):
       if args['sync_on_startup'].lower() == 'true':
         self.sync_on_startup = True
 
+    self.fake_id = False
+    if 'fake_id' in args:
+      if args['fake_id'].lower() == 'true':
+        self.fake_id = True
 
     for x in (self.no_file, self.audio_file, self.invalid_file, self.document_file, self.css_file):
       cheking_file = os.path.join(self.template_directory, x)
@@ -744,6 +748,13 @@ class main(threading.Thread):
       pub_short += '&#%i;' % (9600 + int(full_pubkey_hex[-(length*2):][x*2:x*2+2], 16))
     return pub_short
 
+  def message_uid_to_fake_id(self, message_uid):
+    fake_id = self.dropperdb.execute('SELECT article_id FROM articles WHERE message_id = ?', (message_uid,)).fetchone()
+    if fake_id:
+      return fake_id[0]
+    else:
+      return sha1(message_uid).hexdigest()[:10]
+
   def get_moder_name (self, full_pubkey_hex):
     try:
       return self.censordb.execute('SELECT local_name from keys WHERE key=? and local_name != ""', (full_pubkey_hex,)).fetchone()
@@ -779,13 +790,17 @@ class main(threading.Thread):
       # not an overchan article (anymore)
       return rematch.group(0)
     parent_id = parent_row[0]
+    if self.fake_id:
+      article_name = self.message_uid_to_fake_id(message_id)
+    else:
+      article_name = rematch.group(2)
     if parent_id == "":
       # article is root post
-      return '<a onclick="return highlight(\'%s\');" href="thread-%s.html">%s%s</a>' % (rematch.group(2), rematch.group(2), rematch.group(1), rematch.group(2))
+      return '<a onclick="return highlight(\'%s\');" href="thread-%s.html">%s%s</a>' % (rematch.group(2), rematch.group(2), rematch.group(1), article_name)
     # article has a parent
     # FIXME: cache results somehow?
     parent = sha1(parent_id).hexdigest()[:10]
-    return '<a onclick="return highlight(\'%s\');" href="thread-%s.html#%s">%s%s</a>' % (rematch.group(2), parent, rematch.group(2), rematch.group(1), rematch.group(2))
+    return '<a onclick="return highlight(\'%s\');" href="thread-%s.html#%s">%s%s</a>' % (rematch.group(2), parent, rematch.group(2), rematch.group(1), article_name)
   
   def quoteit(self, rematch):
     return '<span class="quote">%s</span>' % rematch.group(0).rstrip("\r")
@@ -1275,14 +1290,12 @@ class main(threading.Thread):
 
 
   def get_root_post(self, data, group_id, child_view=0, message_id_hash='', single=False):
-    if message_id_hash == '':
-      return self.t_engine_message_root.substitute(self.get_preparse_post(data, sha1(data[0]).hexdigest(), group_id, 25, 2000, child_view, '', '',  single))
-    else:
-      return self.t_engine_message_root.substitute(self.get_preparse_post(data, message_id_hash,           group_id, 25, 2000, child_view, '', '',  single))
+    if message_id_hash == '': message_id_hash = sha1(data[0]).hexdigest()
+    return self.t_engine_message_root.substitute(self.get_preparse_post(data, message_id_hash, group_id, 25, 2000, child_view, '', '',  single))
 
   def get_child_post(self, data, message_id_hash, group_id, father, father_pubkey, single):
     if  data[6] != '':
-      return self.t_engine_message_pic.substitute(  self.get_preparse_post(data, message_id_hash, group_id, 20, 1500, 0, father, father_pubkey, single))
+      return self.t_engine_message_pic.substitute  (self.get_preparse_post(data, message_id_hash, group_id, 20, 1500, 0, father, father_pubkey, single))
     else:
       return self.t_engine_message_nopic.substitute(self.get_preparse_post(data, message_id_hash, group_id, 20, 1500, 0, father, father_pubkey, single))
 
@@ -1387,6 +1400,10 @@ class main(threading.Thread):
         parsed_data['sticky_prefix'] = 'un'
       else:
         parsed_data['sticky_mark'] = parsed_data['sticky_prefix'] = ''
+    if self.fake_id:
+      parsed_data['article_id'] = self.message_uid_to_fake_id(data[0])
+    else:
+      parsed_data['article_id'] = message_id_hash[:10]
     return parsed_data
 
   def generate_archive(self, group_id):
