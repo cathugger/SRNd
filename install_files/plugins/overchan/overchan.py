@@ -202,7 +202,7 @@ class main(threading.Thread):
         title=self.html_title
       )
     )
-    f.close
+    f.close()
     f = codecs.open(os.path.join(self.template_directory, 'index.tmpl'), "r", "utf-8")
     self.t_engine_index = string.Template(
       string.Template(f.read()).safe_substitute(
@@ -232,10 +232,10 @@ class main(threading.Thread):
     f.close()
     f = codecs.open(os.path.join(self.template_directory, 'board_threads.tmpl'), "r", "utf-8")
     self.t_engine_board_threads = string.Template(f.read())
-    f.close
+    f.close()
     f = codecs.open(os.path.join(self.template_directory, 'archive_threads.tmpl'), "r", "utf-8")
     self.t_engine_archive_threads = string.Template(f.read())
-    f.close
+    f.close()
     f = codecs.open(os.path.join(self.template_directory, 'message_root.tmpl'), "r", "utf-8")
     self.t_engine_message_root = string.Template(f.read())
     f.close()
@@ -389,7 +389,7 @@ class main(threading.Thread):
     self.db_hasher = self.sqlite_hasher_conn.cursor() 
     self.sqlite_conn = sqlite3.connect(os.path.join(self.database_directory, 'overchan.db3'))
     self.sqlite = self.sqlite_conn.cursor()
-    if self.sqlite_synchronous == False:
+    if not self.sqlite_synchronous:
         self.sqlite.execute("PRAGMA synchronous = OFF")
     # FIXME use config table with current db version + def update_db(db_version) like in censor plugin
     self.sqlite.execute('''CREATE TABLE IF NOT EXISTS groups
@@ -486,10 +486,12 @@ class main(threading.Thread):
     if len(args) > 1:
       flags = int(args[1])
     else:
-      flags = 0
+      try:
+        flags = int(self.sqlite.execute("SELECT flags FROM groups WHERE group_name=?", (group_name,)).fetchone()[0])
+        flags ^= flags & self.cache['flags']['blocked']
+      except:
+        flags = 0
     try:
-      flags = int(self.sqlite.execute("SELECT flags FROM groups WHERE group_name=?", (group_name,)).fetchone()[0])
-      flags = flags ^ (flags & self.cache['flags']['blocked'])
       self.sqlite.execute('UPDATE groups SET blocked = 0, flags = ? WHERE group_name = ?', (str(flags), group_name))
       self.log(self.logger.INFO, 'unblocked existing board: \'%s\'' % group_name)
     except:
@@ -520,11 +522,12 @@ class main(threading.Thread):
         flags = int(flags)
         group_id = self.sqlite.execute("SELECT group_id FROM groups WHERE group_name=?", (group_name,)).fetchone()[0]
         if group_id == '' or ((flags & self.cache['flags']['blocked']) != self.cache['flags']['blocked'] and self.check_board_flags(group_id, 'blocked')):
-          self.overchan_board_add(group_name, flags)
+          self.overchan_board_add((group_name, flags,))
         elif (flags & self.cache['flags']['blocked']) == self.cache['flags']['blocked'] and not self.check_board_flags(group_id, 'blocked'):
           self.overchan_board_del(group_name, flags)
         else:
           self.sqlite.execute('UPDATE groups SET flags = ? WHERE group_name = ?', (flags, group_name))
+          self.sqlite_conn.commit()
           self.generate_overview()
           self.generate_menu()
       elif line.lower().startswith('overchan-board-add'):
@@ -736,7 +739,7 @@ class main(threading.Thread):
     pub_short = ''
     for x in range(0, length / 2):
       pub_short +=  '&#%i;' % (9600 + int(full_pubkey_hex[x*2:x*2+2], 16))
-    length = length - (length / 2)
+    length -= length / 2
     for x in range(0, length):
       pub_short += '&#%i;' % (9600 + int(full_pubkey_hex[-(length*2):][x*2:x*2+2], 16))
     return pub_short
@@ -754,7 +757,7 @@ class main(threading.Thread):
       op_flag = '<span class="op-kyn">OP</span> '
       nickname = sender
     if local_name is not None and local_name != '':
-      nickname = '<span class="zoi">%s</span>' % (local_name)
+      nickname = '<span class="zoi">%s</span>' % local_name
     return '%s%s' % (op_flag, nickname)
 
   def upp_it(self, data):
@@ -1138,8 +1141,9 @@ class main(threading.Thread):
     if (not subject or subject == 'None') and (message == image_name == public_key == '') and (parent and parent != message_id) and (not sender or sender == 'Anonymous'):
       self.log(self.logger.INFO, 'censored empty child message  %s' % message_id)
       return self.move_censored_article(message_id)
-    try:
-      for group in groups:
+
+    for group in groups:
+      try:
         group_flags = int(self.sqlite.execute("SELECT flags FROM groups WHERE group_name=?", (group,)).fetchone()[0])
         if (group_flags & self.cache['flags']['spam-fix']) == self.cache['flags']['spam-fix'] and len(message) < 5:
           self.log(self.logger.INFO, 'Spamprotect group %s, censored %s' % (group, message_id))
@@ -1149,8 +1153,8 @@ class main(threading.Thread):
           return self.move_censored_article(message_id)
         elif (group_flags & self.cache['flags']['sage']) == self.cache['flags']['sage']:
           sage = True
-    except Exception as e:
-      self.log(self.logger.INFO, 'Processing group %s error message %s %s' % (group, message_id, e))
+      except Exception as e:
+        self.log(self.logger.INFO, 'Processing group %s error message %s %s' % (group, message_id, e))
 
     group_ids = list()
     for group in groups:
@@ -1421,7 +1425,6 @@ class main(threading.Thread):
 
   def generate_recent(self, group_id):
     boardlist, full_board_name_unquoted, full_board_name, board_name_unquoted, board_name = self.generate_board_list(group_id, True)
-    threads = list()
     # get only freshly updated threads
     timestamp = int(time.time()) - 3600*24
     threads = list()
