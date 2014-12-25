@@ -253,6 +253,20 @@ class postman(BaseHTTPRequestHandler):
       self.wfile.write(self.origin.template_verify_slow.format(message, b64, solution_hash, expires, frontend, board, reply, target, name, email, subject, comment, file_name, file_ct, file_b64))
     return 
 
+  def fake_id_to_overchan_id(self, comment, board):
+    def reverse_mapping(rematch):
+      message_id = self.origin.dropperdb.execute('SELECT message_id FROM articles, groups WHERE \
+          groups.group_name = ? AND groups.group_id = articles.group_id AND articles.article_id = ?', (board, rematch.group(2))).fetchall()
+      if not message_id or len(message_id) > 1: return rematch.group(0)
+      return '{0}{1}'.format(rematch.group(1), sha1(message_id[0][0]).hexdigest()[:10])
+
+    def check_overchan_id(rematch):
+      if len(rematch.group(2)) == 10 and self.origin.sqlite.execute("SELECT message_id FROM article_hashes WHERE message_id_hash LIKE ?", (rematch.group(2)+'%',)).fetchone():
+        return rematch.group(0)
+      return re.compile("(>>)([0-9]{1,10})").sub(reverse_mapping, rematch.group(0))
+
+    return re.compile("(>>)([0-9a-f]{1,10})").sub(check_overchan_id, comment)
+
   def handleNewArticle(self, post_vars=None):
     if not post_vars:
       contentType = 'Content-Type' in self.headers and self.headers['Content-Type'] or 'text/plain'
@@ -328,6 +342,9 @@ class postman(BaseHTTPRequestHandler):
           self.die('{0} not in allowed_files'.format(content_type))
           return
         redirect_duration = 4
+    if self.origin.overchan_fake_id and frontend.lower() == 'overchan':
+      comment = self.fake_id_to_overchan_id(comment, group)
+
     uid_host = self.origin.frontends[frontend]['uid_host']
 
     name = self.origin.frontends[frontend]['defaults']['name']
@@ -589,6 +606,11 @@ class main(threading.Thread):
         self.httpd.fast_uploads = True
         self.httpd.temp_file_obj = dict()
 
+    self.httpd.overchan_fake_id = False
+    if 'overchan_fake_id' in args:
+      if args['overchan_fake_id'].lower() == 'true':
+        self.httpd.overchan_fake_id = True
+
     if 'reject_debug' in args:
       tmp = args['reject_debug']
       if tmp.lower() == 'true':
@@ -757,6 +779,9 @@ class main(threading.Thread):
     self.database_directory = ''
     self.httpd.sqlite_conn = sqlite3.connect(os.path.join(self.database_directory, 'hashes.db3'))
     self.httpd.sqlite = self.httpd.sqlite_conn.cursor()
+    if self.httpd.overchan_fake_id:
+      self.httpd.dropperdb_conn = sqlite3.connect(os.path.join(self.database_directory, 'dropper.db3'))
+      self.httpd.dropperdb = self.httpd.dropperdb_conn.cursor()
     self.log(self.logger.INFO, 'start listening at http://%s:%i' % (self.ip, self.port))
     self.serving = True
     self.httpd.serve_forever()
