@@ -44,7 +44,7 @@ class main(threading.Thread):
     self.name = thread_name
     self.should_terminate = False
     self.logger = logger
-    
+
     # TODO: move sleep stuff to config table
     self.sleep_threshold = 10
     self.sleep_time = 0.02
@@ -257,7 +257,7 @@ class main(threading.Thread):
     f = codecs.open(os.path.join(self.template_directory, 'signed.tmpl'), "r", "utf-8")
     self.t_engine_signed = string.Template(f.read())
     f.close()
-    
+
     self.upper_table = {'0': '1',
                         '1': '2',
                         '2': '3',
@@ -307,7 +307,7 @@ class main(threading.Thread):
       else:
         something = something.convert('RGB')
         thumb_name = 'nope_loading_PIL.jpg'
-      something = something.resize((x,y), Image.ANTIALIAS)
+      something = something.resize((x, y), Image.ANTIALIAS)
       out = os.path.join(self.template_directory, thumb_name)
       something.save(out, optimize=True)
       del something
@@ -346,7 +346,7 @@ class main(threading.Thread):
           y = int(something.size[1] * modifier)
           if not (something.mode == 'RGBA' or something.mode == 'LA'):
             something = something.convert('RGB')
-          something = something.resize((x,y), Image.ANTIALIAS)
+          something = something.resize((x, y), Image.ANTIALIAS)
           something.save(link, optimize=True)
           del something
         except IOError as e:
@@ -379,7 +379,7 @@ class main(threading.Thread):
     # ^ hardlinks not gonna work because of remote filesystems
     # ^ softlinks not gonna work because of nginx chroot
     # ^ => cp
-    self.copy_out((self.css_file, 'styles.css'),('user.css', 'user.css'),(self.no_file, os.path.join('img', self.no_file)),('suicide.txt', 'suicide.txt'),)
+    self.copy_out((self.css_file, 'styles.css'), ('user.css', 'user.css'), (self.no_file, os.path.join('img', self.no_file)), ('suicide.txt', 'suicide.txt'),)
     self.gen_template_thumbs(self.invalid_file, self.document_file, self.audio_file, self.webm_file, self.no_file)
 
     self.regenerate_boards = list()
@@ -395,7 +395,7 @@ class main(threading.Thread):
     self.sqlite_censor_conn = sqlite3.connect('censor.db3')
     self.censordb = self.sqlite_censor_conn.cursor()
     self.sqlite_hasher_conn = sqlite3.connect('hashes.db3')
-    self.db_hasher = self.sqlite_hasher_conn.cursor() 
+    self.db_hasher = self.sqlite_hasher_conn.cursor()
     self.sqlite_conn = sqlite3.connect(os.path.join(self.database_directory, 'overchan.db3'))
     self.sqlite = self.sqlite_conn.cursor()
     if not self.sqlite_synchronous:
@@ -405,7 +405,7 @@ class main(threading.Thread):
                (group_id INTEGER PRIMARY KEY AUTOINCREMENT, group_name text UNIQUE, article_count INTEGER, last_update INTEGER)''')
     self.sqlite.execute('''CREATE TABLE IF NOT EXISTS articles
                (article_uid text, group_id INTEGER, sender text, email text, subject text, sent INTEGER, parent text, message text, imagename text, imagelink text, thumblink text, last_update INTEGER, public_key text, PRIMARY KEY (article_uid, group_id))''')
-    
+
     # TODO add some flag like ability to carry different data for groups like (removed + added manually + public + hidden + whatever)
     self.sqlite.execute('''CREATE TABLE IF NOT EXISTS flags
                (flag_id INTEGER PRIMARY KEY AUTOINCREMENT, flag_name text UNIQUE, flag text)''')
@@ -443,7 +443,7 @@ class main(threading.Thread):
     self.sqlite.execute('CREATE INDEX IF NOT EXISTS articles_article_idx ON articles(article_uid);')
     self.sqlite.execute('CREATE INDEX IF NOT EXISTS articles_last_update_idx ON articles(group_id, parent, last_update);')
     self.sqlite_conn.commit()
-    
+
     self.cache_init()
 
     if self.regenerate_html_on_startup:
@@ -513,13 +513,13 @@ class main(threading.Thread):
     try:
       if flags == 0:
         flags = int(self.sqlite.execute("SELECT flags FROM groups WHERE group_name=?", (group_name,)).fetchone()[0]) | self.cache['flags']['blocked']
-      self.sqlite.execute('UPDATE groups SET blocked = 1, flags = ? WHERE group_name = ?', (str(flags),group_name))
+      self.sqlite.execute('UPDATE groups SET blocked = 1, flags = ? WHERE group_name = ?', (str(flags), group_name))
       self.log(self.logger.INFO, 'blocked board: \'%s\'' % group_name)
       self.sqlite_conn.commit()
       self.regenerate_all_html()
     except:
       self.log(self.logger.WARNING, 'should delete board %s but there is no board with that name' % group_name)
-    
+
   def handle_control(self, lines, timestamp):
     # FIXME how should board-add and board-del react on timestamps in the past / future
     self.log(self.logger.DEBUG, 'got control message: %s' % lines)
@@ -620,7 +620,7 @@ class main(threading.Thread):
           self.sqlite.execute('DELETE FROM articles WHERE article_uid = ?', (message_id,))
           if row[2] not in self.regenerate_threads:
             self.regenerate_threads.append(row[2])
-          # FIXME: add detection for parent == deleted message (not just censored) and if true, add to root_posts 
+          # FIXME: add detection for parent == deleted message (not just censored) and if true, add to root_posts
         if len(row[0]) > 0 and row[0] != "invalid":
           self.log(self.logger.INFO, 'deleting message_id %s, attachment %s' % (message_id, row[0]))
           try:
@@ -743,11 +743,11 @@ class main(threading.Thread):
 
   def basicHTMLencode(self, inputString):
     return inputString.replace('<', '&lt;').replace('>', '&gt;').strip(' \t\n\r')
-  
+
   def generate_pubkey_short_utf_8(self, full_pubkey_hex, length=6):
     pub_short = ''
     for x in range(0, length / 2):
-      pub_short +=  '&#%i;' % (9600 + int(full_pubkey_hex[x*2:x*2+2], 16))
+      pub_short += '&#%i;' % (9600 + int(full_pubkey_hex[x*2:x*2+2], 16))
     length -= length / 2
     for x in range(0, length):
       pub_short += '&#%i;' % (9600 + int(full_pubkey_hex[-(length*2):][x*2:x*2+2], 16))
@@ -760,13 +760,13 @@ class main(threading.Thread):
     else:
       return sha1(message_uid).hexdigest()[:10]
 
-  def get_moder_name (self, full_pubkey_hex):
+  def get_moder_name(self, full_pubkey_hex):
     try:
       return self.censordb.execute('SELECT local_name from keys WHERE key=? and local_name != ""', (full_pubkey_hex,)).fetchone()
     except:
       return None
 
-  def pubkey_to_name (self, full_pubkey_hex, root_full_pubkey_hex='', sender=''):
+  def pubkey_to_name(self, full_pubkey_hex, root_full_pubkey_hex='', sender=''):
     op_flag = nickname = ''
     local_name = self.get_moder_name(full_pubkey_hex)
     if full_pubkey_hex == root_full_pubkey_hex:
@@ -780,7 +780,7 @@ class main(threading.Thread):
     if data[-1] not in self.upper_table:
       return data
     return data[:-1] + self.upper_table[data[-1]]
-    
+
   def linkit(self, rematch):
     row = self.db_hasher.execute("SELECT message_id FROM article_hashes WHERE message_id_hash >= ? and message_id_hash < ?", (rematch.group(2), self.upp_it(rematch.group(2)))).fetchall()
     if not row:
@@ -806,7 +806,7 @@ class main(threading.Thread):
     # FIXME: cache results somehow?
     parent = sha1(parent_id).hexdigest()[:10]
     return '<a onclick="return highlight(\'%s\');" href="thread-%s.html#%s">%s%s</a>' % (rematch.group(2), parent, rematch.group(2), rematch.group(1), article_name)
-  
+
   def quoteit(self, rematch):
     return '<span class="quote">%s</span>' % rematch.group(0).rstrip("\r")
 
@@ -915,7 +915,7 @@ class main(threading.Thread):
       thumb_name = imagehash + '.jpg'
       thumb = thumb.convert('RGB')
     thumb_link = os.path.join(self.output_directory, 'thumbs', thumb_name)
-    thumb = thumb.resize((x,y), Image.ANTIALIAS)
+    thumb = thumb.resize((x, y), Image.ANTIALIAS)
     thumb.save(thumb_link, optimize=True)
     return thumb_name
 
@@ -1240,7 +1240,7 @@ class main(threading.Thread):
 
     if self.sqlite.execute('SELECT article_uid FROM articles WHERE article_uid=?', (message_id,)).fetchone():
       # post has been censored and is now being restored. just delete post for all groups so it can be reinserted
-      self.log(self.logger.INFO, 'post has been censored and is now being restored: %s' % message_id) 
+      self.log(self.logger.INFO, 'post has been censored and is now being restored: %s' % message_id)
       self.sqlite.execute('DELETE FROM articles WHERE article_uid=?', (message_id,))
       self.sqlite_conn.commit()
     for group_id in group_ids:
@@ -1288,7 +1288,7 @@ class main(threading.Thread):
       t_engine_mapper_board['boardlist'] = ''.join(boardlist)
       t_engine_mapper_board['full_board'] = full_board_name_unquoted
       t_engine_mapper_board['board'] = board_name
-      t_engine_mapper_board['target'] =  "{0}-1.html".format(board_name_unquoted)
+      t_engine_mapper_board['target'] = "{0}-1.html".format(board_name_unquoted)
       f = codecs.open(os.path.join(self.output_directory, '{0}-{1}.html'.format(board_name_unquoted, board)), 'w', 'UTF-8')
       f.write(self.t_engine_board.substitute(t_engine_mapper_board))
       f.close()
@@ -1302,7 +1302,7 @@ class main(threading.Thread):
 
   def get_root_post(self, data, group_id, child_view=0, message_id_hash='', single=False):
     if message_id_hash == '': message_id_hash = sha1(data[0]).hexdigest()
-    return self.t_engine_message_root.substitute(self.get_preparse_post(data, message_id_hash, group_id, 25, 2000, child_view, '', '',  single))
+    return self.t_engine_message_root.substitute(self.get_preparse_post(data, message_id_hash, group_id, 25, 2000, child_view, '', '', single))
 
   def get_child_post(self, data, message_id_hash, group_id, father, father_pubkey, single):
     if  data[6] != '':
@@ -1386,9 +1386,9 @@ class main(threading.Thread):
           start_link = child_view / 50 * 50 + 50
           if start_link % 100 == 0: start_link += 50
           if child_count - start_link > 0:
-            message+=' ['
-            message+=''.join(' <a href="thread-{0}-{1}.html">{1}</a>'.format(message_id_hash[:10], x) for x in range(start_link, child_count, 100))
-            message+=' ]'
+            message += ' ['
+            message += ''.join(' <a href="thread-{0}-{1}.html">{1}</a>'.format(message_id_hash[:10], x) for x in range(start_link, child_count, 100))
+            message += ' ]'
     parsed_data['frontend'] = self.frontend(data[0])
     parsed_data['message'] = message
     parsed_data['articlehash'] = message_id_hash[:10]
@@ -1401,7 +1401,7 @@ class main(threading.Thread):
     parsed_data['sent'] = datetime.utcfromtimestamp(data[3]).strftime('%d.%m.%Y (%a) %H:%M')
     parsed_data['imagelink'] = imagelink
     parsed_data['thumblink'] = thumblink
-    parsed_data['imagename'] =  data[5]
+    parsed_data['imagename'] = data[5]
     if father != '':
       parsed_data['parenthash'] = father[:10]
       parsed_data['parenthash_full'] = father
@@ -1446,7 +1446,7 @@ class main(threading.Thread):
       t_engine_mapper_board['boardlist'] = ''.join(boardlist)
       t_engine_mapper_board['full_board'] = full_board_name_unquoted
       t_engine_mapper_board['board'] = board_name
-      t_engine_mapper_board['target'] =  "{0}-archive-1.html".format(board_name_unquoted)
+      t_engine_mapper_board['target'] = "{0}-archive-1.html".format(board_name_unquoted)
       f = codecs.open(os.path.join(self.output_directory, '{0}-archive-{1}.html'.format(board_name_unquoted, board)), 'w', 'UTF-8')
       f.write(self.t_engine_board_archive.substitute(t_engine_mapper_board))
       f.close()
@@ -1471,7 +1471,7 @@ class main(threading.Thread):
     t_engine_mapper_board_recent['boardlist'] = ''.join(boardlist)
     t_engine_mapper_board_recent['full_board'] = full_board_name_unquoted
     t_engine_mapper_board_recent['board'] = board_name
-    t_engine_mapper_board_recent['target'] =  "{0}-recent.html".format(board_name_unquoted)
+    t_engine_mapper_board_recent['target'] = "{0}-recent.html".format(board_name_unquoted)
     f = codecs.open(os.path.join(self.output_directory, '{0}-recent.html'.format(board_name_unquoted)), 'w', 'UTF-8')
     f.write(self.t_engine_board_recent.substitute(t_engine_mapper_board_recent))
     f.close()
@@ -1482,7 +1482,7 @@ class main(threading.Thread):
     icons = {
       'web.overchan.imoutochan' : 'imoutochan.png',
       'web.overchan.sarah.ano': 'sarah.png',
-      'import.oniichan' : 'oniichan.png' ,
+      'import.oniichan' : 'oniichan.png',
       'web.overchan.psyops.mil': 'psyops.png',
       'slamspeech.ano' : 'slamspeech.png',
       'web.overchan.deliciouscake.ano' : 'dcake.png',
@@ -1493,7 +1493,7 @@ class main(threading.Thread):
     icon = 'nntp.png'
     if frontend in icons:
       icon = icons[frontend]
-    frontend = self.basicHTMLencode(frontend.replace('"',''))
+    frontend = self.basicHTMLencode(frontend.replace('"', ''))
     return '<img class="frontend_icon" src="/static/%s" title="%s" />' % (icon, frontend)
 
   def frontend(self, uid):
@@ -1587,7 +1587,7 @@ class main(threading.Thread):
     f.write(self.t_engine_menu.substitute(t_engine_mappings_menu))
     f.close()
 
-  def check_board_flags (self, group_id, *args):
+  def check_board_flags(self, group_id, *args):
     try:
       flags = int(self.sqlite.execute('SELECT flags FROM groups WHERE group_id = ?', (group_id,)).fetchone()[0])
       for flag_name in args:
@@ -1598,7 +1598,7 @@ class main(threading.Thread):
       return False
     return True
 
-  def check_moder_flags (self, full_pubkey_hex, *args):
+  def check_moder_flags(self, full_pubkey_hex, *args):
     try:
       flags = int(self.censordb.execute('SELECT flags from keys WHERE key=?', (full_pubkey_hex,)).fetchone()[0])
       for flag_name in args:
@@ -1699,9 +1699,7 @@ class main(threading.Thread):
         max = row[0]
       stats.append((row[0], row[1], weekdays[int(row[2])]))
     for index in range(1, len(stats)):
-      graph = ''
-      for x in range(0, int(float(stats[index][0])/max*bar_length)):
-        graph += '='
+      graph = '=' * int(float(stats[index][0])/max*bar_length)
       if len(graph) == 0:
         graph = '&nbsp;'
       stats[index] = self.template_stats_usage_row.replace('%%postcount%%', str(stats[index][0])).replace('%%date%%', stats[index][1]).replace('%%weekday%%', stats[index][2]).replace('%%bar%%', graph)
@@ -1763,12 +1761,12 @@ class main(threading.Thread):
 
     for row in self.sqlite.execute('SELECT count(1) as counter, group_name FROM articles, groups WHERE \
       ((cast(groups.flags as integer) & ?) != ?) and groups.blocked = 0 AND articles.group_id = groups.group_id GROUP BY \
-      articles.group_id ORDER BY counter DESC',(self.cache['flags']['hidden'], self.cache['flags']['hidden'])).fetchall():
+      articles.group_id ORDER BY counter DESC', (self.cache['flags']['hidden'], self.cache['flags']['hidden'])).fetchall():
       stats.append(self.template_stats_boards_row.replace('%%postcount%%', str(row[0])).replace('%%board%%', self.basicHTMLencode(row[1])))
     overview_stats_boards = self.template_stats_boards
     overview_stats_boards = overview_stats_boards.replace('%%stats_boards_rows%%', ''.join(stats))
     t_engine_mappings_overview['stats_boards'] = overview_stats_boards
-    
+
     f = codecs.open(os.path.join(self.output_directory, 'overview.html'), 'w', 'UTF-8')
     f.write(self.t_engine_overview.substitute(t_engine_mappings_overview))
     f.close()
@@ -1786,7 +1784,7 @@ if __name__ == '__main__':
       self.log('bye', 2)
       exit(0)
     except Exception as e:
-      print "Exception:", e  
+      print "Exception:", e
       self.sqlite_conn.close()
       self.log('bye', 2)
       exit(0)
