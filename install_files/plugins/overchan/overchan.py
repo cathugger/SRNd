@@ -492,6 +492,21 @@ class main(threading.Thread):
       self.regenerate_threads.append(message_id)
     return sticky_action
 
+  def delete_orphan_attach(self, image, thumb):
+    image_link = os.path.join(self.output_directory, 'img', image)
+    thumb_link = os.path.join(self.output_directory, 'thumbs', thumb)
+    for imagename, imagepath, imagetype in ((image, image_link, 'imagelink'), (thumb, thumb_link, 'thumblink'),):
+      if len(imagename) > 40 and os.path.exists(imagepath):
+        caringbears = int(self.sqlite.execute('SELECT count(article_uid) FROM articles WHERE %s = ?' % imagetype, (imagename,)).fetchone()[0])
+        if caringbears > 0:
+          self.log(self.logger.INFO, 'not deleting %s, %s posts using it' % (imagename, caringbears))
+        else:
+          self.log(self.logger.DEBUG, 'nobody not use %s, delete it' % (imagename,))
+          try:
+            os.unlink(imagepath)
+          except Exception as e:
+            self.log(self.logger.WARNING, 'could not delete %s: %s' % (imagepath, e))
+
   def censored_attach_processing(self, image, thumb):
     image_link = os.path.join(self.output_directory, 'img', image)
     thumb_link = os.path.join(self.output_directory, 'thumbs', thumb)
@@ -606,11 +621,16 @@ class main(threading.Thread):
           self.regenerate_boards.append(row[3])
         if row[2] == '':
           # root post
-          if int(self.sqlite.execute("SELECT count(article_uid) FROM articles WHERE parent = ?", (message_id,)).fetchone()[0]) > 0:
+          child_files = self.sqlite.execute("SELECT imagelink, thumblink FROM articles WHERE parent = ? AND article_uid != parent", (message_id,)).fetchall()
+          if child_files and len(child_files[0]) > 0:
             # root posts with child posts
             self.log(self.logger.DEBUG, 'deleting message_id %s, got a root post with attached child posts' % message_id)
             # delete child posts
             self.sqlite.execute('DELETE FROM articles WHERE parent = ?', (message_id,))
+            self.sqlite_conn.commit()
+            # delete child images and thumbs
+            for child_image, child_thumb in child_files:
+              self.delete_orphan_attach(child_image, child_thumb)
           else:
             # root posts without child posts
             self.log(self.logger.DEBUG, 'deleting message_id %s, got a root post without any child posts' % message_id)
@@ -626,19 +646,8 @@ class main(threading.Thread):
           if row[2] not in self.regenerate_threads:
             self.regenerate_threads.append(row[2])
           # FIXME: add detection for parent == deleted message (not just censored) and if true, add to root_posts
-        if len(row[0]) > 0 and row[0] != "invalid":
-          self.log(self.logger.INFO, 'deleting message_id %s, attachment %s' % (message_id, row[0]))
-          try:
-            os.unlink(os.path.join(self.output_directory, "img", row[0]))
-          except Exception as e:
-            self.log(self.logger.WARNING, 'could not delete img/%s: %s' % (row[0], e))
-        if len(row[1]) > 0 and row[1] != "invalid":
-          self.log(self.logger.INFO, 'deleting message_id %s, thumb %s' % (message_id, row[1]))
-          try:
-            os.unlink(os.path.join(self.output_directory, "thumbs", row[1]))
-          except Exception as e:
-            self.log(self.logger.WARNING, 'could not delete thumbs/%s: %s' % (row[1], e))
         self.sqlite_conn.commit()
+        self.delete_orphan_attach(row[0], row[1])
       elif line.lower().startswith("overchan-sticky "):
         message_id = line.split(" ")[1]
         self.log(self.logger.INFO, 'sticky processing message_id %s, %s' % (message_id, self.sticky_processing(message_id)))
@@ -686,7 +695,7 @@ class main(threading.Thread):
         ret = self.queue.get(block=True, timeout=1)
         if ret[0] == "article":
           message_id = ret[1]
-          if self.sqlite.execute('SELECT subject FROM articles WHERE article_uid = ? AND imagelink != "invalid"', (message_id,)).fetchone():
+          if self.sqlite.execute('SELECT subject FROM articles WHERE article_uid = ? AND imagelink != "invalid" AND thumblink != "censored"', (message_id,)).fetchone():
             self.log(self.logger.DEBUG, '%s already in database..' % message_id)
             continue
           #message_id = self.queue.get(block=True, timeout=1)
@@ -1165,6 +1174,7 @@ class main(threading.Thread):
 
     if (not subject or subject == 'None') and (message == image_name == public_key == '') and (parent and parent != message_id) and (not sender or sender == 'Anonymous'):
       self.log(self.logger.INFO, 'censored empty child message  %s' % message_id)
+      self.delete_orphan_attach(image_name, thumb_name)
       return self.move_censored_article(message_id)
 
     for group in groups:
@@ -1172,9 +1182,11 @@ class main(threading.Thread):
         group_flags = int(self.sqlite.execute("SELECT flags FROM groups WHERE group_name=?", (group,)).fetchone()[0])
         if (group_flags & self.cache['flags']['spam-fix']) == self.cache['flags']['spam-fix'] and len(message) < 5:
           self.log(self.logger.INFO, 'Spamprotect group %s, censored %s' % (group, message_id))
+          self.delete_orphan_attach(image_name, thumb_name)
           return self.move_censored_article(message_id)
         elif (group_flags & self.cache['flags']['news']) == self.cache['flags']['news'] and (not parent or parent == message_id) \
             and (public_key == '' or not self.check_moder_flags(public_key, 'overchan-news-add')):
+          self.delete_orphan_attach(image_name, thumb_name)
           return self.move_censored_article(message_id)
         elif (group_flags & self.cache['flags']['sage']) == self.cache['flags']['sage']:
           sage = True
