@@ -1371,7 +1371,7 @@ class main(threading.Thread):
         else:
           post = "posts"
         message += '\n\n<a href="thread-{0}.html">{1} {2} omitted</a>'.format(message_id_hash[:10], missing, post)
-        if child_view < 10000 and missing > 76:
+        if child_view < 10000 and child_count > 80:
           start_link = child_view / 50 * 50 + 50
           if start_link % 100 == 0: start_link += 50
           if child_count - start_link > 0:
