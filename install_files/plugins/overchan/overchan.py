@@ -140,6 +140,11 @@ class main(threading.Thread):
       if args['fake_id'].lower() == 'true':
         self.fake_id = True
 
+    self.bump_limit = 0
+    if 'bump_limit' in args:
+      try:    self.bump_limit = int(args['bump_limit'])
+      except: pass
+
     for x in (self.no_file, self.audio_file, self.invalid_file, self.document_file, self.css_file):
       cheking_file = os.path.join(self.template_directory, x)
       if not os.path.exists(cheking_file):
@@ -1201,8 +1206,14 @@ class main(threading.Thread):
         if result:
           parent_last_update = result[0]
           if sent > parent_last_update:
-            self.sqlite.execute('UPDATE articles SET last_update=? WHERE article_uid=?', (sent, parent))
-            self.sqlite_conn.commit()
+            if self.bump_limit > 0:
+              child_count = self.sqlite.execute('SELECT count(article_uid) FROM articles WHERE parent = ? AND parent != article_uid ', (parent,)).fetchone()
+              if not (child_count and int(child_count[0]) >= self.bump_limit):
+                self.sqlite.execute('UPDATE articles SET last_update=? WHERE article_uid=?', (sent, parent))
+                self.sqlite_conn.commit()
+            else:
+              self.sqlite.execute('UPDATE articles SET last_update=? WHERE article_uid=?', (sent, parent))
+              self.sqlite_conn.commit()
         else:
           self.log(self.logger.INFO, 'missing parent %s for post %s' %  (parent, message_id))
           if parent in self.missing_parents:
