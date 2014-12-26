@@ -145,7 +145,12 @@ class main(threading.Thread):
       try:    self.bump_limit = int(args['bump_limit'])
       except: pass
 
-    for x in (self.no_file, self.audio_file, self.invalid_file, self.document_file, self.css_file):
+    self.censored_file = 'censored.png'
+    if 'censored_file' in args:
+      try:    self.censored_file = args['censored_file']
+      except: pass
+
+    for x in (self.no_file, self.audio_file, self.invalid_file, self.document_file, self.css_file, self.censored_file):
       cheking_file = os.path.join(self.template_directory, x)
       if not os.path.exists(cheking_file):
         self.die('{0} file not found in {1}'.format(x, cheking_file))
@@ -380,7 +385,7 @@ class main(threading.Thread):
     # ^ softlinks not gonna work because of nginx chroot
     # ^ => cp
     self.copy_out((self.css_file, 'styles.css'), ('user.css', 'user.css'), (self.no_file, os.path.join('img', self.no_file)), ('suicide.txt', 'suicide.txt'),)
-    self.gen_template_thumbs(self.invalid_file, self.document_file, self.audio_file, self.webm_file, self.no_file)
+    self.gen_template_thumbs(self.invalid_file, self.document_file, self.audio_file, self.webm_file, self.no_file, self.censored_file)
 
     self.regenerate_boards = list()
     self.regenerate_threads = list()
@@ -487,6 +492,19 @@ class main(threading.Thread):
       self.regenerate_threads.append(message_id)
     return sticky_action
 
+  def censored_attach_processing(self, image, thumb):
+    image_link = os.path.join(self.output_directory, 'img', image)
+    thumb_link = os.path.join(self.output_directory, 'thumbs', thumb)
+    for imagename, imagepath in ((image, image_link), (thumb, thumb_link),):
+      if len(imagename) > 40 and os.path.exists(imagepath):
+        os.unlink(imagepath)
+        self.log(self.logger.INFO, 'censored and removed: %s' % (imagepath,))
+      else:
+        self.log(self.logger.DEBUG, 'incorrect filename %s, not delete %s' % (imagename, imagepath))
+    if len(image) > 40:
+      self.sqlite.execute('UPDATE articles SET thumblink = "censored" WHERE imagelink = ?', (image,))
+      self.sqlite_conn.commit()
+
   def overchan_board_add(self, args):
     group_name = args[0]
     if '/' in group_name:
@@ -555,8 +573,8 @@ class main(threading.Thread):
         #if row[4] > timestamp:
         #  self.log("post more recent than control message. ignoring delete-attachment for %s" % message_id, 2)
         #  continue
-        if row[0] == 'invalid':
-          self.log(self.logger.DEBUG, 'attachment already deleted. ignoring delete-attachment for %s' % message_id)
+        if row[1] == 'censored':
+          self.log(self.logger.DEBUG, 'attachment already censored. ignoring delete-attachment for %s' % message_id)
           continue
         self.log(self.logger.INFO, 'deleting attachments for message_id %s' % message_id)
         if row[3] not in self.regenerate_boards:
@@ -566,20 +584,7 @@ class main(threading.Thread):
             self.regenerate_threads.append(message_id)
         elif not row[2] in self.regenerate_threads:
           self.regenerate_threads.append(row[2])
-        if len(row[0]) > 0:
-          self.log(self.logger.INFO, 'deleting attachment for message_id %s: img/%s' % (message_id, row[0]))
-          try:
-            os.unlink(os.path.join(self.output_directory, "img", row[0]))
-          except Exception as e:
-            self.log(self.logger.WARNING, 'could not delete attachment %s: %s' % (row[0], e))
-        if len(row[1]) > 0 and row[1] != "invalid":
-          self.log(self.logger.INFO, 'deleting attachment for message_id %s: thumbs/%s' % (message_id, row[1]))
-          try:
-            os.unlink(os.path.join(self.output_directory, "thumbs", row[1]))
-          except Exception as e:
-            self.log(self.logger.WARNING, 'could not delete attachment %s: %s' % (row[1], e))
-        self.sqlite.execute('UPDATE articles SET imagelink = "invalid", thumblink = "invalid", imagename = "invalid", public_key = "" WHERE article_uid = ?', (message_id,))
-        self.sqlite_conn.commit()
+        self.censored_attach_processing(row[0], row[1])
       elif line.lower().startswith("delete "):
         message_id = line.split(" ")[1]
         if os.path.exists(os.path.join("articles", "restored", message_id)):
@@ -1243,6 +1248,14 @@ class main(threading.Thread):
       self.log(self.logger.INFO, 'post has been censored and is now being restored: %s' % message_id)
       self.sqlite.execute('DELETE FROM articles WHERE article_uid=?', (message_id,))
       self.sqlite_conn.commit()
+
+    censored_count = self.sqlite.execute('SELECT count(article_uid) FROM articles WHERE thumblink = "censored" AND imagelink = ?', (image_name,)).fetchone()
+    if censored_count and int(censored_count[0]) > 0:
+      # attach has been censored and is now being restored. Restore all thumblink
+      self.log(self.logger.INFO, 'Attach %s restored. Restore %s thumblinks for this attach' % (image_name, censored_count[0]))
+      self.sqlite.execute('UPDATE articles SET thumblink = ? WHERE imagelink = ?', (thumb_name, image_name))
+      self.sqlite_conn.commit()
+
     for group_id in group_ids:
       self.sqlite.execute('INSERT INTO articles(article_uid, group_id, sender, email, subject, sent, parent, message, imagename, imagelink, thumblink, last_update, public_key, received) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)', (message_id, group_id, sender.decode('UTF-8'), email.decode('UTF-8'), subject.decode('UTF-8'), sent, parent, message.decode('UTF-8'), image_name_original.decode('UTF-8'), image_name, thumb_name, last_update, public_key, int(time.time())))
       self.sqlite.execute('UPDATE groups SET last_update=?, article_count = (SELECT count(article_uid) FROM articles WHERE group_id = ?) WHERE group_id = ?', (int(time.time()), group_id, group_id))
@@ -1345,6 +1358,8 @@ class main(threading.Thread):
           thumblink = self.audio_file
         elif data[7] == 'video':
           thumblink = self.webm_file
+        elif data[7] == 'censored':
+          thumblink = self.censored_file
         else:
           thumblink = data[7]
     else:

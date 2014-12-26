@@ -483,26 +483,19 @@ class main(threading.Thread):
     return (key, None)
 
   def handle_delete(self, line, debug=False):
-    #time_fs = float(0)
-    #time_sql = float(0)
-    #self.log("got deletion request: %s" % line, 3)
     command, message_id = line.split(" ", 1)
     self.log(self.logger.DEBUG, "should delete %s" % message_id)
     
-    #timestamp_start = time.time()
     if os.path.exists(os.path.join("articles", "restored", message_id)):
-      #time_fs += time.time() - timestamp_start
       self.log(self.logger.DEBUG, "%s has been restored, ignoring delete" % message_id)
-      #if debug:
-      #  return (message_id, None, time_fs, time_sql)
       return (message_id, None)
-
-    row = self.overchandb.execute('SELECT parent from articles WHERE article_uid = ?', (message_id,)).fetchone()
-    if row != None:
-      if row[0] == '' or row[0] == 'message_id':
-        self.log(self.logger.DEBUG, "article is a root post, deleting whole thread")
-        for row in self.overchandb.execute('SELECT article_uid from articles where parent = ?', (message_id,)).fetchall():
-          self.delete_article(row[0])
+    if command == 'delete':
+      row = self.overchandb.execute('SELECT parent from articles WHERE article_uid = ?', (message_id,)).fetchone()
+      if row != None:
+        if row[0] == '' or row[0] == message_id:
+          self.log(self.logger.DEBUG, "article is a root post, deleting whole thread")
+          for row in self.overchandb.execute('SELECT article_uid from articles where parent = ?', (message_id,)).fetchall():
+            self.delete_article(row[0])
     return self.delete_article(message_id)
 
   def delete_article(self, message_id):
