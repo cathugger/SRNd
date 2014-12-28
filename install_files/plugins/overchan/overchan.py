@@ -556,7 +556,6 @@ class main(threading.Thread):
   def handle_control(self, lines, timestamp):
     # FIXME how should board-add and board-del react on timestamps in the past / future
     self.log(self.logger.DEBUG, 'got control message: %s' % lines)
-    root_posts = list()
     for line in lines.split("\n"):
       self.log(self.logger.DEBUG, line)
       if line.lower().startswith('overchan-board-mod'):
@@ -651,17 +650,6 @@ class main(threading.Thread):
       elif line.lower().startswith("overchan-sticky "):
         message_id = line.split(" ")[1]
         self.log(self.logger.INFO, 'sticky processing message_id %s, %s' % (message_id, self.sticky_processing(message_id)))
-    for post in root_posts:
-      if int(self.sqlite.execute("SELECT count(article_uid) FROM articles WHERE parent = ? and parent != article_uid", (message_id,)).fetchone()[0]) == 0:
-        self.log(self.logger.DEBUG, 'deleting message_id %s, root_post has no more childs' % message_id)
-        self.sqlite.execute('DELETE FROM articles WHERE article_uid = ?', (message_id,))
-        self.sqlite_conn.commit()
-        try:
-          os.unlink(os.path.join(self.output_directory, "thread-%s" % sha1(message_id).hexdigest()[:10]))
-        except Exception as e:
-          self.log(self.logger.WARNING, 'could not delete thread for message_id %s: %s' % (message_id, e))
-      else:
-        self.log(self.logger.DEBUG, 'deleting message_id %s, root_post still has childs' % message_id)
 
   def signal_handler(self, signum, frame):
     # FIXME use try: except: around open(), also check for duplicate here
@@ -885,23 +873,18 @@ class main(threading.Thread):
     return message
 
   def move_censored_article(self, message_id):
-    groups = list()
-    group_rows = list()
-    for row in self.dropperdb.execute('SELECT group_name, article_id from articles, groups WHERE message_id=? and groups.group_id = articles.group_id', (message_id,)).fetchall():
-      group_rows.append((row[0], row[1]))
-      groups.append(row[0])
     if os.path.exists(os.path.join('articles', 'censored', message_id)):
       self.log(self.logger.DEBUG, "already move, still handing over to redistribute further")
     elif os.path.exists(os.path.join("articles", message_id)):
       self.log(self.logger.DEBUG, "moving %s to articles/censored/" % message_id)
       os.rename(os.path.join("articles", message_id), os.path.join("articles", "censored", message_id))
-      self.log(self.logger.DEBUG, "deleting groups/%s/%i" % (row[0], row[1]))
-      for group in group_rows:
+      for row in self.dropperdb.execute('SELECT group_name, article_id from articles, groups WHERE message_id=? and groups.group_id = articles.group_id', (message_id,)).fetchall():
+        self.log(self.logger.DEBUG, "deleting groups/%s/%i" % (row[0], row[1]))
         try:
           # FIXME race condition with dropper if currently processing this very article
-          os.unlink(os.path.join("groups", str(group[0]), str(group[1])))
+          os.unlink(os.path.join("groups", str(row[0]), str(row[1])))
         except Exception as e:
-          self.log(self.logger.WARNING, "could not delete %s: %s" % (os.path.join("groups", str(group[0]), str(group[1])), e))
+          self.log(self.logger.WARNING, "could not delete %s: %s" % (os.path.join("groups", str(row[0]), str(row[1])), e))
     elif not os.path.exists(os.path.join('articles', 'censored', message_id)):
       f = open(os.path.join('articles', 'censored', message_id), 'w')
       f.close()
@@ -1068,7 +1051,7 @@ class main(threading.Thread):
             thumb_name = self.gen_thumb(out_link, imagehash)
           except Exception as e:
             thumb_name = 'invalid'
-            self.log(e, 3)
+            self.log(self.logger.WARNING, 'Error creating thumb in %s: %s' % (image_name, e))
           os.remove(tmp_link)
           #os.rename('tmp/tmpImage', 'html/img/' + imagelink) # damn remote file systems and stuff
         elif part.get_content_type().lower() in ('application/pdf', 'application/postscript', 'application/ps'):
@@ -1277,7 +1260,7 @@ class main(threading.Thread):
   def generate_board(self, group_id):
     threads_per_page = self.threads_per_page
     pages_per_board = self.pages_per_board
-    boardlist, full_board_name_unquoted, full_board_name, board_name_unquoted, board_name = self.generate_board_list(group_id)
+    boardlist, full_board_name_unquoted, board_name_unquoted, board_name = self.generate_board_list(group_id)
 
     threads = int(self.sqlite.execute('SELECT count(group_id) FROM (SELECT group_id FROM articles WHERE group_id = ? AND (parent = "" OR parent = article_uid) LIMIT ?)', (group_id, threads_per_page * pages_per_board)).fetchone()[0])
     if self.enable_archive and ((int(self.sqlite.execute("SELECT flags FROM groups WHERE group_id=?", (group_id,)).fetchone()[0]) & self.cache['flags']['no-archive']) != self.cache['flags']['no-archive']):
@@ -1445,7 +1428,7 @@ class main(threading.Thread):
     return parsed_data
 
   def generate_archive(self, group_id):
-    boardlist, full_board_name_unquoted, full_board_name, board_name_unquoted, board_name = self.generate_board_list(group_id, True)
+    boardlist, full_board_name_unquoted, board_name_unquoted, board_name = self.generate_board_list(group_id, True)
     # Get threads count offsetting threads in main board pages
     offset = self.threads_per_page * self.pages_per_board
     # we want anoter threads_per_page setting for archive pages
@@ -1479,7 +1462,7 @@ class main(threading.Thread):
       f.close()
 
   def generate_recent(self, group_id):
-    boardlist, full_board_name_unquoted, full_board_name, board_name_unquoted, board_name = self.generate_board_list(group_id, True)
+    boardlist, full_board_name_unquoted, board_name_unquoted, board_name = self.generate_board_list(group_id, True)
     # get only freshly updated threads
     timestamp = int(time.time()) - 3600*24
     threads = list()
@@ -1504,24 +1487,6 @@ class main(threading.Thread):
     f.close()
     del boardlist
     del threads
-
-  def frontend_icon_markup(self, frontend):
-    icons = {
-      'web.overchan.imoutochan' : 'imoutochan.png',
-      'web.overchan.sarah.ano': 'sarah.png',
-      'import.oniichan' : 'oniichan.png',
-      'web.overchan.psyops.mil': 'psyops.png',
-      'slamspeech.ano' : 'slamspeech.png',
-      'web.overchan.deliciouscake.ano' : 'dcake.png',
-      'web.overchan.sfor.ano' : 'sfor.png',
-      'web.overchan.lolz' : 'roger.png',
-      'web.overchan.a2ki' : 'a2ki.png',
-    }
-    icon = 'nntp.png'
-    if frontend in icons:
-      icon = icons[frontend]
-    frontend = self.basicHTMLencode(frontend.replace('"', ''))
-    return '<img class="frontend_icon" src="/static/%s" title="%s" />' % (icon, frontend)
 
   def frontend(self, uid):
     if '@' in uid:
@@ -1565,7 +1530,7 @@ class main(threading.Thread):
     if thread_page > 0 and thread_page % 2 == 0:
       thread_page -= 1
     self.log(self.logger.INFO, 'generating %s/thread-%s%s.html' % (self.output_directory, root_message_id_hash[:10], thread_postfix))
-    boardlist, full_board_name_unquoted, full_board_name, board_name_unquoted, board_name = self.generate_board_list(root_row[10], True)
+    boardlist, full_board_name_unquoted, board_name_unquoted, board_name = self.generate_board_list(root_row[10], True)
 
     threads = list()
     threads.append(
@@ -1660,7 +1625,7 @@ class main(threading.Thread):
         board_name = full_board_name.split('.', 1)[1]
     if boardlist: boardlist[-1] = boardlist[-1][:-1]
     if group_id != '':
-      return boardlist, full_board_name_unquoted, full_board_name, board_name_unquoted, board_name
+      return boardlist, full_board_name_unquoted, board_name_unquoted, board_name
     else:
       return boardlist
 
@@ -1715,18 +1680,18 @@ class main(threading.Thread):
       t_engine_mappings_overview['comment_count'] = self.sqlite.execute('SELECT count(article_uid) FROM articles WHERE \
           parent = ? AND parent != article_uid AND group_id = ?', (row[4], news_board[0])).fetchone()[0]
     weekdays = ('Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday')
-    max = 0
+    max_post = 0
     stats = list()
     bar_length = 20
     days = 30
     totals = int(self.sqlite.execute('SELECT count(1) FROM articles WHERE sent > strftime("%s", "now", "-' + str(days) + ' days")').fetchone()[0])
     stats.append(self.template_stats_usage_row.replace('%%postcount%%', str(totals)).replace('%%date%%', 'all posts').replace('%%weekday%%', '').replace('%%bar%%', 'since %s days' % days))
     for row in self.sqlite.execute('SELECT count(1) as counter, strftime("%Y-%m-%d",  sent, "unixepoch") as day, strftime("%w", sent, "unixepoch") as weekday FROM articles WHERE sent > strftime("%s", "now", "-' + str(days) + ' days") GROUP BY day ORDER BY day DESC').fetchall():
-      if row[0] > max:
-        max = row[0]
+      if row[0] > max_post:
+        max_post = row[0]
       stats.append((row[0], row[1], weekdays[int(row[2])]))
     for index in range(1, len(stats)):
-      graph = '=' * int(float(stats[index][0])/max*bar_length)
+      graph = '=' * int(float(stats[index][0])/max_post*bar_length)
       if len(graph) == 0:
         graph = '&nbsp;'
       stats[index] = self.template_stats_usage_row.replace('%%postcount%%', str(stats[index][0])).replace('%%date%%', stats[index][1]).replace('%%weekday%%', stats[index][2]).replace('%%bar%%', graph)
@@ -1742,45 +1707,22 @@ class main(threading.Thread):
       ORDER BY sent DESC LIMIT ?', (self.cache['flags']['hidden'], self.cache['flags']['hidden'], self.cache['flags']['no-overview'], self.cache['flags']['no-overview'], str(postcount))).fetchall():
       sent = datetime.utcfromtimestamp(row[0]).strftime('%d.%m.%Y (%a) %H:%M UTC')
       board = self.basicHTMLencode(row[1].replace('"', '')).split('.', 1)[1]
-      author = row[2]
+      author = row[2][:12]
       articlehash = sha1(row[4]).hexdigest()[:10]
-      if row[5] == '' or row[5] == row[4]:
+      if row[5] in ('', row[4]):
         # root post
-        subject = row[3]
         parent = articlehash
+        subject = row[3][:60]
+        if subject in ('', 'None'):
+          subject = self.sqlite.execute('SELECT message FROM articles WHERE article_uid = ?', (row[4],)).fetchone()[0][:60]
       else:
         parent = sha1(row[5]).hexdigest()[:10]
-        try:
-          subject = self.sqlite.execute('SELECT subject FROM articles WHERE article_uid = ?', (row[5],)).fetchone()[0][:60]
-        except:
-          subject = 'wrong, fix me!'
-      # show first message words as subject in case it is None or lost
-      if subject == 'None' or subject == '':
-        # if root post
-        if row[5] == '' or row[5] == row[4]:
-          subject = self.sqlite.execute('SELECT message FROM articles WHERE article_uid = ?', (row[4],)).fetchone()[0][:60]
-        else:
+        subject = self.sqlite.execute('SELECT subject FROM articles WHERE article_uid = ?', (row[5],)).fetchone()[0][:60]
+        if subject in ('', 'None'):
           subject = self.sqlite.execute('SELECT message FROM articles WHERE article_uid = ?', (row[5],)).fetchone()[0][:60]
-      if len(subject) > 60:
-        subject = subject[:60]
-      if len(author) > 12:
-        author = author[:12]
       if subject == '':
         subject = 'None'
       stats.append(self.template_latest_posts_row.replace('%%sent%%', sent).replace('%%board%%', board).replace('%%parent%%', parent).replace('%%articlehash%%', articlehash).replace('%%author%%', author).replace('%%subject%%', subject))
-    #for row in self.sqlite.execute('SELECT articles.last_update, group_name, sender, subject, article_uid FROM articles, groups WHERE (parent = "" or parent = article_uid) AND articles.group_id = groups.group_id ORDER BY articles.last_update DESC LIMIT ' + str(postcount)).fetchall():
-    #  last_update = datetime.utcfromtimestamp(row[0]).strftime('%d.%m.%Y (%a) %H:%M UTC')
-    #  board = self.basicHTMLencode(row[1].replace('"', '')).split('.', 1)[1]
-    #  subject = row[3]
-    #  parent = sha1(row[4]).hexdigest()[:10]
-    #  try:
-    #    childrow = self.sqlite.execute('SELECT sender, article_uid FROM articles WHERE parent = ? ORDER BY sent DESC LIMIT 1', (row[4],)).fetchone()
-    #    articlehash = sha1(childrow[1]).hexdigest()[:10]
-    #    author = childrow[0]
-    #  except:
-    #    articlehash = parent
-    #    author = row[2]
-    #  stats.append(self.template_latest_posts_row.replace('%%sent%%', last_update).replace('%%board%%', board).replace('%%parent%%', parent).replace('%%articlehash%%', articlehash).replace('%%author%%', author).replace('%%subject%%', subject))
     overview_latest_posts = self.template_latest_posts
     overview_latest_posts = overview_latest_posts.replace('%%latest_posts_rows%%', ''.join(stats))
     t_engine_mappings_overview['latest_posts'] = overview_latest_posts
