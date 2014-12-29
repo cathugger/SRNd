@@ -151,6 +151,11 @@ class main(threading.Thread):
       try:    self.censored_file = args['censored_file']
       except: pass
 
+    self.use_unsecure_aliases = False
+    if 'use_unsecure_aliases' in args:
+      if args['use_unsecure_aliases'].lower() == 'true':
+        self.sync_on_startup = True
+
     for x in (self.no_file, self.audio_file, self.invalid_file, self.document_file, self.css_file, self.censored_file):
       cheking_file = os.path.join(self.template_directory, x)
       if not os.path.exists(cheking_file):
@@ -560,7 +565,7 @@ class main(threading.Thread):
 
   def overchan_aliases_update(self, base64_blob, group_name):
     try:
-      ph_name, ph_shortname, link, tag, description =  [base64.urlsafe_b64decode(x) for x in base64_blob.split(':')]
+      ph_name, ph_shortname, link, tag, description = [base64.urlsafe_b64decode(x) for x in base64_blob.split(':')]
     except:
       self.log(self.logger.WARNING, 'get corrupt data for %s' % group_name)
       return
@@ -1278,7 +1283,7 @@ class main(threading.Thread):
   def generate_board(self, group_id):
     threads_per_page = self.threads_per_page
     pages_per_board = self.pages_per_board
-    boardlist, full_board_name_unquoted, board_name_unquoted, board_name = self.generate_board_list(group_id)
+    boardlist, full_board_name_unquoted, board_name_unquoted, board_name, board_description = self.generate_board_list(group_id)
 
     threads = int(self.sqlite.execute('SELECT count(group_id) FROM (SELECT group_id FROM articles WHERE group_id = ? AND (parent = "" OR parent = article_uid) LIMIT ?)', (group_id, threads_per_page * pages_per_board)).fetchone()[0])
     if self.enable_archive and ((int(self.sqlite.execute("SELECT flags FROM groups WHERE group_id=?", (group_id,)).fetchone()[0]) & self.cache['flags']['no-archive']) != self.cache['flags']['no-archive']):
@@ -1315,6 +1320,8 @@ class main(threading.Thread):
       t_engine_mapper_board['full_board'] = full_board_name_unquoted
       t_engine_mapper_board['board'] = board_name
       t_engine_mapper_board['target'] = "{0}-1.html".format(board_name_unquoted)
+      t_engine_mapper_board['board_description'] = board_description
+
       f = codecs.open(os.path.join(self.output_directory, '{0}-{1}.html'.format(board_name_unquoted, board)), 'w', 'UTF-8')
       f.write(self.t_engine_board.substitute(t_engine_mapper_board))
       f.close()
@@ -1446,7 +1453,7 @@ class main(threading.Thread):
     return parsed_data
 
   def generate_archive(self, group_id):
-    boardlist, full_board_name_unquoted, board_name_unquoted, board_name = self.generate_board_list(group_id, True)
+    boardlist, full_board_name_unquoted, board_name_unquoted, board_name, board_description = self.generate_board_list(group_id, True)
     # Get threads count offsetting threads in main board pages
     offset = self.threads_per_page * self.pages_per_board
     # we want anoter threads_per_page setting for archive pages
@@ -1475,12 +1482,14 @@ class main(threading.Thread):
       t_engine_mapper_board['full_board'] = full_board_name_unquoted
       t_engine_mapper_board['board'] = board_name
       t_engine_mapper_board['target'] = "{0}-archive-1.html".format(board_name_unquoted)
+      t_engine_mapper_board['board_description'] = board_description
+
       f = codecs.open(os.path.join(self.output_directory, '{0}-archive-{1}.html'.format(board_name_unquoted, board)), 'w', 'UTF-8')
       f.write(self.t_engine_board_archive.substitute(t_engine_mapper_board))
       f.close()
 
   def generate_recent(self, group_id):
-    boardlist, full_board_name_unquoted, board_name_unquoted, board_name = self.generate_board_list(group_id, True)
+    boardlist, full_board_name_unquoted, board_name_unquoted, board_name, board_description = self.generate_board_list(group_id, True)
     # get only freshly updated threads
     timestamp = int(time.time()) - 3600*24
     threads = list()
@@ -1500,6 +1509,8 @@ class main(threading.Thread):
     t_engine_mapper_board_recent['full_board'] = full_board_name_unquoted
     t_engine_mapper_board_recent['board'] = board_name
     t_engine_mapper_board_recent['target'] = "{0}-recent.html".format(board_name_unquoted)
+    t_engine_mapper_board_recent['board_description'] = board_description
+
     f = codecs.open(os.path.join(self.output_directory, '{0}-recent.html'.format(board_name_unquoted)), 'w', 'UTF-8')
     f.write(self.t_engine_board_recent.substitute(t_engine_mapper_board_recent))
     f.close()
@@ -1548,7 +1559,7 @@ class main(threading.Thread):
     if thread_page > 0 and thread_page % 2 == 0:
       thread_page -= 1
     self.log(self.logger.INFO, 'generating %s/thread-%s%s.html' % (self.output_directory, root_message_id_hash[:10], thread_postfix))
-    boardlist, full_board_name_unquoted, board_name_unquoted, board_name = self.generate_board_list(root_row[10], True)
+    boardlist, full_board_name_unquoted, board_name_unquoted, board_name, board_description = self.generate_board_list(root_row[10], True)
 
     threads = list()
     threads.append(
@@ -1562,9 +1573,10 @@ class main(threading.Thread):
     t_engine_mappings_thread_single['thread_id'] = root_message_id_hash
     t_engine_mappings_thread_single['board'] = board_name
     t_engine_mappings_thread_single['full_board'] = full_board_name_unquoted
-    t_engine_mappings_thread_single['target'] = "{0}-1.html".format(board_name)
+    t_engine_mappings_thread_single['target'] = "{0}-1.html".format(board_name_unquoted)
     t_engine_mappings_thread_single['subject'] = root_row[2][:60]
     t_engine_mappings_thread_single['thread_single'] = ''.join(threads)
+    t_engine_mappings_thread_single['board_description'] = board_description
 
     f = codecs.open(os.path.join(self.output_directory, 'thread-{0}{1}.html'.format(root_message_id_hash[:10], thread_postfix)), 'w', 'UTF-8')
     f.write(self.t_engine_thread_single.substitute(t_engine_mappings_thread_single))
@@ -1583,10 +1595,18 @@ class main(threading.Thread):
     t_engine_mappings_menu_entry = dict()
     menu_entries = list()
     menu_entries.append('<li><a href="/" target="_top">Main</a></li><br />\n')
-    for group_row in self.sqlite.execute('SELECT group_name, group_id FROM groups WHERE \
+    for group_row in self.sqlite.execute('SELECT group_name, group_id, ph_name, link FROM groups WHERE \
       blocked = 0 AND ((cast(groups.flags as integer) & ?) != ?) ORDER by group_name ASC', (self.cache['flags']['hidden'], self.cache['flags']['hidden'])).fetchall():
-      t_engine_mappings_menu_entry['group_name'] = group_row[0].split('.', 1)[1].replace('"', '').replace('/', '')
-      t_engine_mappings_menu_entry['group_name_encoded'] = self.basicHTMLencode(t_engine_mappings_menu_entry['group_name'])
+      if self.use_unsecure_aliases and group_row[3] != '':
+        group_name = group_row[3]
+      else:
+        group_name = group_row[0].split('.', 1)[1].replace('"', '').replace('/', '') + '-1.html'
+      if group_row[2] != '':
+        group_name_encoded = self.basicHTMLencode(group_row[2].replace('"', '').replace('/', ''))
+      else:
+        group_name_encoded = self.basicHTMLencode(group_row[0].split('.', 1)[1].replace('"', '').replace('/', ''))
+      t_engine_mappings_menu_entry['group_name'] = group_name
+      t_engine_mappings_menu_entry['group_name_encoded'] = group_name_encoded
       # get fresh posts count
       timestamp = int(time.time()) - 3600*24
       t_engine_mappings_menu_entry['postcount'] = self.sqlite.execute('SELECT count(article_uid) FROM articles WHERE group_id = ? AND sent > ?', (group_row[1], timestamp)).fetchone()[0]
@@ -1625,25 +1645,38 @@ class main(threading.Thread):
       self.cache['moder_flags'][row[0]] = row[1]
 
   def generate_board_list(self, group_id='', selflink=False):
-    full_board_name_unquoted = full_board_name = board_name_unquoted = board_name = ''
+    full_board_name_unquoted = full_board_name = board_name_unquoted = board_name = board_description = ''
     boardlist = list()
     # FIXME: cache this shit somewhere
-    for group_row in self.sqlite.execute('SELECT group_name, group_id FROM groups \
+    for group_row in self.sqlite.execute('SELECT group_name, group_id, ph_name, ph_shortname, link, description FROM groups \
       WHERE blocked = 0 AND ((cast(flags as integer) & ?) != ? OR group_id = ?) ORDER by group_name ASC', (self.cache['flags']['hidden'], self.cache['flags']['hidden'], group_id)).fetchall():
       current_group_name = group_row[0].split('.', 1)[1].replace('"', '').replace('/', '')
-      current_group_name_encoded = self.basicHTMLencode(current_group_name)
-      if group_row[1] != group_id or selflink:
-        boardlist.append(' <a href="%s-1.html">%s</a> |' % (current_group_name, current_group_name_encoded))
+      if group_row[3] != '':
+        current_group_name_encoded = self.basicHTMLencode(group_row[3])
       else:
-        boardlist.append(' ' + current_group_name_encoded + ' |')
+        current_group_name_encoded = self.basicHTMLencode(current_group_name)
+      if self.use_unsecure_aliases and group_row[4] != '':
+        board_link = group_row[4]
+      else:
+        board_link = '%s-1.html' % current_group_name
+      if group_row[1] != group_id or selflink:
+        boardlist.append(u' <a href="{0}">{1}</a> /'.format(board_link, current_group_name_encoded))
+      else:
+        boardlist.append(' ' + current_group_name_encoded + ' /')
       if group_row[1] == group_id:
         full_board_name_unquoted = group_row[0].replace('"', '').replace('/', '')
         full_board_name = self.basicHTMLencode(full_board_name_unquoted)
         board_name_unquoted = full_board_name_unquoted.split('.', 1)[1]
-        board_name = full_board_name.split('.', 1)[1]
+        board_description = group_row[5]
+        if group_row[2] != '':
+          board_name = self.basicHTMLencode(group_row[2])
+        else:
+          board_name = full_board_name.split('.', 1)[1]
+    if not self.use_unsecure_aliases:
+      board_description = self.markup_parser(self.basicHTMLencode(board_description))
     if boardlist: boardlist[-1] = boardlist[-1][:-1]
     if group_id != '':
-      return boardlist, full_board_name_unquoted, board_name_unquoted, board_name
+      return boardlist, full_board_name_unquoted, board_name_unquoted, board_name, board_description
     else:
       return boardlist
 
@@ -1719,12 +1752,15 @@ class main(threading.Thread):
     del stats[:]
 
     postcount = 50
-    for row in self.sqlite.execute('SELECT sent, group_name, sender, subject, article_uid, parent FROM articles, groups WHERE \
+    for row in self.sqlite.execute('SELECT sent, group_name, sender, subject, article_uid, parent, ph_name FROM articles, groups WHERE \
       ((cast(groups.flags as integer) & ?) != ?) AND ((cast(groups.flags as integer) & ?) != ?) AND groups.blocked = 0 AND articles.group_id = groups.group_id AND \
       (articles.parent = "" OR articles.parent = articles.article_uid OR articles.parent IN (SELECT article_uid FROM articles)) \
       ORDER BY sent DESC LIMIT ?', (self.cache['flags']['hidden'], self.cache['flags']['hidden'], self.cache['flags']['no-overview'], self.cache['flags']['no-overview'], str(postcount))).fetchall():
       sent = datetime.utcfromtimestamp(row[0]).strftime('%d.%m.%Y (%a) %H:%M UTC')
-      board = self.basicHTMLencode(row[1].replace('"', '')).split('.', 1)[1]
+      if row[6] != '':
+        board = self.basicHTMLencode(row[6].replace('"', ''))
+      else:
+        board = self.basicHTMLencode(row[1].replace('"', '')).split('.', 1)[1]
       author = row[2][:12]
       articlehash = sha1(row[4]).hexdigest()[:10]
       if row[5] in ('', row[4]):
@@ -1746,10 +1782,14 @@ class main(threading.Thread):
     t_engine_mappings_overview['latest_posts'] = overview_latest_posts
     del stats[:]
 
-    for row in self.sqlite.execute('SELECT count(1) as counter, group_name FROM articles, groups WHERE \
+    for row in self.sqlite.execute('SELECT count(1) as counter, group_name, ph_name FROM articles, groups WHERE \
       ((cast(groups.flags as integer) & ?) != ?) and groups.blocked = 0 AND articles.group_id = groups.group_id GROUP BY \
       articles.group_id ORDER BY counter DESC', (self.cache['flags']['hidden'], self.cache['flags']['hidden'])).fetchall():
-      stats.append(self.template_stats_boards_row.replace('%%postcount%%', str(row[0])).replace('%%board%%', self.basicHTMLencode(row[1])))
+      if row[2] != '':
+        board = self.basicHTMLencode(row[2].replace('"', ''))
+      else:
+        board = self.basicHTMLencode(row[1].replace('"', ''))
+      stats.append(self.template_stats_boards_row.replace('%%postcount%%', str(row[0])).replace('%%board%%', board))
     overview_stats_boards = self.template_stats_boards
     overview_stats_boards = overview_stats_boards.replace('%%stats_boards_rows%%', ''.join(stats))
     t_engine_mappings_overview['stats_boards'] = overview_stats_boards
