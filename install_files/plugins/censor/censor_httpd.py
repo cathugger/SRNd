@@ -1,5 +1,6 @@
 #!/usr/bin/python
 
+import base64
 import codecs
 import os
 import random
@@ -186,20 +187,30 @@ class censor(BaseHTTPRequestHandler):
     )
     flags = post_vars.getlist("flags")
     result = 0
+    comment = ''
+    aliases = ('ph_name', 'ph_shortname', 'link', 'tag', 'description',)
     if 'board_name' in post_vars:
       new_board = post_vars['board_name'].value.replace("<", "&lt;").replace(">", "&gt;").replace("#", "-").strip().lower()
       if new_board != '' and not new_board.startswith('overchan.'):
         new_board = 'overchan.' + new_board
     else:
       new_board = ''
+    aliases_new = tuple([post_vars.getvalue(x, '').strip().decode('utf-8') for x in aliases])
+    aliases_blob = ':'.join([base64.urlsafe_b64encode(post_vars.getvalue(x, '').strip()) for x in aliases])
     result = sum([int(flag) for flag in flags])
     if new_board != '' and board_id == 'new':
-      self.origin.censor.add_article((self.origin.sessions[self.session][1], "overchan-board-add {0} {1}#request for create {0}, flags {1}".format(new_board, result)), "httpd")
+      self.origin.censor.add_article((self.origin.sessions[self.session][1], "overchan-board-add {0} {1} {2}#request for create {0}, flags {1}".format(new_board, result, aliases_blob)), "httpd")
       return
-    board_name, old_flags = self.origin.sqlite_overchan.execute('SELECT group_name, flags FROM groups WHERE group_id = ?', (board_id,)).fetchone()
-    if int(old_flags) == result:
-      return
-    self.origin.censor.add_article((self.origin.sessions[self.session][1], "overchan-board-mod {0} {1}#Change flags {2}->{1}".format(board_name, result, old_flags)), "httpd")
+    row = self.origin.sqlite_overchan.execute('SELECT group_name, flags, ph_name, ph_shortname, link, tag, description FROM groups WHERE group_id = ?', (board_id,)).fetchone()
+    (board_name, old_flags), aliases_old = row[:2], row[2:]
+    if int(old_flags) != result:
+      comment = 'Change flags {1}->{0}'.format(result, old_flags)
+    if aliases_old != aliases_new:
+      comment += ' change alias'
+    else:
+      aliases_blob = ''
+    if comment == '': return
+    self.origin.censor.add_article((self.origin.sessions[self.session][1], "overchan-board-mod {0} {1} {2}#{3}".format(board_name, result, aliases_blob, comment)), "httpd")
 
   def get_senderhash(self):
     if 'X-I2P-DestHash' in self.headers:
@@ -322,14 +333,14 @@ class censor(BaseHTTPRequestHandler):
     self.wfile.write(out)
 
   def send_modify_board(self, board_id):
-    new_board = False
     if board_id.startswith('id='):
-      row = self.origin.sqlite_overchan.execute("SELECT group_id, group_name, flags FROM groups WHERE group_id = ?", (board_id[3:],)).fetchone()
+      row = self.origin.sqlite_overchan.execute("SELECT group_id, group_name, flags, ph_name, ph_shortname, link, tag, description \
+          FROM groups WHERE group_id = ?", (board_id[3:],)).fetchone()
     elif board_id.startswith('name='):
-      row = self.origin.sqlite_overchan.execute("SELECT group_id, group_name, flags FROM groups WHERE group_name = ?", (board_id[5:],)).fetchone()
+      row = self.origin.sqlite_overchan.execute("SELECT group_id, group_name, flags, ph_name, ph_shortname, link, tag, description \
+        FROM groups WHERE group_name = ?", (board_id[5:],)).fetchone()
     elif board_id.startswith('new'):
-      row = ('new', 'overchan.<input type="text" name="board_name" value="" class="posttext"/>', '0')
-      new_board = True
+      row = ('new', 'overchan.<input type="text" name="board_name" value="" class="posttext"/>', '0', '', '', '', '', '')
     else:
       return ''
     if not row:
@@ -358,6 +369,11 @@ class censor(BaseHTTPRequestHandler):
     form_data['board_id'] = str(row[0])
     form_data['board'] = row[1]
     form_data['modify_key_flagset'] = ''.join(flaglist)
+    form_data['ph_name'] = row[3]
+    form_data['ph_shortname'] = row[4]
+    form_data['link'] = row[5]
+    form_data['tag'] = row[6]
+    form_data['description'] = row[7]
     del flaglist[:]
     return self.origin.t_engine_modify_board.substitute(form_data)
 

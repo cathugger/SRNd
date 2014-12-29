@@ -1,4 +1,5 @@
 #!/usr/bin/python
+import base64
 import codecs
 import os
 import re
@@ -426,7 +427,11 @@ class main(threading.Thread):
         self.sqlite.execute('INSERT INTO flags (flag_name, flag) VALUES (?,?)', (flag_name, str(flag)))
       except:
         pass
-
+    for alias in ('ph_name', 'ph_shortname', 'link', 'tag', 'description',):
+      try:
+        self.sqlite.execute('ALTER TABLE groups ADD COLUMN {0} text DEFAULT ""'.format(alias))
+      except:
+        pass
     try:
       self.sqlite.execute('ALTER TABLE groups ADD COLUMN flags text DEFAULT "0"')
     except:
@@ -521,25 +526,25 @@ class main(threading.Thread):
       self.sqlite_conn.commit()
 
   def overchan_board_add(self, args):
-    group_name = args[0]
+    group_name = args[0].lower()
     if '/' in group_name:
       self.log(self.logger.WARNING, 'got overchan-board-add with invalid group name: \'%s\', ignoring' % group_name)
       return
     if len(args) > 1:
       flags = int(args[1])
     else:
-      try:
-        flags = int(self.sqlite.execute("SELECT flags FROM groups WHERE group_name=?", (group_name,)).fetchone()[0])
-        flags ^= flags & self.cache['flags']['blocked']
-      except:
-        flags = 0
+      flags = 0
     try:
+      flags = int(self.sqlite.execute("SELECT flags FROM groups WHERE group_name=?", (group_name,)).fetchone()[0])
+      flags ^= flags & self.cache['flags']['blocked']
       self.sqlite.execute('UPDATE groups SET blocked = 0, flags = ? WHERE group_name = ?', (str(flags), group_name))
       self.log(self.logger.INFO, 'unblocked existing board: \'%s\'' % group_name)
     except:
       self.sqlite.execute('INSERT INTO groups(group_name, article_count, last_update, flags) VALUES (?,?,?,?)', (group_name, 0, int(time.time()), flags))
       self.log(self.logger.INFO, 'added new board: \'%s\'' % group_name)
     self.sqlite_conn.commit()
+    if len(args) > 2:
+      self.overchan_aliases_update(args[2], group_name)
     self.regenerate_all_html()
 
   def overchan_board_del(self, group_name, flags=0):
@@ -553,13 +558,24 @@ class main(threading.Thread):
     except:
       self.log(self.logger.WARNING, 'should delete board %s but there is no board with that name' % group_name)
 
+  def overchan_aliases_update(self, base64_blob, group_name):
+    try:
+      ph_name, ph_shortname, link, tag, description =  [base64.urlsafe_b64decode(x) for x in base64_blob.split(':')]
+    except:
+      self.log(self.logger.WARNING, 'get corrupt data for %s' % group_name)
+      return
+    self.sqlite.execute('UPDATE groups SET ph_name= ?, ph_shortname = ?, link = ?, tag = ?, description = ? \
+        WHERE group_name = ?', (ph_name.decode('UTF-8')[:42], ph_shortname.decode('UTF-8')[:42], link.decode('UTF-8')[:1000], tag.decode('UTF-8')[:42], description.decode('UTF-8')[:25000], group_name))
+    self.sqlite_conn.commit()
+
   def handle_control(self, lines, timestamp):
     # FIXME how should board-add and board-del react on timestamps in the past / future
     self.log(self.logger.DEBUG, 'got control message: %s' % lines)
     for line in lines.split("\n"):
       self.log(self.logger.DEBUG, line)
       if line.lower().startswith('overchan-board-mod'):
-        group_name, flags = line.split(" ", 2)[1:]
+        get_data = line.split(" ")[1:]
+        group_name, flags = get_data[:2]
         flags = int(flags)
         group_id = self.sqlite.execute("SELECT group_id FROM groups WHERE group_name=?", (group_name,)).fetchone()[0]
         if group_id == '' or ((flags & self.cache['flags']['blocked']) != self.cache['flags']['blocked'] and self.check_board_flags(group_id, 'blocked')):
@@ -569,10 +585,12 @@ class main(threading.Thread):
         else:
           self.sqlite.execute('UPDATE groups SET flags = ? WHERE group_name = ?', (flags, group_name))
           self.sqlite_conn.commit()
-          self.generate_overview()
-          self.generate_menu()
+        if len(get_data) > 2:
+          self.overchan_aliases_update(get_data[2], group_name)
+        self.generate_overview()
+        self.generate_menu()
       elif line.lower().startswith('overchan-board-add'):
-        self.overchan_board_add(line.lower().split(" ")[1:])
+        self.overchan_board_add(line.split(" ")[1:])
       elif line.lower().startswith("overchan-board-del"):
         self.overchan_board_del(line.lower().split(" ")[1])
       elif line.lower().startswith("overchan-delete-attachment "):
