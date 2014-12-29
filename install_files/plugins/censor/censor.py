@@ -60,8 +60,8 @@ class main(threading.Thread):
     self.log(self.logger.DEBUG, 'initializing censor_httpd..')
     args['censor'] = self
     self.httpd = censor_httpd.censor_httpd("censor_httpd", self.logger, args)
-    self.db_version = 3
-    self.all_flags = "511"
+    self.db_version = 5
+    self.all_flags = "1023"
     self.queue = Queue.Queue()
     self.command_mapper = dict()
     self.command_mapper['delete'] = self.handle_delete
@@ -70,6 +70,7 @@ class main(threading.Thread):
     self.command_mapper['srnd-acl-mod'] = self.handle_srnd_acl_mod
     self.command_mapper['overchan-board-add'] = self.handle_board_add
     self.command_mapper['overchan-board-del'] = self.handle_board_del
+    self.command_mapper['overchan-board-mod'] = self.handle_overchan_board_mod
 
   def shutdown(self):
     self.httpd.shutdown()
@@ -136,6 +137,20 @@ class main(threading.Thread):
       self.censordb.execute("CREATE UNIQUE INDEX IF NOT EXISTS sig_cache_message_uid_idx ON signature_cache(message_uid);")
       self.censordb.execute('UPDATE config SET value = "3" WHERE key = "db_version"')
       self.sqlite_censor_conn.commit()
+      current_version = 3
+    if current_version == 3:
+      self.log(self.logger.INFO, "updating db from version %i to version %i" % (current_version, 4))
+      self.censordb.execute('INSERT INTO commands (command, flag) VALUES (?,?)', ("overchan-board-mod", str(0b1000000000)))
+      self.censordb.execute('UPDATE config SET value = "4" WHERE key = "db_version"')
+      self.sqlite_censor_conn.commit()
+      current_version = 4
+    if current_version == 4:
+      self.log(self.logger.INFO, "updating db from version %i to version %i" % (current_version, 5))
+      self.censordb.execute("DROP TABLE log")
+      self.censordb.execute("CREATE TABLE log (id INTEGER PRIMARY KEY, command_id INTEGER, accepted INTEGER, data TEXT, key_id INTEGER, reason_id INTEGER, comment TEXT, timestamp INTEGER, UNIQUE(key_id, command_id, data, comment))")
+      self.censordb.execute('UPDATE config SET value = "5" WHERE key = "db_version"')
+      self.sqlite_censor_conn.commit()
+      current_version = 5
 
   def run(self):
     #if self.should_terminate:
@@ -449,8 +464,13 @@ class main(threading.Thread):
 
   def handle_srnd_acl_mod(self, line):
     self.log(self.logger.DEBUG, "handle acl_mod: %s" % line)
+    flags = '0'
+    local_nick = ''
     try:
-      key, flags, local_nick = line.split(" ", 3)[1:]
+      row = line.split(" ", 3)[1:]
+      key = row[0]
+      if len(row) > 1: flags = row[1]
+      if len(row) > 2: local_nick = row[2]
       if int(self.censordb.execute('SELECT count(key) FROM keys WHERE key = ?', (key,)).fetchone()[0]) == 0:
         self.log(self.logger.DEBUG, "handle acl_mod: new key")
         self.censordb.execute("INSERT INTO keys (key, local_name, flags) VALUES (?, ?, ?)", (key, local_nick, flags))
@@ -463,26 +483,19 @@ class main(threading.Thread):
     return (key, None)
 
   def handle_delete(self, line, debug=False):
-    #time_fs = float(0)
-    #time_sql = float(0)
-    #self.log("got deletion request: %s" % line, 3)
     command, message_id = line.split(" ", 1)
     self.log(self.logger.DEBUG, "should delete %s" % message_id)
     
-    #timestamp_start = time.time()
     if os.path.exists(os.path.join("articles", "restored", message_id)):
-      #time_fs += time.time() - timestamp_start
       self.log(self.logger.DEBUG, "%s has been restored, ignoring delete" % message_id)
-      #if debug:
-      #  return (message_id, None, time_fs, time_sql)
       return (message_id, None)
-
-    row = self.overchandb.execute('SELECT parent from articles WHERE article_uid = ?', (message_id,)).fetchone()
-    if row != None:
-      if row[0] == '' or row[0] == 'message_id':
-        self.log(self.logger.DEBUG, "article is a root post, deleting whole thread")
-        for row in self.overchandb.execute('SELECT article_uid from articles where parent = ?', (message_id,)).fetchall():
-          self.delete_article(row[0])
+    if command == 'delete':
+      row = self.overchandb.execute('SELECT parent from articles WHERE article_uid = ?', (message_id,)).fetchone()
+      if row != None:
+        if row[0] == '' or row[0] == message_id:
+          self.log(self.logger.DEBUG, "article is a root post, deleting whole thread")
+          for row in self.overchandb.execute('SELECT article_uid from articles where parent = ?', (message_id,)).fetchall():
+            self.delete_article(row[0])
     return self.delete_article(message_id)
 
   def delete_article(self, message_id):
@@ -515,19 +528,28 @@ class main(threading.Thread):
     #if debug:
     #  return (message_id, groups, time_fs, time_sql)
     return (message_id, groups)
-  
+
   def handle_board_add(self, line):
     # overchan specific, gets handled at overchan plugin via redistribute_command()
     group_name = line.lower().split(' ')[1]
     return (group_name, (group_name,))
-  
+
   def handle_board_del(self, line):
     # overchan specific, gets handled at overchan plugin via redistribute_command()
     group_name = line.lower().split(' ')[1]
     return (group_name, (group_name,))
-  
+
+  def handle_overchan_board_mod(self, line):
+    # overchan specific, gets handled at overchan plugin via redistribute_command()
+    group_name = line.lower().split(' ')[1]
+    return (group_name, (group_name,))
+
   def handle_sticky(self, line):
-    self.log(self.logger.DEBUG, "got sticky request: %s" % line)
+    message_id = line.split(' ')[1]
+    groups = list()
+    for row in self.overchandb.execute('SELECT groups.group_name from articles, groups WHERE articles.article_uid = ? and groups.group_id = articles.group_id', (message_id,)).fetchall():
+      groups.append(row[0])
+    return (message_id, groups)
 
 if __name__ == '__main__':
   print "[%s] %s" % ("censor", "this plugin can't run as standalone version.")

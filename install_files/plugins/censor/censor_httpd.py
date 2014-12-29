@@ -1,5 +1,6 @@
 #!/usr/bin/python
 
+import base64
 import codecs
 import os
 import random
@@ -39,21 +40,18 @@ class censor(BaseHTTPRequestHandler):
       public = self.check_login() 
       if public:
         session = hexlify(self.origin.rnd.read(24))
-        self.origin.sessions[session] = [int(time.time()) + 3600 * 6, public]
+        self.origin.sessions[session] = [int(time.time()) + 3600, public, self.get_senderhash()]
         self.send_redirect('/moderate/%s/' % session, 'access granted. this time.')
       else:
         self.send_login("totally not")
       return
     elif self.path.startswith("/moderate"):
-      if self.path[10:58] not in self.origin.sessions:
+      if not self.legal_session(self.path[10:58]):
         self.send_login()
         return
       self.session = self.path[10:58]
       self.root_path = self.path[:58] + '/' 
-      if self.origin.sessions[self.session][0] < int(time.time()):
-        self.send_login()
-        return
-      self.origin.sessions[self.session][0] = int(time.time()) + 3600 * 6
+      self.origin.sessions[self.session][0] = int(time.time()) + 3600
       path = self.path[58:]
       if path.startswith('/modify?'):
         key = path[8:]
@@ -69,7 +67,19 @@ class censor(BaseHTTPRequestHandler):
           self.handle_update_key(key)
           self.send_redirect(self.root_path, "update ok<br />redirecting you in a moment.", 4)
         except Exception as e:
-          self.send_redirect(self.root_path, "update failed: %s<br />redirecting you in a moment." % e, 10)
+          self.send_redirect(self.root_path, "update failed: %s<br />redirecting you in a moment." % e, 9)
+      elif path.startswith('/settings?'):
+        key = path[10:]
+        flags_available = int(self.origin.sqlite_censor.execute("SELECT flags FROM keys WHERE key=?", (self.origin.sessions[self.session][1],)).fetchone()[0])
+        flag_required = int(self.origin.sqlite_censor.execute('SELECT flag FROM commands WHERE command="overchan-board-mod"').fetchone()[0])
+        if (flags_available & flag_required) != flag_required:
+          self.send_redirect(self.root_path + 'settings', "not authorized, flag overchan-board-mod missing.<br />redirecting you in a moment.", 7)
+          return
+        try:
+          self.handle_update_board(key)
+          self.send_redirect(self.root_path + 'settings', "update ok<br />redirecting you in a moment.", 4)
+        except Exception as e:
+          self.send_redirect(self.root_path + 'settings', "update board failed: %s<br />redirecting you in a moment." % e, 9)
       else:
         self.send_keys()
       return
@@ -87,17 +97,12 @@ class censor(BaseHTTPRequestHandler):
       self.send_error("secret: %s\npublic: %s" % (hexlify(secret), hexlify(public)))
       return
     elif self.path.startswith("/moderate"):
-      if self.path[10:58] not in self.origin.sessions:
+      if not self.legal_session(self.path[10:58]):
         self.send_login()
         return
       self.session = self.path[10:58]
       self.root_path = self.path[:58] + '/' 
-      if self.origin.sessions[self.session][0] < int(time.time()):
-        #del self.sessions[self.session]
-        # FIXME: test ^
-        self.send_login()
-        return
-      self.origin.sessions[self.session][0] = int(time.time()) + 3600 * 6
+      self.origin.sessions[self.session][0] = int(time.time()) + 3600
       path = self.path[58:]
       if path.startswith('/modify?'):
         key = path[8:]
@@ -121,17 +126,17 @@ class censor(BaseHTTPRequestHandler):
       elif path.startswith('/stats'):
         self.send_stats()
       elif path.startswith('/settings'):
-        self.send_settings()
+        if path.startswith('/settings?'):
+          key = path[10:]
+          self.send_settings(key)
+        else:
+          self.send_settings()
       elif path.startswith('/showmessage?'):
         self.send_message(path[13:])
       elif path.startswith('/delete?'):
         self.handle_delete(path[8:])
       elif path.startswith('/restore?'):
         self.handle_restore(path[9:])
-      elif path.startswith('/block_board?'):
-        self.handle_block_board(path[13:])
-      elif path.startswith('/unblock_board?'):
-        self.handle_unblock_board(path[15:])
       elif path.startswith('/notimplementedyet'):
         self.send_error('not implemented yet')
       else:
@@ -155,12 +160,74 @@ class censor(BaseHTTPRequestHandler):
     flags = post_vars.getlist("flags")
     result = 0
     if 'local_nick' in post_vars:
-      local_nick = post_vars['local_nick'].value
+      local_nick = post_vars['local_nick'].value.replace("<", "&lt;").replace(">", "&gt;").replace("#", "").strip()
     else:
       local_nick = ''
-    for flag in flags:
-      result += int(flag)
-    self.origin.censor.add_article((self.origin.sessions[self.session][1], "srnd-acl-mod %s %i %s" % (key, result, local_nick)), "httpd")
+    result = sum([int(flag) for flag in flags])
+    comment = '#'
+    if int(self.origin.sqlite_censor.execute('SELECT count(id) FROM keys WHERE key = ?', (key,)).fetchone()[0]):
+      old_nick, old_flags = self.origin.sqlite_censor.execute('SELECT local_name, flags FROM keys WHERE key = ?', (key,)).fetchone()
+      if local_nick != old_nick:
+        comment += '%s rename to %s' % (old_nick, local_nick)
+      if int(old_flags) != result:
+        comment += ' change flag %s->%s ' % (old_flags, result)
+    else:
+      comment += 'add new key %s, flags %s' % (local_nick, result)
+    if comment == '#': comment = ''
+    self.origin.censor.add_article((self.origin.sessions[self.session][1], "srnd-acl-mod %s %i %s%s" % (key, result, local_nick, comment)), "httpd")
+
+  def handle_update_board(self, board_id):
+    post_vars = FieldStorage(
+      fp=self.rfile,
+      headers=self.headers,
+      environ={
+        'REQUEST_METHOD':'POST',
+        'CONTENT_TYPE':self.headers['Content-Type'],
+      }
+    )
+    flags = post_vars.getlist("flags")
+    result = 0
+    comment = ''
+    aliases = ('ph_name', 'ph_shortname', 'link', 'tag', 'description',)
+    if 'board_name' in post_vars:
+      new_board = post_vars['board_name'].value.replace("<", "&lt;").replace(">", "&gt;").replace("#", "-").strip().lower()
+      if new_board != '' and not new_board.startswith('overchan.'):
+        new_board = 'overchan.' + new_board
+    else:
+      new_board = ''
+    aliases_new = tuple([post_vars.getvalue(x, '').strip().decode('utf-8') for x in aliases])
+    aliases_blob = ':'.join([base64.urlsafe_b64encode(post_vars.getvalue(x, '').strip()) for x in aliases])
+    result = sum([int(flag) for flag in flags])
+    if new_board != '' and board_id == 'new':
+      self.origin.censor.add_article((self.origin.sessions[self.session][1], "overchan-board-add {0} {1} {2}#request for create {0}, flags {1}".format(new_board, result, aliases_blob)), "httpd")
+      return
+    row = self.origin.sqlite_overchan.execute('SELECT group_name, flags, ph_name, ph_shortname, link, tag, description FROM groups WHERE group_id = ?', (board_id,)).fetchone()
+    (board_name, old_flags), aliases_old = row[:2], row[2:]
+    if int(old_flags) != result:
+      comment = 'Change flags {1}->{0}'.format(result, old_flags)
+    if aliases_old != aliases_new:
+      comment += ' change alias'
+    else:
+      aliases_blob = ''
+    if comment == '': return
+    self.origin.censor.add_article((self.origin.sessions[self.session][1], "overchan-board-mod {0} {1} {2}#{3}".format(board_name, result, aliases_blob, comment)), "httpd")
+
+  def get_senderhash(self):
+    if 'X-I2P-DestHash' in self.headers:
+      return sha512(self.headers['X-I2P-DestHash'] + self.origin.runtime_salt).hexdigest()[:32]
+    elif False:
+      return sha512('TODO: add tor desthash or remove this' + self.origin.runtime_salt).hexdigest()[:32]
+    return sha512(self.client_address[0] + self.origin.runtime_salt).hexdigest()[:32]
+
+  def legal_session (self, session_id):
+    if session_id in self.origin.sessions:
+      if self.origin.sessions[session_id][2] != self.get_senderhash():
+        self.origin.log(self.origin.logger.WARNING, 'Destanation change! Maybe sessionkey leak. ')
+        self.origin.log(self.origin.logger.WARNING, self.headers)
+      elif self.origin.sessions[session_id][0] > int(time.time()):
+        return True
+      del self.origin.sessions[session_id]
+    return False
 
   def check_login(self):
     current_date = int(time.time())
@@ -238,13 +305,11 @@ class censor(BaseHTTPRequestHandler):
         return
       row = (key, '', 0, 0)
 
-    out = self.origin.template_modify_key
     flags = self.origin.sqlite_censor.execute("SELECT command, flag FROM commands").fetchall()
     cur_template = self.origin.template_log_flagnames
-    flaglist = list()
     flagset_template = self.origin.template_modify_key_flagset
-    out = out.replace("%%key%%", row[0])
-    out = out.replace("%%nick%%", row[1])
+    out = self.origin.template_modify_key.replace("%%key%%", row[0]).replace("%%nick%%", row[1])
+    flaglist = list()
     counter = 0
     for flag in flags:
       counter += 1
@@ -265,7 +330,52 @@ class censor(BaseHTTPRequestHandler):
     self.send_response(200)
     self.send_header('Content-type', 'text/html')
     self.end_headers()
-    self.wfile.write(out)    
+    self.wfile.write(out)
+
+  def send_modify_board(self, board_id):
+    if board_id.startswith('id='):
+      row = self.origin.sqlite_overchan.execute("SELECT group_id, group_name, flags, ph_name, ph_shortname, link, tag, description \
+          FROM groups WHERE group_id = ?", (board_id[3:],)).fetchone()
+    elif board_id.startswith('name='):
+      row = self.origin.sqlite_overchan.execute("SELECT group_id, group_name, flags, ph_name, ph_shortname, link, tag, description \
+        FROM groups WHERE group_name = ?", (board_id[5:],)).fetchone()
+    elif board_id.startswith('new'):
+      row = ('new', 'overchan.<input type="text" name="board_name" value="" class="posttext"/>', '0', '', '', '', '', '')
+    else:
+      return ''
+    if not row:
+      return 'Board not found'
+
+    flags = self.origin.sqlite_overchan.execute("SELECT flag_name, flag FROM flags").fetchall()
+    cur_template = self.origin.template_log_flagnames
+    flagset_template = self.origin.template_modify_key_flagset
+    form_data = dict()
+    flaglist = list()
+    counter = 0
+    for flag in flags:
+      counter += 1
+      if (int(row[2]) & int(flag[1])) == int(flag[1]):
+        checked = 'checked="checked"'
+      else:
+        checked = ''
+      cur_template = flagset_template.replace("%%flag%%", flag[1])
+      cur_template = cur_template.replace("%%flag_name%%", flag[0])
+      cur_template = cur_template.replace("%%checked%%", checked)
+      if counter == 5:
+        cur_template += "<br />"
+      else:
+        cur_template += "&nbsp;"
+      flaglist.append(cur_template)
+    form_data['board_id'] = str(row[0])
+    form_data['board'] = row[1]
+    form_data['modify_key_flagset'] = ''.join(flaglist)
+    form_data['ph_name'] = row[3]
+    form_data['ph_shortname'] = row[4]
+    form_data['link'] = row[5]
+    form_data['tag'] = row[6]
+    form_data['description'] = row[7]
+    del flaglist[:]
+    return self.origin.t_engine_modify_board.substitute(form_data)
 
   def send_keys(self):
     out = self.origin.template_keys
@@ -287,7 +397,7 @@ class censor(BaseHTTPRequestHandler):
     for row in self.origin.sqlite_censor.execute('SELECT key, local_name, flags FROM keys WHERE flags != 0 OR local_name != "" ORDER BY abs(flags) DESC, local_name ASC').fetchall():
       cur_template = self.origin.template_log_whitelist
       cur_template = cur_template.replace("%%key%%", row[0])
-      cur_template = cur_template.replace("%%nick%%", row[1])
+      cur_template = cur_template.replace("%%nick%%", self.hidden_line(row[1], 30))
       #table.append(self.origin.template_log_flagset)
       for flag in flags:
         if (int(row[2]) & int(flag[1])) == int(flag[1]):
@@ -305,7 +415,7 @@ class censor(BaseHTTPRequestHandler):
       cur_template = self.origin.template_log_unknown
       cur_template = cur_template.replace("%%key%%", row[1])
       if row[0] != "":
-        cur_template = cur_template.replace("%%nick%%", row[0])
+        cur_template = cur_template.replace("%%nick%%", self.hidden_line(row[0], 30))
       else:
         cur_template = cur_template.replace("%%nick%%", "&nbsp;")
       count = self.origin.sqlite_censor.execute("SELECT count(data) FROM log WHERE key_id = ?", (row[3],)).fetchone()
@@ -318,6 +428,13 @@ class censor(BaseHTTPRequestHandler):
     self.send_header('Content-type', 'text/html')
     self.end_headers()
     self.wfile.write(out)
+
+  def hidden_line(self, line, max_len = 60):
+    line = line.replace("<", "&lt;").replace(">", "&gt;").strip()
+    if max_len > 16 and len(line) > max_len:
+      return '%s[..]%s' % (line[:6], line[-6:])
+    else:
+      return line
 
   def send_log(self, page=1, pagecount=100):
     out = self.origin.template_log
@@ -332,61 +449,76 @@ class censor(BaseHTTPRequestHandler):
     table = list()    
     for row in self.origin.sqlite_censor.execute("SELECT key, local_name, command, data, reason, comment, timestamp FROM log, commands, keys, reasons WHERE log.accepted = 1 AND keys.id = log.key_id AND commands.id = log.command_id AND reasons.id = log.reason_id ORDER BY log.id DESC LIMIT ?, ?", ((page-1)*pagecount, pagecount)).fetchall():
       cur_template = self.origin.template_log_accepted
-      if row[1] != "":
-        cur_template = cur_template.replace("%%key_or_nick%%", row[1])
+      if row[1] != '':
+        cur_template = cur_template.replace("%%key_or_nick%%", self.hidden_line(row[1], 30))
       else:
-        cur_template = cur_template.replace("%%key_or_nick%%", row[0])
+        cur_template = cur_template.replace("%%key_or_nick%%", self.hidden_line(row[0]))
       cur_template = cur_template.replace("%%key%%", row[0])
       cur_template = cur_template.replace("%%action%%", row[2])
       cur_template = cur_template.replace("%%reason%%", row[4])
       cur_template = cur_template.replace("%%date%%", datetime.utcfromtimestamp(row[6]).strftime('%Y/%m/%d %H:%M'))
-      if row[2] != 'delete' and row[2] != 'overchan-delete-attachment':
-        cur_template = cur_template.replace("%%postid%%", row[3].replace("<", "&lt;").replace(">", "&gt;"))
-        cur_template = cur_template.replace("%%restore_link%%", '')
+      comment_zip  = [self.hidden_line(x, 30)  for x in row[5].split(' ')]
+      cur_template = cur_template.replace("%%comment%%", " ".join(comment_zip))
+      del comment_zip[:]
+      data = self.hidden_line(row[3], 64)
+      if row[2] == 'srnd-acl-mod':
+        cur_template = cur_template.replace("%%postid%%", data)
+        cur_template = cur_template.replace("%%restore_link%%", '<a href="modify?%s">modify key</a>' % (row[3]))
         cur_template = cur_template.replace("%%delete_link%%", '')
+      elif row[2] in ('overchan-board-mod', 'overchan-board-add', 'overchan-board-del'):
+        cur_template = cur_template.replace("%%postid%%", data)
+        cur_template = cur_template.replace("%%restore_link%%", '<a href="settings?name=%s">modify board</a>' % (row[3]))
+        cur_template = cur_template.replace("%%delete_link%%", '')
+      elif row[2] not in ('delete', 'overchan-delete-attachment', 'overchan-sticky'):
+        cur_template = cur_template.replace("%%postid%%", data)
+        cur_template = cur_template.replace("%%restore_link%%", '').replace("%%delete_link%%", '')
       else:
         message_id = row[3].replace("<", "&lt;").replace(">", "&gt;")
         try:
           if os.stat(os.path.join('articles', 'censored', row[3])).st_size > 0:
-            cur_template = cur_template.replace("%%postid%%", '<a href="showmessage?%s" target="_blank">%s</a>' % (message_id, message_id))
-            if row[2] == 'delete' or row[2] == 'overchan-delete-attachment':
+            cur_template = cur_template.replace("%%postid%%", '<a href="showmessage?%s" target="_blank">%s</a>' % (message_id, data))
+            if row[2] in ('delete', 'overchan-delete-attachment'):
               cur_template = cur_template.replace("%%restore_link%%", '<a href="restore?%s">restore</a>&nbsp;' % message_id)
             else:
               cur_template = cur_template.replace("%%restore_link%%", '')
             cur_template = cur_template.replace("%%delete_link%%", '<a href="delete?%s">delete</a>&nbsp;' % message_id)
           else:
-            cur_template = cur_template.replace("%%postid%%", message_id)
-            cur_template = cur_template.replace("%%restore_link%%", '')
-            cur_template = cur_template.replace("%%delete_link%%", '')
+            cur_template = cur_template.replace("%%postid%%", data)
+            cur_template = cur_template.replace("%%restore_link%%", '').replace("%%delete_link%%", '')
         except:
+          cur_template = cur_template.replace("%%postid%%", data)
+          cur_template = cur_template.replace("%%delete_link%%", '')
           if os.path.isfile(os.path.join('articles', row[3])):
-            cur_template = cur_template.replace("%%postid%%", message_id)
             item_row = self.origin.sqlite_overchan.execute('SELECT parent FROM articles WHERE article_uid = ?', (row[3],)).fetchone()
             if item_row:
               if item_row[0] == '':
-                cur_template = cur_template.replace("%%restore_link%%", '<a href="/thread-%s.html" target="_blank">restored</a>&nbsp;' % sha1(row[3]).hexdigest()[:10])
+                cur_template = cur_template.replace("%%restore_link%%", '<a href="/thread-%s.html" target="_blank">view thread</a>&nbsp;' % sha1(row[3]).hexdigest()[:10])
               else:
-                cur_template = cur_template.replace("%%restore_link%%", '<a href="/thread-%s.html#%s" target="_blank">restored</a>&nbsp;' % (sha1(item_row[0]).hexdigest()[:10], sha1(row[3]).hexdigest()[:10]))
+                cur_template = cur_template.replace("%%restore_link%%", '<a href="/thread-%s.html#%s" target="_blank">view post</a>&nbsp;' % (sha1(item_row[0]).hexdigest()[:10], sha1(row[3]).hexdigest()[:10]))
             else:
               cur_template = cur_template.replace("%%restore_link%%", 'restored&nbsp;')
-            cur_template = cur_template.replace("%%delete_link%%", '')
+          else:
+            cur_template = cur_template.replace("%%restore_link%%", '')
       table.append(cur_template)
     out = out.replace("%%mod_accepted%%", "\n".join(table))
-    del table[:]    
+    del table[:]
     for row in self.origin.sqlite_censor.execute("SELECT key, local_name, command, data, reason, comment, timestamp FROM log, commands, keys, reasons WHERE log.accepted = 0 AND keys.id = log.key_id AND commands.id = log.command_id AND reasons.id = log.reason_id ORDER BY log.id DESC LIMIT ?, ?", ((page-1)*pagecount, pagecount)).fetchall():
       cur_template = self.origin.template_log_ignored
-      if row[1] != "":
-        cur_template = cur_template.replace("%%key_or_nick%%", row[1])
+      if row[1] != '':
+        cur_template = cur_template.replace("%%key_or_nick%%", self.hidden_line(row[1], 30))
       else:
-        cur_template = cur_template.replace("%%key_or_nick%%", '%s[..]%s' % (row[0][:6], row[0][-6:]))
+        cur_template = cur_template.replace("%%key_or_nick%%", self.hidden_line(row[0]))
       cur_template = cur_template.replace("%%key%%", row[0])
       cur_template = cur_template.replace("%%action%%", row[2])
+      comment_zip  = [self.hidden_line(x, 30)  for x in row[5].split(' ')]
+      cur_template = cur_template.replace("%%comment%%", " ".join(comment_zip))
       message_id = row[3].replace("<", "&lt;").replace(">", "&gt;")
+      data = self.hidden_line(row[3], 64)
       try:
         if os.stat(os.path.join('articles', row[3])).st_size > 0:
-          cur_template = cur_template.replace("%%postid%%", '<a href="showmessage?%s" target="_blank">%s</a>' % (message_id, message_id))
+          cur_template = cur_template.replace("%%postid%%", '<a href="showmessage?%s" target="_blank">%s</a>' % (message_id, data))
         else:
-          cur_template = cur_template.replace("%%postid%%", message_id)
+          cur_template = cur_template.replace("%%postid%%", data)
       except:
         cur_template = cur_template.replace("%%postid%%", message_id)
       cur_template = cur_template.replace("%%reason%%", row[4])
@@ -460,66 +592,23 @@ class censor(BaseHTTPRequestHandler):
     self.wfile.write(out.encode('UTF-8'))
 
   def send_stats(self, page=0):
-    #out = u'<html><head><meta http-equiv="content-type" content="text/html; charset=utf-8"><link type="text/css" href="/styles.css" rel="stylesheet"><style type="text/css">table { font-size: 9pt;} td { vertical-align: top; } .top2 { float: left; }.float { float: left; margin-right: 10px; margin-bottom: 10px; } .right { text-align: right; padding-right: 5px; } body { margin: 10px; margin-top: 20px; font-family: monospace; font-size: 9pt; } .navigation { background: #101010; padding-top: 19px; position: fixed; top: 0; width: 100%; }</style></head><body>%%navigation%%%%content%%</body></html>'
-    out = u'<html><head><meta http-equiv="content-type" content="text/html; charset=utf-8"><title>stats</title><link type="text/css" href="/styles.css" rel="stylesheet"><style type="text/css">.top2 { float: left; } .float { float: left; margin-right: 10px; margin-bottom: 10px; }</style></head><body class="mod">%%navigation%%%%content%%</body></html>'
-    out = out.replace("%%navigation%%", ''.join(self.__get_navigation('stats')))
-    template_2_rows = '<tr><td class="right">%s</td><td>%s</td></tr>'
-    template_3_rows = '<tr><td>%s</td><td class="right">%s</td><td>%s</td></tr>'
-    template_4_rows = '<tr><td>%s</td><td class="right">%s</td><td>%s</td><td>%s</td></tr>'
-    out_table = list()
+    stats_data = dict()
+    t_2_rows = '<tr><td class="right">%s</td><td>%s</td></tr>'
+    t_3_rows = '<tr><td>%s</td><td class="right">%s</td><td>%s</td></tr>'
+    t_4_rows = '<tr><td>%s</td><td class="right">%s</td><td>%s</td><td>%s</td></tr>'
 
-    out_table.append('<div class="top1">')
-    #out_table.append('<table border="1" cellspacing="0" class="float">\n<tr><th>date</th><th>posts</th><th>frontend</th><th>&nbsp;</th></tr>')
-    #for item in self.__stats_usage_by_frontend(7, 30):
-    #  out_table.append(template_4_rows % item)
-    #out_table.append('</table>')
-    out_table.append('<div class="float">')
-    out_table.append('<table class="datatable">\n<tr><th>date</th><th>posts</th><th>&nbsp;</th></tr>')
-    for item in self.__stats_usage(31, 30):
-      out_table.append(template_3_rows % item)
-    out_table.append('</table>')
-    out_table.append('</div>')
-    out_table.append('<div class="float">')
-    out_table.append('<table class="datatable">\n<tr><th>posts</th><th>frontend</th></tr>')
-    for item in self.__stats_frontends():
-      out_table.append(template_2_rows % item)
-    out_table.append('</table>')
-    out_table.append('</div>')
-    out_table.append('<div class="float">')
-    out_table.append('<table class="datatable">\n<tr><th>posts</th><th>group</th></tr>')
-    for item in self.__stats_groups():
-      out_table.append(template_2_rows % item)
-    out_table.append('</table>')
-    out_table.append('</div>')
-    out_table.append('<div class="float">')
-    out_table.append('<table class="datatable">\n<tr><th>month</th><th>posts</th><th>&nbsp;</th></tr>')
-    for item in self.__stats_usage_month(30):
-      out_table.append(template_3_rows % item)
-    out_table.append('</table>')
-    out_table.append('</div>')
-    out_table.append('</div>')
-    
-    out_table.append('<div class="top2">')
-    out_table.append('<div class="float">')
-    out_table.append('<table class="datatable">\n<tr><th>weekday</th><th>posts</th><th>(last 28 days average)</th></tr>')
-    for item in self.__stats_usage_weekday(28):
-      out_table.append(template_3_rows % item)
-    out_table.append('</table>')
-    out_table.append('</div>')
-    out_table.append('<div class="float">')
-    out_table.append('<table class="datatable">\n<tr><th>weekday</th><th>posts</th><th>(totals)</th></tr>')
-    for item in self.__stats_usage_weekday():
-      out_table.append(template_3_rows % item)
-    out_table.append('</table>')
-    out_table.append('</div>')
-    out_table.append('</div>')
-    
-    out = out.replace('%%content%%', '\n'.join(out_table))
-    del out_table
+    stats_data['navigation']             = ''.join(self.__get_navigation('stats'))
+    stats_data['stats_usage']            = ''.join( t_3_rows % x for x in self.__stats_usage(31, 30)    )
+    stats_data['stats_fronteds']         = ''.join( t_2_rows % x for x in self.__stats_frontends()      )
+    stats_data['stats_groups']           = ''.join( t_2_rows % x for x in self.__stats_groups()         )
+    stats_data['stats_usage_month']      = ''.join( t_3_rows % x for x in self.__stats_usage_month(30)  )
+    stats_data['stats_usage_weekday_28'] = ''.join( t_3_rows % x for x in self.__stats_usage_weekday(28))
+    stats_data['stats_usage_weekday']    = ''.join( t_3_rows % x for x in self.__stats_usage_weekday()  )
+
     self.send_response(200)
     self.send_header('Content-type', 'text/html')
     self.end_headers()
-    self.wfile.write(out.encode('UTF-8'))
+    self.wfile.write(self.origin.t_engine_stats.substitute(stats_data))
 
   def send_message(self, message_id):
     self.send_response(200)
@@ -539,20 +628,38 @@ class censor(BaseHTTPRequestHandler):
     else:
       self.wfile.write('message_id \'%s\' not found' % message_id.replace('<', '&lt;').replace('>', '&gt;'))
     self.wfile.write('</pre></body></html>')
-    
-  def send_settings(self):
-    #out = '<html><head><link type="text/css" href="/styles.css" rel="stylesheet"><style type="text/css">body { margin: 10px; margin-top: 20px; font-family: monospace; font-size: 9pt; } .navigation { background: #101010; padding-top: 19px; position: fixed; top: 0; width: 100%; }</style></head><body>%%navigation%%<table class="datatable" id="groups" cellspacing="0" cellpadding="0"><tr><th>posts</th><th>board</th><th>&nbsp;</th></tr>%%boards%%</table></body></html>'
-    out = '<html><head><title>settings</title><link type="text/css" href="/styles.css" rel="stylesheet"></head><body class="mod">%%navigation%%<table class="datatable" id="groups"><tr><th>posts</th><th>board</th><th>&nbsp;</th></tr>%%boards%%</table></body></html>'
+
+  def send_settings(self, board_id =''):
+    out = self.origin.template_settings
     out = out.replace("%%navigation%%", ''.join(self.__get_navigation('settings')))
-    template_unblocked = '<tr><td class="right">%s</td><td>%s</td><td><a href="block_board?%i">block</a></td></tr>'
-    template_blocked = '<tr><td class="right">%s</td><td>%s</td><td><a href="unblock_board?%i">unblock</a></td></tr>'
-    stats = list()
-    for item in self.__stats_groups(ids=True, status=True):
-      if item[3] == 0:
-        stats.append(template_unblocked % item[:3])
-      else:
-        stats.append(template_blocked % item[:3])
-    out = out.replace("%%boards%%", "\n".join(stats))
+    table = list()
+    flags = self.origin.sqlite_overchan.execute("SELECT flag_name, flag FROM flags").fetchall()
+    cur_template = self.origin.template_log_flagnames
+    for flag in flags:
+      table.append(cur_template.replace("%%flag%%", flag[0]))
+    out = out.replace("%%flag_names%%", "\n".join(table))
+    del table[:]
+    flagset_template = self.origin.template_log_flagset
+    flaglist = list()
+    for row in self.origin.sqlite_overchan.execute('SELECT group_name, article_count, group_id, flags FROM groups WHERE group_name != "" ORDER BY abs(article_count) DESC, group_name ASC').fetchall():
+      cur_template = self.origin.template_settings_lst
+      cur_template = cur_template.replace("%%board%%",    str(row[0]))
+      cur_template = cur_template.replace("%%posts%%",    str(row[1]))
+      cur_template = cur_template.replace("%%board_id%%", str(row[2]))
+      for flag in flags:
+        if (int(row[3]) & int(flag[1])) == int(flag[1]):
+          flaglist.append(flagset_template.replace("%%flag%%", '<b style="color: #00E000;">y</b>'))
+        else:
+          flaglist.append(flagset_template.replace("%%flag%%", "n"))
+      cur_template = cur_template.replace("%%flagset%%", "\n".join(flaglist))
+      del flaglist[:]
+      table.append(cur_template)
+    out = out.replace("%%board_list%%", "\n".join(table))
+    del table[:]
+    if board_id:
+      out = out.replace("%%post_form%%", self.send_modify_board(board_id))
+    else:
+      out = out.replace("%%post_form%%", "")
     self.send_response(200)
     self.send_header('Content-type', 'text/html')
     self.end_headers()
@@ -576,22 +683,6 @@ class censor(BaseHTTPRequestHandler):
       self.send_redirect(self.root_path, "redirecting", 0)
     else:
       self.send_redirect(self.root_path, 'message_id does not exist in articles/censored', 5)
-
-  def handle_block_board(self, board_id):
-    try:
-      board_name = self.origin.sqlite_overchan.execute('SELECT group_name FROM groups WHERE group_id = ?', (int(board_id),)).fetchone()[0]
-      self.origin.censor.add_article((self.origin.sessions[self.session][1], "overchan-board-del %s" % (board_name)), source="httpd")
-      self.send_redirect(self.root_path + 'settings', "redirecting. it might take a second to synchronize.", 3)
-    except Exception as e:
-      self.send_redirect(self.root_path + 'settings', "could not block board: %s" % e, 10)
-
-  def handle_unblock_board(self, board_id):
-    try:
-      board_name = self.origin.sqlite_overchan.execute('SELECT group_name FROM groups WHERE group_id = ?', (int(board_id),)).fetchone()[0]
-      self.origin.censor.add_article((self.origin.sessions[self.session][1], "overchan-board-add %s" % (board_name)), source="httpd")
-      self.send_redirect(self.root_path + 'settings', "redirecting. it might take a second to synchronize.", 3)
-    except Exception as e:
-      self.send_redirect(self.root_path + 'settings', "could not unblock board: %s" % e, 10)
 
   def send_error(self, errormessage):
     self.send_response(200)
@@ -761,7 +852,13 @@ class censor(BaseHTTPRequestHandler):
 
   def __get_message_id_by_hash(self, hash):
     return self.origin.sqlite_hasher.execute("SELECT message_id FROM article_hashes WHERE message_id_hash = ?", (hash,)).fetchone()[0]
-  
+
+  def __get_dest_hash_by_hash(self, hash):
+    return self.origin.sqlite_hasher.execute("SELECT sender_desthash FROM article_hashes WHERE message_id_hash = ?", (hash,)).fetchone()[0]
+
+  def __get_messages_id_by_dest_hash(self, dest_hash):
+    return self.origin.sqlite_hasher.execute("SELECT message_id FROM article_hashes WHERE sender_desthash = ?", (dest_hash,)).fetchall()
+
   def __breakit(self, rematch):
     return '%s ' % rematch.group(0)
 
@@ -785,7 +882,11 @@ class censor(BaseHTTPRequestHandler):
         'CONTENT_TYPE':self.headers['Content-Type'],
       }
     )
-    
+
+    if 'target' in post_vars:
+      target = post_vars['target'].value
+    else:
+      target = '/'
     if 'secret' not in post_vars:
       self.die('local moderation request: secret not in post_vars')
       return
@@ -795,8 +896,18 @@ class censor(BaseHTTPRequestHandler):
       return
     try:
       keypair = nacl.signing.SigningKey(unhexlify(secret))
+      pubkey = hexlify(keypair.verify_key.encode())
+      flags_available = int(self.origin.sqlite_censor.execute("SELECT flags FROM keys WHERE key=?", (pubkey,)).fetchone()[0])
+      flag_delete = int(self.origin.sqlite_censor.execute('SELECT flag FROM commands WHERE command="delete"').fetchone()[0])
+      flag_delete_a = int(self.origin.sqlite_censor.execute('SELECT flag FROM commands WHERE command="overchan-delete-attachment"').fetchone()[0])
+      flag_sticky = int(self.origin.sqlite_censor.execute('SELECT flag FROM commands WHERE command="overchan-sticky"').fetchone()[0])
     except Exception as e:
       self.die('local moderation request: invalid secret key received: %s' % e)
+      return
+    if ((flags_available & flag_delete) != flag_delete) and ((flags_available & flag_delete_a) != flag_delete_a) and ((flags_available & flag_sticky) != flag_sticky):
+      self.die('local moderation request: public key rejected, no flags required')
+      return
+    local_cmd = False
     for key in ('purge', 'purge_root'):
       if key in post_vars:
         purges = post_vars.getlist(key)
@@ -806,17 +917,44 @@ class censor(BaseHTTPRequestHandler):
           except Exception as e:
             self.origin.log(self.origin.logger.WARNING, "local moderation request: could not find message_id for hash %s: %s" % (item, e))
             self.origin.log(self.origin.logger.WARNING, self.headers)
+    if 'purge_desthash' in post_vars:
+      delete_by_desthash = post_vars.getlist('purge_desthash')
+      for item in delete_by_desthash:
+        i2p_dest_hash = ''
+        try:
+          i2p_dest_hash = self.__get_dest_hash_by_hash(item)
+        except Exception as e:
+          self.origin.log(self.origin.logger.WARNING, "local moderation request: could not find X-I2P-DestHash for hash %s: %s" % (item, e))
+          self.origin.log(self.origin.logger.WARNING, self.headers)
+          continue
+        if len(i2p_dest_hash) == 44:
+          lines.extend("delete %s" % message_id for message_id in self.__get_messages_id_by_dest_hash(i2p_dest_hash))
     if 'delete_a' in post_vars:
       delete_attachments = post_vars.getlist('delete_a')
       for item in delete_attachments:
         try:
           lines.append("overchan-delete-attachment %s" % self.__get_message_id_by_hash(item))
         except Exception as e:
-            self.origin.log(self.origin.logger.WARNING, "local moderation request: could not find message_id for hash %s: %s" % (item, e))
-            self.origin.log(self.origin.logger.WARNING, self.headers)
+          self.origin.log(self.origin.logger.WARNING, "local moderation request: could not find message_id for hash %s: %s" % (item, e))
+          self.origin.log(self.origin.logger.WARNING, self.headers)
+    if 'sticky' in post_vars:
+      sticky_thread = post_vars.getlist('sticky')
+      for item in sticky_thread:
+        try:
+          #lines.append("overchan-sticky %s" % self.__get_message_id_by_hash(item)) #only local
+          self.origin.censor.add_article((pubkey, "overchan-sticky {0}#sticky\unsticky thread request".format(self.__get_message_id_by_hash(item))), "httpd")
+          local_cmd = True
+        except Exception as e:
+          self.origin.log(self.origin.logger.WARNING, "local moderation request: could not find message_id for hash %s: %s" % (item, e))
+          self.origin.log(self.origin.logger.WARNING, self.headers)
     if len(lines) == 0:
-      self.die('local moderation request: nothing to do')
+      if local_cmd:
+        self.send_redirect(target, 'moderation request received. will redirect you in a moment.', 2)
+      else:
+        self.die('local moderation request: nothing to do')
       return
+    #remove duplicates
+    lines = list(set(lines))
     #lines.append("")
     article = self.origin.template_message_control_inner.format(sender, now, newsgroups, subject, uid_message_id, self.origin.uid_host, "\n".join(lines))
     #print "'%s'" % article
@@ -829,7 +967,6 @@ class censor(BaseHTTPRequestHandler):
     hasher.update(old_line.replace("\r\n", ""))
     #keypair = nacl.signing.SigningKey(unhexlify(secret))
     signature = hexlify(keypair.sign(hasher.digest()).signature)
-    pubkey = hexlify(keypair.verify_key.encode())
     signed = self.origin.template_message_control_outer.format(sender, now, newsgroups, subject, uid_message_id, self.origin.uid_host, pubkey, signature, article)
     del keypair
     del signature
@@ -841,10 +978,6 @@ class censor(BaseHTTPRequestHandler):
     del article
     del signed
     os.rename(os.path.join('incoming', 'tmp', uid_message_id), os.path.join('incoming', uid_message_id))
-    if 'target' in post_vars:
-      target = post_vars['target'].value
-    else:
-      target = '/'
     self.send_redirect(target, 'moderation request received. will redirect you in a moment.', 2)
 
   def log_request(self, code):
@@ -940,6 +1073,7 @@ class censor_httpd(threading.Thread):
     self.httpd.censor = args['censor']
     self.httpd.weekdays =  ('Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday')
     self.httpd.breaker = re.compile('([^ ]{16})')
+    self.httpd.runtime_salt = self.httpd.rnd.read(8)
 
     # read templates
     self.log(self.logger.DEBUG, 'reading templates..')
@@ -979,6 +1113,18 @@ class censor_httpd(threading.Thread):
     f.close()
     f = open(os.path.join(template_directory, 'modify_key_flagset.tmpl'), 'r')
     self.httpd.template_modify_key_flagset = f.read()
+    f.close()
+    f = open(os.path.join(template_directory, 'settings.tmpl'), 'r')
+    self.httpd.template_settings = f.read()
+    f.close()
+    f = open(os.path.join(template_directory, 'settings_list.tmpl'), 'r')
+    self.httpd.template_settings_lst = f.read()
+    f.close()
+    f = open(os.path.join(template_directory, 'modify_board.tmpl'), 'r')
+    self.httpd.t_engine_modify_board  = string.Template(f.read())
+    f.close()
+    f = open(os.path.join(template_directory, 'stats.tmpl'), 'r')
+    self.httpd.t_engine_stats = string.Template(f.read())
     f.close()
     #f = open(os.path.join(template_directory, 'message_pic.template'), 'r')
     #self.httpd.template_message_pic = f.read()

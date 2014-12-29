@@ -40,6 +40,7 @@ padding-left: 4px;
   background: #F5F5F5;
   width: 80%;
   padding: 0px;
+  resize:none;
 }
 .pasteit {
   border: 1px solid #ADADAD;

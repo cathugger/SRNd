@@ -1,12 +1,12 @@
 <html>
   <head>
-    <title>foobar</title>
+    <title>Settings</title>
     <link type="text/css" href="/styles.css" rel="stylesheet">
     <style type="text/css">
-      .mod_accepted tr:nth-child(2n+2) {
+      .keys_known tr:nth-child(2n+2) {
           background: none repeat scroll 0 0 #151515;
       }
-      .mod_ignored tr:nth-child(2n+2) {
+      .keys_all tr:nth-child(2n+2) {
           background: none repeat scroll 0 0 #151515;
       }
       td, th {
@@ -36,46 +36,28 @@
         text-align: center;
         padding-left: 10px;
       }
-      .box {
-        border: 1px dotted #AFAFAF;
+      .float {
+         float: left;
+         margin-right: 10px;
+         margin-bottom: 10px;
       }
     </style>
   </head>
   <body class="mod">
     %%navigation%%
-    <div class="box">
-      <b>moderation accepted log</b>
-      <table class="mod_accepted">
+    <div class="float">
+      <table border="0px" class="datatable">
         <tr>
-          <th>&nbsp;</th>
-          <th>&nbsp;</th>
-          <th>action</th>
-          <th>target</th>
-          <th>reason</th>
-          <th>&nbsp;</th>
-          <th>comment</th>
+          <th class="data_center">posts</th>
+          <th>Board</th>
+%%flag_names%%
+          <th class="actions"><a href="settings?new">create</a></th>
         </tr>
-        %%mod_accepted%%
+%%board_list%%
       </table>
     </div>
-    <br />
-    <div class="box">
-      <b>moderation ignored log</b>
-      <table class="mod_ignored">
-        <tr>
-          <th>&nbsp;</th>
-          <th>&nbsp;</th>
-          <th class="data">action</th>
-          <th>target</th>
-          <th>reason</th>
-          <th>&nbsp;</th>
-          <th>comment</th>
-        </tr>
-        %%mod_ignored%%
-      </table>
+    <div class="float">
+%%post_form%%
     </div>
-    <br />
-    %%pagination%%
-    <br />
   </body>
 </html>

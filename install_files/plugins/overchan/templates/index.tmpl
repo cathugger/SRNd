@@ -10,29 +10,37 @@
         margin: 0;
         padding: 0;
         overflow: auto;
+        background-color: #1d1f21;
       }
       #menu {
         position: absolute;
-        left: 0px;
-        top: 0px;
+        left: 0;
+        top: 0;
         margin: 0;
         padding: 0;
-        border: 0px;
         height: 100%;
         width: 10%;
+        border: 0;
+        width: calc(10% - 15px);
       }
       #main {
         position: absolute;
         left: 10%;
-        top: 0px;
-        border: 0px;
+        top: 0;
         height: 100%;
         width: 90%;
+        border: 0;
+        width: calc(90% + 15px);
+        left: calc(10% - 15px);
+      }
+      @media(max-width:75em) {
+        #main {left: 0;width: 100%;}
+        #menu {width: 0;}
       }
     </style>
   </head>
   <body>
-    <iframe src="menu.html" name="menu" id="menu">
+    <iframe src="menu.html" name="menu" id="menu" scrolling="no">
       <a href="menu.html">${title}</a>
     </iframe>
     <iframe src="overview.html" name="main" id="main">

@@ -1,0 +1,53 @@
+<html>
+<head>
+  <meta http-equiv="content-type" content="text/html; charset=utf-8">
+  <title>stats</title><link type="text/css" href="/styles.css" rel="stylesheet">
+  <style type="text/css">
+    .top2 { float: left; }
+    .float { float: left; margin-right: 10px; margin-bottom: 10px; }
+  </style>
+</head>
+<body class="mod">
+  ${navigation}
+  <div class="top1">
+    <div class="float">
+      <table class="datatable">
+        <tr><th>date</th><th>posts</th><th>&nbsp;</th></tr>
+        ${stats_usage}
+      </table>
+    </div>
+    <div class="float">
+      <table class="datatable">
+        <tr><th>posts</th><th>frontend</th></tr>
+        ${stats_fronteds}
+      </table>
+    </div>
+    <div class="float">
+      <table class="datatable">
+        <tr><th>posts</th><th>group</th></tr>
+        ${stats_groups}
+      </table>
+    </div>
+    <div class="float">
+      <table class="datatable">
+        <tr><th>month</th><th>posts</th><th>&nbsp;</th></tr>
+        ${stats_usage_month}
+      </table>
+    </div>
+  </div>
+  <div class="top2">
+    <div class="float">
+      <table class="datatable">
+        <tr><th>weekday</th><th>posts</th><th>(last 28 days average)</th></tr>
+        ${stats_usage_weekday_28}
+      </table>
+    </div>
+    <div class="float">
+      <table class="datatable">
+        <tr><th>weekday</th><th>posts</th><th>(totals)</th></tr>
+        ${stats_usage_weekday}
+      </table>
+    </div>
+  </div>
+</body>
+</html>

@@ -20,7 +20,12 @@ class dropper(threading.Thread):
     self.sqlite_hasher_conn = sqlite3.connect('hashes.db3')
     self.sqlite_hasher = self.sqlite_hasher_conn.cursor()
     self.sqlite_hasher.execute('''CREATE TABLE IF NOT EXISTS article_hashes
-               (message_id text PRIMARY KEY, message_id_hash text)''')
+               (message_id text PRIMARY KEY, message_id_hash text, sender_desthash text)''')
+    try:
+      self.sqlite_hasher.execute('ALTER TABLE article_hashes ADD COLUMN sender_desthash text DEFAULT ""')
+    except:
+      pass
+    self.sqlite_hasher.execute('CREATE INDEX IF NOT EXISTS article_desthash_idx ON article_hashes(sender_desthash);')
     self.sqlite_hasher.execute('CREATE INDEX IF NOT EXISTS article_hash_idx ON article_hashes(message_id_hash);')
     self.sqlite_hasher_conn.commit()
     self.reqs = ['message-id', 'newsgroups', 'date', 'subject', 'from', 'path']
@@ -68,7 +73,7 @@ class dropper(threading.Thread):
         f.close()
         try:
           self.validate(article)
-          message_id, groups, additional_headers = self.sanitize(article)
+          desthash, message_id, groups, additional_headers = self.sanitize(article)
         except Exception as e:
           if self.debug > -1: print '[dropper] article is invalid. %s: %s' % (item, e)
           os.rename(link, os.path.join('articles', 'invalid', item))
@@ -84,7 +89,7 @@ class dropper(threading.Thread):
         elif self.debug > 1:
           if int(self.sqlite.execute('SELECT count(message_id) FROM articles WHERE message_id = ?', (message_id,)).fetchone()[0]) != 0:
             print '[dropper] article \'%s\' was blacklisted and is moved back into incoming/. processing again' % message_id
-        self.write(message_id, groups, additional_headers, article)
+        self.write(desthash, message_id, groups, additional_headers, article)
         os.remove(link)
     self.busy = False
     if self.retry:
@@ -119,11 +124,14 @@ class dropper(threading.Thread):
     if self.debug > 3: print "[dropper] sanitizing article.."
     found = dict()
     vals = dict()
+    desthash = ''
     for req in self.reqs:
       found[req] = False
     done = False
     # FIXME*3 read Path from config
     for index in xrange(0, len(article)):
+      if article[index].lower().startswith('x-i2p-desthash: '):
+        desthash = article[index].split(' ', 1)[1].strip()
       for key in self.reqs:
         if article[index].lower().startswith(key + ':'):
           if key == 'path':
@@ -168,9 +176,9 @@ class dropper(threading.Thread):
           vals[req] = vals[req].split(',')
     if len(vals['newsgroups']) == 0:
       raise Exception('Newsgroup is missing or empty')
-    return (vals['message-id'], vals['newsgroups'], additional_headers)
+    return (desthash, vals['message-id'], vals['newsgroups'], additional_headers)
 
-  def write(self, message_id, groups, additional_headers, article):
+  def write(self, desthash, message_id, groups, additional_headers, article):
     if self.debug > 3: print "[dropper] writing article.."
     link = os.path.join('articles', message_id)
     if os.path.exists(link):
@@ -185,7 +193,7 @@ class dropper(threading.Thread):
       f.write(article[index])
     f.close()
     try:
-      self.sqlite_hasher.execute('INSERT INTO article_hashes VALUES (?, ?)', (message_id, sha1(message_id).hexdigest()))
+      self.sqlite_hasher.execute('INSERT INTO article_hashes VALUES (?, ?, ?)', (message_id, sha1(message_id).hexdigest(), desthash))
       self.sqlite_hasher_conn.commit()
     except:
       pass

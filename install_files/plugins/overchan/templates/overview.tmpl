@@ -8,15 +8,15 @@
     <style type="text/css">
       .news {
         border: 1px solid #3b3b3b;
-        background: #141414;
+        background: #1c1c1c;
         margin: 10px 20px 10px 20px;
+        padding: 0.3em;
       }
       .news .header {
-        background: #1c1c1c;
         font-style: italic;
         padding: 3px 5px 0px 5px;
         text-align: right;
-        border-bottom: 1px dotted #3b3b3b;
+        border: 1px dotted #3b3b3b;
       }
       .news .author {
         font-style: italic;
@@ -78,9 +78,9 @@
     </div>
     </form>
     <div class="news">
-      <div class="header"><div class="topicline"><b class="subject">${subject}</b>${sent} UTC</div><input type="checkbox" class="sig_chk" id="sign${postid}"><span class="sig_key">${pubkey}</span>&nbsp;<span class="author">${author}</span>&nbsp;<label title="signed message, click to show full public key" class="sig_label" for="sign${postid}">${pubkey_short}</label></div>
+      <div class="header"><div class="topicline"><b class="subject">${subject}</b><span class="published">${sent} UTC</span></div><input type="checkbox" class="sig_chk" id="sign${parent}"><span class="sig_key">${pubkey}</span>&nbsp;<span class="author">${author}</span>&nbsp;<label title="signed message, click to show full public key" class="sig_label" for="sign${parent}">${pubkey_short}</label></div>
       <div class="message_span">${message}</div>
-      <div class="footer"><a href="thread-${parent}.html#${postid}">comment</a>&nbsp;<a href="news.1.html">show all news</a></div>
+      <div class="footer"><a href="thread-${parent}.html">${comment_count}&nbsp;comments</a>&nbsp;&nbsp;<a href="${allnews_link}">all news</a></div>
     </div>
     <table class="activity" cellspacing="0" cellpadding="0" border="0" width="100%">
       <tr>

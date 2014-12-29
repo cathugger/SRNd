@@ -39,9 +39,13 @@ function quickreply(articlehash, parenthash_full) {
 function highlight(articlehash) {
   /* turn off previos highlights */
 	var cells = document.getElementsByTagName("div");
-	for(var i=0;i<cells.length;i++) if(cells[i].className == "highlight") cells[i].className = "message";
+	for(var i=0;i<cells.length;i++) {
+          if(cells[i].className == "highlight") cells[i].className = "message";
+          if(cells[i].className == "highlightroot") cells[i].className = "messageroot";
+        }
   /* make highlight */
-  document.getElementById(articlehash).className = 'highlight';
+  if(document.getElementById(articlehash).className == "message") document.getElementById(articlehash).className = 'highlight'; 
+    else document.getElementById(articlehash).className = 'highlightroot';
   /* jump to post */
   var match = /^([^#]*)/.exec(document.location.toString()); /* extract full url without trailing #part */
   document.location = match[1] + "#" + articlehash; /* jump to #articlehash */
