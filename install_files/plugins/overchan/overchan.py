@@ -1597,14 +1597,16 @@ class main(threading.Thread):
     menu_entries.append('<li><a href="/" target="_top">Main</a></li><br />\n')
     for group_row in self.sqlite.execute('SELECT group_name, group_id, ph_name, link FROM groups WHERE \
       blocked = 0 AND ((cast(groups.flags as integer) & ?) != ?) ORDER by group_name ASC', (self.cache['flags']['hidden'], self.cache['flags']['hidden'])).fetchall():
+      group_name = group_row[0].split('.', 1)[1].replace('"', '').replace('/', '')
       if self.use_unsecure_aliases and group_row[3] != '':
-        group_name = group_row[3]
+        group_link = group_row[3]
       else:
-        group_name = group_row[0].split('.', 1)[1].replace('"', '').replace('/', '') + '-1.html'
+        group_link = '%s-1.html' % group_name
       if group_row[2] != '':
         group_name_encoded = self.basicHTMLencode(group_row[2].replace('"', '').replace('/', ''))
       else:
         group_name_encoded = self.basicHTMLencode(group_row[0].split('.', 1)[1].replace('"', '').replace('/', ''))
+      t_engine_mappings_menu_entry['group_link'] = group_link
       t_engine_mappings_menu_entry['group_name'] = group_name
       t_engine_mappings_menu_entry['group_name_encoded'] = group_name_encoded
       # get fresh posts count
