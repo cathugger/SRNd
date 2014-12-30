@@ -914,6 +914,8 @@ class main(threading.Thread):
     return True
 
   def gen_thumb(self, target, imagehash):
+    if os.path.getsize(target) == 0:
+      return 'invalid'
     if target.split('.')[-1].lower() == 'gif' and os.path.getsize(target) < (128 * 1024 + 1):
       thumb_name = imagehash + '.gif'
       thumb_link = os.path.join(self.output_directory, 'thumbs', thumb_name)
