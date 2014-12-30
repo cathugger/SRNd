@@ -154,7 +154,7 @@ class main(threading.Thread):
     self.use_unsecure_aliases = False
     if 'use_unsecure_aliases' in args:
       if args['use_unsecure_aliases'].lower() == 'true':
-        self.sync_on_startup = True
+        self.use_unsecure_aliases = True
 
     for x in (self.no_file, self.audio_file, self.invalid_file, self.document_file, self.css_file, self.censored_file):
       cheking_file = os.path.join(self.template_directory, x)

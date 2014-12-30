@@ -213,9 +213,7 @@ class main(threading.Thread):
       #self.log("should check flags for key_id %i" % key_id, 1)
       flags_available = int(self.censordb.execute("SELECT flags FROM keys WHERE id=?", (key_id,)).fetchone()[0])
       if command == "all":
-        flag_required = 0
-        for row in self.censordb.execute("SELECT flag FROM flags").fetchall():
-          flag_required |= int(row[0])
+        flag_required = self.all_flags
       else:
         flag_required = int(self.censordb.execute("SELECT flag FROM commands WHERE command=?", (command,)).fetchone()[0])
         self.allowed_cache[key_id][command] = (flags_available & flag_required) == flag_required
