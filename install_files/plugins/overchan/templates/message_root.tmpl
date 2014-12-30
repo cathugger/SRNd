@@ -1,5 +1,5 @@
       <div class="messageroot" id="${articlehash}">
-        <a href="img/${imagelink}" class="image_link" target="_blank" title="${imagename}"><img src="thumbs/${thumblink}" class="image_root" /></a>
+        <a href="img/${imagelink}" class="image_link" target="_blank" title="${imagename}"><img src="thumbs/${thumblink}" class="image_root" />${play_button}</a>
         <a name="${articlehash}"></a><span class="topicline"><b>${subject}</b> ${author} <span class=published>${sent} UTC</span>  <a href="thread-${articlehash}.html" onmouseover="get_quote();" onclick="return quickreply('${articlehash}', '${articlehash_full}');">№  ${article_id}</a> <a href="thread-${articlehash}.html">[Reply]</a>${sticky_mark}</span>
         ${signed}          <div class="stillevil">
           <input type="checkbox" value="${articlehash_full}" title="delete post" class="purge_root" name="purge_root" id="purge${articlehash}">

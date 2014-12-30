@@ -390,7 +390,9 @@ class main(threading.Thread):
     # ^ hardlinks not gonna work because of remote filesystems
     # ^ softlinks not gonna work because of nginx chroot
     # ^ => cp
-    self.copy_out((self.css_file, 'styles.css'), ('user.css', 'user.css'), (self.no_file, os.path.join('img', self.no_file)), ('suicide.txt', 'suicide.txt'),)
+    self.copy_out((self.css_file, 'styles.css'), ('user.css', 'user.css'), (self.no_file, os.path.join('img', self.no_file)),
+        ('suicide.txt', 'suicide.txt'), ('playbutton.png', os.path.join('img', 'playbutton.png')),
+    )
     self.gen_template_thumbs(self.invalid_file, self.document_file, self.audio_file, self.webm_file, self.no_file, self.censored_file)
 
     self.regenerate_boards = list()
@@ -1369,6 +1371,7 @@ class main(threading.Thread):
     #father initiate parsing child post and contain root_post_hash_id
         #data = 0 - article_uid 1- sender 2 - subject 3 - sent 4 - message 5 - imagename 6 - imagelink 7 - thumblink -8 public_key for root post add 9-lastupdate
     #message_id_hash = sha1(data[0]).hexdigest() #use globally for decrease sha1 root post uid iteration
+    is_playable = False
     parsed_data = dict()
     if data[6] != '':
         imagelink = data[6]
@@ -1384,6 +1387,8 @@ class main(threading.Thread):
           thumblink = self.censored_file
         else:
           thumblink = data[7]
+          if data[6] != data[7] and (data[6].rsplit('.', 1)[-1].lower() in ('gif', 'webm')):
+            is_playable = True
     else:
       imagelink = thumblink = self.no_file
     if data[8] != '':
@@ -1452,6 +1457,10 @@ class main(threading.Thread):
       parsed_data['article_id'] = self.message_uid_to_fake_id(data[0])
     else:
       parsed_data['article_id'] = message_id_hash[:10]
+    if is_playable:
+      parsed_data['play_button'] = '<span class="play_button"></span>'
+    else:
+      parsed_data['play_button'] = ''
     return parsed_data
 
   def generate_archive(self, group_id):

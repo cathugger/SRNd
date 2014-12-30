@@ -56,6 +56,7 @@
       .image_link {
         float: left;
         padding-right: 5px;
+        position: relative;
       }
       .image_root {
         border-radius: 0px;
@@ -292,4 +293,20 @@
       }
       .menu-left {
         font-size: 0.9em;
+      }
+      .board_description {
+        width: 400px;
+        padding: 10px;
+        font-size: 0.75em;
+        font-family: sans-serif;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+      }
+      .play_button {
+        background-image: url("img/playbutton.png");
+        height: 53px;
+        width: 70px;
+        position: absolute;
+        top: calc(50% - 26px);
+        left: calc(50% - 35px);
       }
