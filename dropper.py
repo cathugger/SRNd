@@ -42,7 +42,7 @@ class dropper(threading.Thread):
     self.running = False
 
   def update_db(self, current_version):
-    if self.debug > 4: "[dropper] should update db from version %i" % current_version
+    if self.debug > 4: print "[dropper] should update db from version %i" % current_version
     if current_version == 0:
       self.sqlite.execute("CREATE TABLE config (key text PRIMARY KEY, value text)")
       self.sqlite.execute('INSERT INTO config VALUES ("db_version","1")')

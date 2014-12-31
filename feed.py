@@ -440,7 +440,7 @@ class feed(threading.Thread):
     except IOError as e:
       self.log(self.logger.ERROR, 'cannot open: %s: %s' % ('{0}.trackdb'.format(self.name), e.strerror))
     f.write('{0}\n'.format(message_id))
-    f.close
+    f.close()
 
   def handle_line(self, line):
     self.log(self.logger.VERBOSE, 'in: %s' % line)
@@ -654,7 +654,7 @@ class feed(threading.Thread):
             message_id = lines[index].split(' ', 1)[1]
           elif lines[index].lower().startswith('newsgroups:'):
             newsgroups = lines[index].split(' ', 1)[1]
-        lines[index] = lines[index] + '\n'
+        lines[index] += '\n'
         if lines[index] == '\n':
           body_found = True
         elif lines[index][0] == '.':

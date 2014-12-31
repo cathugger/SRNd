@@ -541,7 +541,7 @@ class main(threading.Thread):
       return pub_short
     for x in range(0, length / 2):
       pub_short +=  '&#%i;' % (9600 + int(full_pubkey_hex[x*2:x*2+2], 16))
-    length = length - (length / 2)
+    length -= length / 2
     for x in range(0, length):
       pub_short += '&#%i;' % (9600 + int(full_pubkey_hex[-(length*2):][x*2:x*2+2], 16))
     return pub_short
@@ -855,24 +855,24 @@ class main(threading.Thread):
     boardlist = list()
     for row in self.sqlite.execute('SELECT group_name, group_id, article_count FROM groups WHERE blocked = 0 ORDER by group_name ASC').fetchall():
       #current_group_name = row['group_name'].split('.', 1)[-1].replace('"', '').replace('/', '')
-      current_group_name = row['group_name'].replace('"', '').replace('/', '')
+      current_group_name = row[0].replace('"', '').replace('/', '')
       current_group_name_encoded = self.basicHTMLencode(current_group_name)
       mapper['board_link']   = '%s.html' % current_group_name
       mapper['board_name']   = current_group_name_encoded
-      mapper['thread_count'] = str(self.sqlite.execute('SELECT count(1) FROM articles WHERE group_id = ? AND (parent = "" OR parent = article_uid)', (row['group_id'],)).fetchone()[0])
-      mapper['post_count']   = str(row['article_count'])
-      latest_post = self.sqlite.execute('SELECT article_uid, parent, sent, subject, sender FROM articles WHERE group_id = ? ORDER BY sent DESC LIMIT 1', (row['group_id'],)).fetchone()
-      mapper['last_post_date']    = datetime.utcfromtimestamp(latest_post['sent']).strftime('%Y/%m/%d %H:%M')
-      mapper['last_post_sender']  = latest_post['sender']
-      mapper['last_post_anchor']  = sha1(latest_post['article_uid']).hexdigest()[:10]
-      if latest_post['parent'] == '' or latest_post['parent'] == latest_post['article_uid']:
+      mapper['thread_count'] = str(self.sqlite.execute('SELECT count(1) FROM articles WHERE group_id = ? AND (parent = "" OR parent = article_uid)', (row[0],)).fetchone()[0])
+      mapper['post_count']   = str(row[2])
+      latest_post = self.sqlite.execute('SELECT article_uid, parent, sent, subject, sender FROM articles WHERE group_id = ? ORDER BY sent DESC LIMIT 1', (row[0],)).fetchone()
+      mapper['last_post_date']    = datetime.utcfromtimestamp(latest_post[2]).strftime('%Y/%m/%d %H:%M')
+      mapper['last_post_sender']  = latest_post[4]
+      mapper['last_post_anchor']  = sha1(latest_post[0]).hexdigest()[:10]
+      if latest_post[1] in ('', latest_post[0]):
         # latest post is a root post
-        mapper['thread_link']       = 'thread-%s.html' % sha1(latest_post['article_uid']).hexdigest()[:10]
-        mapper['last_post_subject'] = latest_post['subject']
+        mapper['thread_link']       = 'thread-%s.html' % sha1(latest_post[0]).hexdigest()[:10]
+        mapper['last_post_subject'] = latest_post[3]
       else:
-        mapper['thread_link']         = 'thread-%s.html' % sha1(latest_post['parent']).hexdigest()[:10]
+        mapper['thread_link']         = 'thread-%s.html' % sha1(latest_post[1]).hexdigest()[:10]
         try:
-          mapper['last_post_subject'] = self.sqlite.execute('SELECT subject FROM articles WHERE article_uid = ?', (latest_post['parent'],)).fetchone()[0]
+          mapper['last_post_subject'] = self.sqlite.execute('SELECT subject FROM articles WHERE article_uid = ?', (latest_post[1],)).fetchone()[0]
         except:
           mapper['last_post_subject'] = 'root post for latest thread not yet available'
       boardlist.append(self.t_engine_boards_list.substitute(mapper))
@@ -887,19 +887,19 @@ class main(threading.Thread):
     mapper = dict()
     threadlist = list()
     for row in self.sqlite.execute('SELECT article_uid, subject, sender, sent FROM articles WHERE group_id = ? AND (parent = "" OR parent = article_uid) ORDER BY last_update DESC', (board_id,)).fetchall():
-      mapper['thread_link']       = 'thread-%s.html' % sha1(row['article_uid']).hexdigest()[:10]
-      mapper['thread_subject']    = row['subject']
-      mapper['thread_starter']    = row['sender']
-      mapper['thread_replies']    = self.sqlite.execute('SELECT count(1) FROM articles WHERE parent = ?', (row['article_uid'],)).fetchone()[0]
+      mapper['thread_link']       = 'thread-%s.html' % sha1(row[0]).hexdigest()[:10]
+      mapper['thread_subject']    = row[1]
+      mapper['thread_starter']    = row[2]
+      mapper['thread_replies']    = self.sqlite.execute('SELECT count(1) FROM articles WHERE parent = ?', (row[0],)).fetchone()[0]
       if mapper['thread_replies'] > 0:
-        latest_post = self.sqlite.execute('SELECT article_uid, sent, sender FROM articles WHERE parent = ? ORDER BY sent DESC LIMIT 1', (row['article_uid'],)).fetchone()
-        mapper['last_post_date']    = datetime.utcfromtimestamp(latest_post['sent']).strftime('%Y/%m/%d %H:%M')      
-        mapper['last_post_anchor']  = sha1(latest_post['article_uid']).hexdigest()[:10]
-        mapper['last_post_sender'] = latest_post['sender']
+        latest_post = self.sqlite.execute('SELECT article_uid, sent, sender FROM articles WHERE parent = ? ORDER BY sent DESC LIMIT 1', (row[0],)).fetchone()
+        mapper['last_post_date']    = datetime.utcfromtimestamp(latest_post[1]).strftime('%Y/%m/%d %H:%M')
+        mapper['last_post_anchor']  = sha1(latest_post[0]).hexdigest()[:10]
+        mapper['last_post_sender'] = latest_post[2]
       else: 
-        mapper['last_post_date']    = datetime.utcfromtimestamp(row['sent']).strftime('%Y/%m/%d %H:%M')
-        mapper['last_post_anchor']  = sha1(row['article_uid']).hexdigest()[:10]
-        mapper['last_post_sender']  = row['sender']
+        mapper['last_post_date']    = datetime.utcfromtimestamp(row[3]).strftime('%Y/%m/%d %H:%M')
+        mapper['last_post_anchor']  = sha1(row[0]).hexdigest()[:10]
+        mapper['last_post_sender']  = row[2]
       threadlist.append(self.t_engine_threads_list.substitute(mapper))
 
     f = codecs.open(os.path.join(self.output_directory, '%s.html' % board_name), 'w', 'UTF-8')
@@ -922,32 +922,32 @@ class main(threading.Thread):
       self.log(self.logger.WARNING, "root post not yet available: %s" % root_uid)
       return
     mapper['anchor']  = root_sha
-    mapper['sender']  = root_post['sender']
-    mapper['trip']    = self.generate_pubkey_short_utf_8(root_post['public_key'])
-    mapper['subject'] = root_post['subject']
-    mapper['date']    = datetime.utcfromtimestamp(root_post['sent']).strftime('%Y/%m/%d %H:%M')
-    mapper['message'] = root_post['message']
-    if root_post['thumblink'] == '':
+    mapper['sender']  = root_post[1]
+    mapper['trip']    = self.generate_pubkey_short_utf_8(root_post[5])
+    mapper['subject'] = root_post[2]
+    mapper['date']    = datetime.utcfromtimestamp(root_post[3]).strftime('%Y/%m/%d %H:%M')
+    mapper['message'] = root_post[4]
+    if root_post[8] == '':
       mapper['imagelink'] = ''
     else:
-      if root_post['thumblink'] == 'document':
+      if root_post[8] == 'document':
         thumb = self.document_file
-      elif root_post['thumblink'] == 'invalid':
+      elif root_post[8] == 'invalid':
         thumb = self.invalid_file
       else:
-        thumb = root_post['thumblink']
-      mapper['imagelink'] = '<i>%s</i><br /><a href="img/%s"><img src="thumbs/%s" /></a>' % (root_post['imagename'], root_post['imagelink'], thumb)
+        thumb = root_post[8]
+      mapper['imagelink'] = '<i>%s</i><br /><a href="img/%s"><img src="thumbs/%s" /></a>' % (root_post[6], root_post[7], thumb)
     postlist.append(self.t_engine_posts_list.substitute(mapper))
     for child_post in self.sqlite.execute('SELECT article_uid, sender, subject, sent, message, public_key, imagename, imagelink, thumblink FROM articles WHERE parent = ? ORDER BY sent ASC', (root_uid,)).fetchall():
-      mapper['anchor']  = sha1(child_post['article_uid']).hexdigest()[:10]
-      mapper['sender']  = child_post['sender']
-      mapper['trip']    = self.generate_pubkey_short_utf_8(child_post['public_key'])
-      mapper['subject'] = child_post['subject']
-      mapper['date']    = datetime.utcfromtimestamp(child_post['sent']).strftime('%Y/%m/%d %H:%M')
+      mapper['anchor']  = sha1(child_post[0]).hexdigest()[:10]
+      mapper['sender']  = child_post[1]
+      mapper['trip']    = self.generate_pubkey_short_utf_8(child_post[5])
+      mapper['subject'] = child_post[2]
+      mapper['date']    = datetime.utcfromtimestamp(child_post[3]).strftime('%Y/%m/%d %H:%M')
       
       last_quote_level=0
       current_quote_level=0
-      lines = child_post['message'].split('\n')
+      lines = child_post[4].split('\n')
       for index, line in enumerate(lines):
         current_quote_level = 0
         if line.startswith('&gt;'):
@@ -968,19 +968,19 @@ class main(threading.Thread):
         lines[-1] += '</div>'*(last_quote_level-current_quote_level)
 
       mapper['message'] = u'\n'.join(lines)
-      if child_post['thumblink'] == '':
+      if child_post[8] == '':
         mapper['imagelink'] = ''
       else:
-        if child_post['thumblink'] == 'document':
+        if child_post[8] == 'document':
           thumb = self.document_file
-        elif child_post['thumblink'] == 'invalid':
+        elif child_post[8] == 'invalid':
           thumb = self.invalid_file
         else:
-          thumb = child_post['thumblink']
-        mapper['imagelink'] = '<i>%s</i><br /><a href="img/%s"><img src="thumbs/%s" /></a>' % (child_post['imagename'], child_post['imagelink'], thumb)
+          thumb = child_post[8]
+        mapper['imagelink'] = '<i>%s</i><br /><a href="img/%s"><img src="thumbs/%s" /></a>' % (child_post[6], child_post[7], thumb)
       postlist.append(self.t_engine_posts_list.substitute(mapper))
 
-    board_name = self.sqlite.execute('SELECT group_name FROM groups WHERE group_id = ?', (root_post['group_id'],)).fetchone()[0]
+    board_name = self.sqlite.execute('SELECT group_name FROM groups WHERE group_id = ?', (root_post[9],)).fetchone()[0]
     f = codecs.open(os.path.join(self.output_directory, 'thread-%s.html' % root_sha), 'w', 'UTF-8')
     f.write(self.t_engine_posts.substitute(
       title="foobar test",
@@ -988,7 +988,7 @@ class main(threading.Thread):
       current_board_name=board_name,
       current_thread=sha1(root_uid).hexdigest(),
       current_thread_link='thread-%s.html' % root_sha,
-      current_thread_subject=root_post['subject'],
+      current_thread_subject=root_post[2],
       reply_link='reply.html',
       posts_list=u"".join(postlist)
     ))

@@ -303,13 +303,15 @@ class main(threading.Thread):
     #time_total = time.time()
     self.log(self.logger.DEBUG, "parsing %s.." % message_id)
     if key_id == None:
+      public_key = ''
       for line in article_fd:
         if len(line) == 1:
           break
         elif line.lower().startswith('x-pubkey-ed25519:'):
           public_key = line.lower()[:-1].split(' ', 1)[1]
       #timestamp_start = time.time()
-      key_id = self.get_key_id(public_key)
+      if public_key != '':
+        key_id = self.get_key_id(public_key)
       #time_key_cache += time.time() - timestamp_start
     sent = None
     for line in article_fd:
@@ -464,11 +466,11 @@ class main(threading.Thread):
     self.log(self.logger.DEBUG, "handle acl_mod: %s" % line)
     flags = '0'
     local_nick = ''
+    row = line.split(" ", 3)[1:]
+    key = row[0]
+    if len(row) > 1: flags = row[1]
+    if len(row) > 2: local_nick = row[2]
     try:
-      row = line.split(" ", 3)[1:]
-      key = row[0]
-      if len(row) > 1: flags = row[1]
-      if len(row) > 2: local_nick = row[2]
       if int(self.censordb.execute('SELECT count(key) FROM keys WHERE key = ?', (key,)).fetchone()[0]) == 0:
         self.log(self.logger.DEBUG, "handle acl_mod: new key")
         self.censordb.execute("INSERT INTO keys (key, local_name, flags) VALUES (?, ?, ?)", (key, local_nick, flags))
@@ -499,32 +501,24 @@ class main(threading.Thread):
   def delete_article(self, message_id):
     groups = list()
     group_rows = list()
-    #timestamp_start = time.time()
     for row in self.dropperdb.execute('SELECT group_name, article_id from articles, groups WHERE message_id=? and groups.group_id = articles.group_id', (message_id,)).fetchall():
       group_rows.append((row[0], row[1]))
       groups.append(row[0])
-    #time_sql += time.time() - timestamp_start
-    #timestamp_start = time.time()
     if os.path.exists(os.path.join('articles', 'censored', message_id)):
-      #time_fs += time.time() - timestamp_start
       self.log(self.logger.DEBUG, "already deleted, still handing over to redistribute further")
     elif os.path.exists(os.path.join("articles", message_id)):
-      #time_fs += time.time() - timestamp_start
       self.log(self.logger.DEBUG, "moving %s to articles/censored/" % message_id)
       os.rename(os.path.join("articles", message_id), os.path.join("articles", "censored", message_id))
-      self.log(self.logger.DEBUG, "deleting groups/%s/%i" % (row[0], row[1]))
       for group in group_rows:
+        self.log(self.logger.DEBUG, "deleting groups/%s/%i" % (group[0], group[1]))
         try:
           # FIXME race condition with dropper if currently processing this very article
           os.unlink(os.path.join("groups", str(group[0]), str(group[1])))
         except Exception as e:
           self.log(self.logger.WARNING, "could not delete %s: %s" % (os.path.join("groups", str(group[0]), str(group[1])), e))
     elif not os.path.exists(os.path.join('articles', 'censored', message_id)):
-      #time_fs += time.time() - timestamp_start
       f = open(os.path.join('articles', 'censored', message_id), 'w')
       f.close()
-    #if debug:
-    #  return (message_id, groups, time_fs, time_sql)
     return (message_id, groups)
 
   def handle_board_add(self, line):

@@ -158,7 +158,6 @@ class censor(BaseHTTPRequestHandler):
       }
     )
     flags = post_vars.getlist("flags")
-    result = 0
     if 'local_nick' in post_vars:
       local_nick = post_vars['local_nick'].value.replace("<", "&lt;").replace(">", "&gt;").replace("#", "").strip()
     else:
@@ -186,7 +185,6 @@ class censor(BaseHTTPRequestHandler):
       }
     )
     flags = post_vars.getlist("flags")
-    result = 0
     comment = ''
     aliases = ('ph_name', 'ph_shortname', 'link', 'tag', 'description',)
     if 'board_name' in post_vars:
@@ -306,7 +304,6 @@ class censor(BaseHTTPRequestHandler):
       row = (key, '', 0, 0)
 
     flags = self.origin.sqlite_censor.execute("SELECT command, flag FROM commands").fetchall()
-    cur_template = self.origin.template_log_flagnames
     flagset_template = self.origin.template_modify_key_flagset
     out = self.origin.template_modify_key.replace("%%key%%", row[0]).replace("%%nick%%", row[1])
     flaglist = list()
@@ -347,7 +344,6 @@ class censor(BaseHTTPRequestHandler):
       return 'Board not found'
 
     flags = self.origin.sqlite_overchan.execute("SELECT flag_name, flag FROM flags").fetchall()
-    cur_template = self.origin.template_log_flagnames
     flagset_template = self.origin.template_modify_key_flagset
     form_data = dict()
     flaglist = list()
@@ -431,7 +427,7 @@ class censor(BaseHTTPRequestHandler):
 
   def hidden_line(self, line, max_len = 60):
     line = line.replace("<", "&lt;").replace(">", "&gt;").strip()
-    if max_len > 16 and len(line) > max_len:
+    if 16 < max_len < len(line):
       return '%s[..]%s' % (line[:6], line[-6:])
     else:
       return line
@@ -920,15 +916,14 @@ class censor(BaseHTTPRequestHandler):
     if 'purge_desthash' in post_vars:
       delete_by_desthash = post_vars.getlist('purge_desthash')
       for item in delete_by_desthash:
-        i2p_dest_hash = ''
         try:
           i2p_dest_hash = self.__get_dest_hash_by_hash(item)
         except Exception as e:
           self.origin.log(self.origin.logger.WARNING, "local moderation request: could not find X-I2P-DestHash for hash %s: %s" % (item, e))
           self.origin.log(self.origin.logger.WARNING, self.headers)
-          continue
-        if len(i2p_dest_hash) == 44:
-          lines.extend("delete %s" % message_id for message_id in self.__get_messages_id_by_dest_hash(i2p_dest_hash))
+        else:
+          if len(i2p_dest_hash) == 44:
+            lines.extend("delete %s" % message_id for message_id in self.__get_messages_id_by_dest_hash(i2p_dest_hash))
     if 'delete_a' in post_vars:
       delete_attachments = post_vars.getlist('delete_a')
       for item in delete_attachments:

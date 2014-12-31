@@ -500,7 +500,7 @@ class SRNd(threading.Thread):
           port = 119
         name = "outfeed-{0}-{1}".format(host, port)
         # open track db here, read, close
-        if sync_on_startup == True:
+        if sync_on_startup:
           self.feed_db[name] = list()
           try:
             f = open('{0}.trackdb'.format(name), 'r')

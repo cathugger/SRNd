@@ -1658,7 +1658,7 @@ class main(threading.Thread):
       self.cache['moder_flags'][row[0]] = row[1]
 
   def generate_board_list(self, group_id='', selflink=False):
-    full_board_name_unquoted = full_board_name = board_name_unquoted = board_name = board_description = ''
+    full_board_name_unquoted = board_name_unquoted = board_name = board_description = ''
     boardlist = list()
     # FIXME: cache this shit somewhere
     for group_row in self.sqlite.execute('SELECT group_name, group_id, ph_name, ph_shortname, link, description FROM groups \
