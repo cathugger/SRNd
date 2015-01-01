@@ -24,6 +24,12 @@ else:
 import Image
 import nacl.signing
 
+try:
+  import cv2
+  cv2_load_result = 'true'
+except ImportError as cv2_load_result:
+  pass
+
 class main(threading.Thread):
 
   def log(self, loglevel, message):
@@ -171,6 +177,9 @@ class main(threading.Thread):
         f.close()
       except Exception as e:
         self.die('Error loading template {0}: {1}'.format(template_file, e))
+
+    if cv2_load_result != 'true':
+      self.log(self.logger.ERROR, '%s. Thumbnail for video not be creating. see http://docs.opencv.org/' % cv2_load_result)
 
     f = codecs.open(os.path.join(self.template_directory, 'base_help.tmpl'), "r", "utf-8")
     self.template_base_help = string.Template(f.read()).safe_substitute(
@@ -915,6 +924,27 @@ class main(threading.Thread):
       f.close()
     return True
 
+  def gen_thumb_from_video(self, target, imagehash):
+    if os.path.getsize(target) == 0:
+      return 'invalid'
+    tmp_image = os.path.join(self.temp_directory, imagehash + '.jpg')
+    try:
+      video_capture = cv2.VideoCapture(target)
+      no_check, video_frame = video_capture.read()
+      video_capture.release()
+      cv2.imwrite(tmp_image, video_frame)
+    except Exception as e:
+      self.log(self.logger.WARNING, "error create image from video %s: %s" % (target, e))
+      thumbname = 'video'
+    else:
+      try:
+        thumbname = self.gen_thumb(tmp_image, imagehash)
+      except:
+        thumbname = 'invalid'
+    try: os.remove(tmp_image)
+    except: pass
+    return thumbname
+
   def gen_thumb(self, target, imagehash):
     if os.path.getsize(target) == 0:
       return 'invalid'
@@ -1165,6 +1195,8 @@ class main(threading.Thread):
           f.close()
           if is_img:
             thumb_name = 'invalid'
+          elif cv2_load_result == 'true':
+            thumb_name = self.gen_thumb_from_video(out_link, imagehash)
           else:
             thumb_name = 'video'
           os.remove(tmp_link)
