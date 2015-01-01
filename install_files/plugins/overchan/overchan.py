@@ -8,6 +8,7 @@ import string
 import threading
 import time
 import traceback
+import math
 from binascii import unhexlify
 from calendar import timegm
 from datetime import datetime, timedelta
@@ -161,6 +162,11 @@ class main(threading.Thread):
     if 'use_unsecure_aliases' in args:
       if args['use_unsecure_aliases'].lower() == 'true':
         self.use_unsecure_aliases = True
+
+    self.create_best_video_thumbnail = False
+    if 'create_best_video_thumbnail' in args:
+      if args['create_best_video_thumbnail'].lower() == 'true':
+        self.create_best_video_thumbnail = True
 
     for x in (self.no_file, self.audio_file, self.invalid_file, self.document_file, self.css_file, self.censored_file):
       cheking_file = os.path.join(self.template_directory, x)
@@ -928,9 +934,20 @@ class main(threading.Thread):
     if os.path.getsize(target) == 0:
       return 'invalid'
     tmp_image = os.path.join(self.temp_directory, imagehash + '.jpg')
+    image_entropy = -1.1
     try:
       video_capture = cv2.VideoCapture(target)
-      no_check, video_frame = video_capture.read()
+      readable, video_frame = video_capture.read()
+      tmp_video_frame = video_frame
+      while (self.create_best_video_thumbnail and readable):
+        histogram = cv2.calcHist(tmp_video_frame, [0], None, [256], [0, 256])
+        histogram_length = sum(histogram)
+        samples_probability = [float(h) / histogram_length for h in histogram]
+        tmp_image_entropy = float(-sum([p * math.log(p, 2) for p in samples_probability if p != 0]))
+        if tmp_image_entropy > image_entropy:
+          video_frame = tmp_video_frame
+          image_entropy = tmp_image_entropy
+        readable, tmp_video_frame = video_capture.read()
       video_capture.release()
       cv2.imwrite(tmp_image, video_frame)
     except Exception as e:
