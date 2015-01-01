@@ -1167,7 +1167,7 @@ class main(threading.Thread):
           else:
             thumb_name = 'audio'
           os.remove(tmp_link)
-        elif part.get_content_type().lower() == 'video/webm':
+        elif part.get_content_maintype() == 'video' and part.get_content_subtype() in ('webm', 'mp4'):
           tmp_link = os.path.join(self.temp_directory, 'tmpVideo')
           f = open(tmp_link, 'w')
           f.write(part.get_payload(decode=True))
@@ -1419,7 +1419,7 @@ class main(threading.Thread):
           thumblink = self.censored_file
         else:
           thumblink = data[7]
-          if data[6] != data[7] and (data[6].rsplit('.', 1)[-1].lower() in ('gif', 'webm')):
+          if data[6] != data[7] and (data[6].rsplit('.', 1)[-1].lower() in ('gif', 'webm', 'mp4')):
             is_playable = True
     else:
       imagelink = thumblink = self.no_file
