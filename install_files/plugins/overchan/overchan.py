@@ -156,8 +156,15 @@ class main(threading.Thread):
 
     self.censored_file = 'censored.png'
     if 'censored_file' in args:
-      try:    self.censored_file = args['censored_file']
-      except: pass
+      self.censored_file = args['censored_file']
+
+    self.archive_file = 'archive.png'
+    if 'archive_file' in args:
+      self.archive_file = args['archive_file']
+
+    self.torrent_file = 'torrent.png'
+    if 'torrent_file' in args:
+      self.torrent_file = args['torrent_file']
 
     self.use_unsecure_aliases = False
     if 'use_unsecure_aliases' in args:
@@ -409,7 +416,7 @@ class main(threading.Thread):
     self.copy_out((self.css_file, 'styles.css'), ('user.css', 'user.css'), (self.no_file, os.path.join('img', self.no_file)),
         ('suicide.txt', 'suicide.txt'), ('playbutton.png', os.path.join('img', 'playbutton.png')),
     )
-    self.gen_template_thumbs(self.invalid_file, self.document_file, self.audio_file, self.webm_file, self.no_file, self.censored_file)
+    self.gen_template_thumbs(self.invalid_file, self.document_file, self.audio_file, self.webm_file, self.no_file, self.censored_file, self.torrent_file, self.archive_file)
 
     self.regenerate_boards = list()
     self.regenerate_threads = list()
@@ -1153,6 +1160,12 @@ class main(threading.Thread):
             thumb_name = self.gen_thumb_from_video(out_link, imagehash)
           else:
             thumb_name = 'video'
+        elif part.get_content_maintype() == 'application' and part.get_content_subtype() == 'x-bittorrent':
+          self.really_os_rename(tmp_attach, out_link)
+          thumb_name = 'torrent'
+        elif part.get_content_maintype() == 'application' and part.get_content_subtype() in ('x-rar-compressed', 'x-7z-compressed', 'x-zip-compressed', 'zip', 'x-gzip', 'x-tar'):
+          self.really_os_rename(tmp_attach, out_link)
+          thumb_name = 'archive'
         else:
           image_name_original = image_name = thumb_name = ''
           message += '\n----' + part.get_content_type() + '----\n'
@@ -1372,6 +1385,10 @@ class main(threading.Thread):
           thumblink = self.webm_file
         elif data[7] == 'censored':
           thumblink = self.censored_file
+        elif data[7] == 'archive':
+          thumblink = self.archive_file
+        elif data[7] == 'torrent':
+          thumblink = self.torrent_file
         else:
           thumblink = data[7]
           if data[6] != data[7] and (data[6].rsplit('.', 1)[-1].lower() in ('gif', 'webm', 'mp4')):
