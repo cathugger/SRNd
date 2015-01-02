@@ -9,6 +9,7 @@ import threading
 import time
 import traceback
 import math
+import mimetypes
 from binascii import unhexlify
 from calendar import timegm
 from datetime import datetime, timedelta
@@ -990,6 +991,14 @@ class main(threading.Thread):
     thumb.save(thumb_link, optimize=True)
     return thumb_name
 
+  def really_os_rename(self, src, dst):
+    # TODO: check if out dir is remote fs, use os.rename if not
+    c = open(dst, 'w')
+    f = open(src, 'r')
+    c.write(f.read())
+    c.close()
+    f.close()
+    os.remove(src)
 
   def parse_message(self, message_id, fd):
     self.log(self.logger.INFO, 'new message: %s' % message_id)
@@ -1091,136 +1100,65 @@ class main(threading.Thread):
     image_name = ''
     thumb_name = ''
     message = ''
-    # TODO: check if out dir is remote fs, use os.rename if not
     if result.is_multipart():
       self.log(self.logger.DEBUG, 'message is multipart, length: %i' % len(result.get_payload()))
       if len(result.get_payload()) == 1 and result.get_payload()[0].get_content_type() == "multipart/mixed":
         result = result.get_payload()[0]
       for part in result.get_payload():
         self.log(self.logger.DEBUG, 'got part == %s' % part.get_content_type())
-        if part.get_content_type().startswith('image/'):
-          tmp_link = os.path.join(self.temp_directory, 'tmpImage')
-          f = open(tmp_link, 'w')
+
+        deny_extensions = ('.html', '.php', '.phtml', '.php3', '.php4', '.js')
+        tmp_attach = os.path.join(self.temp_directory, 'tmp_attach')
+        if part.get_content_type() != 'text/plain':
+          f = open(tmp_attach, 'w')
           f.write(part.get_payload(decode=True))
           f.close()
-          # get hash for filename
-          f = open(tmp_link, 'r')
-          image_name_original = self.basicHTMLencode(part.get_filename().replace('/', '_').replace('"', '_'))
-          # FIXME read line by line and use hasher.update(line)
+          f = open(tmp_attach, 'r')
           imagehash = sha1(f.read()).hexdigest()
-          image_name = image_name_original.split('.')[-1].lower()
-          if image_name in ('html', 'php'):
-            image_name = 'txt'
-          image_name = imagehash + '.' + image_name
+          f.close()
+          if part.get_filename() is None or part.get_filename().strip() == '':
+            image_name_original = 'empty_file_name.empty'
+          else:
+            image_name_original = self.basicHTMLencode(part.get_filename().replace('/', '_').replace('"', '_'))
+          image_extension = '.' + image_name_original.split('.')[-1].lower()
+          if len(image_name_original) > 512:
+            image_name_original = image_name_original[:512] + '...'
+          image_mime_types = mimetypes.guess_all_extensions(part.get_content_type())
+          image_name = imagehash + image_extension
           out_link = os.path.join(self.output_directory, 'img', image_name)
-          f.close()
-          # copy to out directory with new filename
-          # FIXME use os.rename() for the sake of good
-          c = open(out_link, 'w')
-          f = open(tmp_link, 'r')
-          c.write(f.read())
-          c.close()
-          f.close()
+        if part.get_content_type() == 'text/plain':
+          message += part.get_payload(decode=True)
+        # Bad file type, unknown type, fake mimetype or deny type found
+        elif (image_extension not in image_mime_types) or len((set(image_extension) | set(image_mime_types)) & set(deny_extensions)) > 0:
+          self.log(self.logger.WARNING, 'Found bad attach %s in %s' % (image_name_original, message_id))
+          image_name_original = 'fake.and.gay.txt'
+          thumb_name = 'document'
+          image_name = 'suicide.txt'
+        elif part.get_content_maintype() == 'image':
+          self.really_os_rename(tmp_attach, out_link)
           try:
             thumb_name = self.gen_thumb(out_link, imagehash)
           except Exception as e:
             thumb_name = 'invalid'
             self.log(self.logger.WARNING, 'Error creating thumb in %s: %s' % (image_name, e))
-          os.remove(tmp_link)
-          #os.rename('tmp/tmpImage', 'html/img/' + imagelink) # damn remote file systems and stuff
-        elif part.get_content_type().lower() in ('application/pdf', 'application/postscript', 'application/ps'):
-          tmp_link = os.path.join(self.temp_directory, 'tmpImage')
-          f = open(tmp_link, 'w')
-          f.write(part.get_payload(decode=True))
-          f.close()
-          # get hash for filename
-          f = open(tmp_link, 'r')
-          image_name_original = self.basicHTMLencode(part.get_filename().replace('/', '_').replace('"', '_'))
-          imagehash = sha1(f.read()).hexdigest()
-          image_name = image_name_original.split('.')[-1].lower()
-          if image_name in ('html', 'php'):
-            image_name = 'fake.and.gay.txt'
-          image_name = imagehash + '.' + image_name
-          out_link = os.path.join(self.output_directory, 'img', image_name)
-          f.close()
-          # copy to out directory with new filename
-          c = open(out_link, 'w')
-          f = open(tmp_link, 'r')
-          c.write(f.read())
-          c.close()
-          f.close()
+        elif part.get_content_type() in ('application/pdf', 'application/postscript', 'application/ps'):
+          self.really_os_rename(tmp_attach, out_link)
           thumb_name = 'document'
-          os.remove(tmp_link)
-        elif part.get_content_type().lower() == 'text/plain':
-          message += part.get_payload(decode=True)
-        elif part.get_content_type().lower() in ('audio/ogg', 'audio/mpeg', 'audio/mp3', 'audio/opus'):
-          tmp_link = os.path.join(self.temp_directory, 'tmpAudio')
-          f = open(tmp_link, 'w')
-          f.write(part.get_payload(decode=True))
-          f.close()
-          # get hash for filename
-          f = open(tmp_link, 'r')
-          d = f.read()
-          is_img = d[4:] == '\x89PNG'
-          image_name_original = self.basicHTMLencode(part.get_filename().replace('/', '_').replace('"', '_'))
-          imagehash = sha1(d).hexdigest()
-          image_name = image_name_original.split('.')[-1].lower()
-          if image_name in ('jpg', 'png', 'gif', 'bmp', 'webm', 'html', 'php'):
-            image_name = 'fake.and.gay.txt'
-          elif is_img:
-            image_name = imagehash + '.fake_img'
-          else:
-            image_name = imagehash + '.' + image_name
-          out_link = os.path.join(self.output_directory, 'img', image_name)
-          f.close()
-          # copy to out directory with new filename
-          c = open(out_link, 'w')
-          f = open(tmp_link, 'r')
-          c.write(f.read())
-          c.close()
-          f.close()
-          if is_img:
-            thumb_name = 'invalid'
-          else:
-            thumb_name = 'audio'
-          os.remove(tmp_link)
+        elif part.get_content_type() in ('audio/ogg', 'audio/mpeg', 'audio/mp3', 'audio/opus'):
+          self.really_os_rename(tmp_attach, out_link)
+          thumb_name = 'audio'
         elif part.get_content_maintype() == 'video' and part.get_content_subtype() in ('webm', 'mp4'):
-          tmp_link = os.path.join(self.temp_directory, 'tmpVideo')
-          f = open(tmp_link, 'w')
-          f.write(part.get_payload(decode=True))
-          f.close()
-          # get hash for filename
-          f = open(tmp_link, 'r')
-          d = f.read()
-          is_img = d[4:] == '\x89PNG'
-          image_name_original = self.basicHTMLencode(part.get_filename().replace('/', '_').replace('"', '_'))
-          imagehash = sha1(d).hexdigest()
-          image_name = image_name_original.split('.')[-1].lower()
-          if image_name in ('jpg', 'png', 'gif', 'bmp', 'html', 'php'):
-            image_name = 'fake.and.gay.txt'
-          elif is_img:
-            image_name = imagehash + '.fake_img'
-          else:
-            image_name = imagehash + '.' + image_name
-          out_link = os.path.join(self.output_directory, 'img', image_name)
-          f.close()
-          # copy to out directory with new filename
-          c = open(out_link, 'w')
-          f = open(tmp_link, 'r')
-          c.write(f.read())
-          c.close()
-          f.close()
-          if is_img:
-            thumb_name = 'invalid'
-          elif cv2_load_result == 'true':
+          self.really_os_rename(tmp_attach, out_link)
+          if cv2_load_result == 'true':
             thumb_name = self.gen_thumb_from_video(out_link, imagehash)
           else:
             thumb_name = 'video'
-          os.remove(tmp_link)
         else:
+          image_name_original = image_name = thumb_name = ''
           message += '\n----' + part.get_content_type() + '----\n'
           message += 'invalid content type\n'
           message += '----' + part.get_content_type() + '----\n\n'
+        if os.path.exists(tmp_attach): os.remove(tmp_attach)
     else:
       if result.get_content_type().lower() == 'text/plain':
         message += result.get_payload(decode=True)
