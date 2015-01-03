@@ -946,15 +946,23 @@ class main(threading.Thread):
     try:
       video_capture = cv2.VideoCapture(target)
       readable, video_frame = video_capture.read()
+      fps = int(video_capture.get(cv2.cv.CV_CAP_PROP_FPS))
+      if fps > 61: fps = 60
+      if fps < 10: fps = 10
+      video_length = int(video_capture.get(cv2.cv.CV_CAP_PROP_FRAME_COUNT) / fps)
+      if video_length > 120: video_length = 120
       tmp_video_frame = video_frame
-      while (self.create_best_video_thumbnail and readable):
-        histogram = cv2.calcHist(tmp_video_frame, [0], None, [256], [0, 256])
+      current_frame = 0
+      while self.create_best_video_thumbnail and readable and current_frame < video_length:
+        histogram = cv2.calcHist(tmp_video_frame, [42], None, [256], [0, 256])
         histogram_length = sum(histogram)
         samples_probability = [float(h) / histogram_length for h in histogram]
         tmp_image_entropy = float(-sum([p * math.log(p, 2) for p in samples_probability if p != 0]))
         if tmp_image_entropy > image_entropy:
           video_frame = tmp_video_frame
           image_entropy = tmp_image_entropy
+        current_frame += 1
+        video_capture.set(cv2.cv.CV_CAP_PROP_POS_FRAMES, current_frame * fps - 1)
         readable, tmp_video_frame = video_capture.read()
       video_capture.release()
       cv2.imwrite(tmp_image, video_frame)
