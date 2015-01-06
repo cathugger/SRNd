@@ -573,9 +573,9 @@ class main(threading.Thread):
     except:
       self.sqlite.execute('INSERT INTO groups(group_name, article_count, last_update, flags) VALUES (?,?,?,?)', (group_name, 0, int(time.time()), flags))
       self.log(self.logger.INFO, 'added new board: \'%s\'' % group_name)
-    self.sqlite_conn.commit()
     if len(args) > 2:
       self.overchan_aliases_update(args[2], group_name)
+    self.sqlite_conn.commit()
     self.regenerate_all_html()
 
   def overchan_board_del(self, group_name, flags=0):
@@ -597,7 +597,6 @@ class main(threading.Thread):
       return
     self.sqlite.execute('UPDATE groups SET ph_name= ?, ph_shortname = ?, link = ?, tag = ?, description = ? \
         WHERE group_name = ?', (ph_name.decode('UTF-8')[:42], ph_shortname.decode('UTF-8')[:42], link.decode('UTF-8')[:1000], tag.decode('UTF-8')[:42], description.decode('UTF-8')[:25000], group_name))
-    self.sqlite_conn.commit()
 
   def handle_control(self, lines, timestamp):
     # FIXME how should board-add and board-del react on timestamps in the past / future
@@ -615,11 +614,11 @@ class main(threading.Thread):
           self.overchan_board_del(group_name, flags)
         else:
           self.sqlite.execute('UPDATE groups SET flags = ? WHERE group_name = ?', (flags, group_name))
+          if len(get_data) > 2:
+            self.overchan_aliases_update(get_data[2], group_name)
           self.sqlite_conn.commit()
-        if len(get_data) > 2:
-          self.overchan_aliases_update(get_data[2], group_name)
-        self.generate_overview()
-        self.generate_menu()
+          if group_id not in self.regenerate_boards:
+            self.regenerate_boards.append(group_id)
       elif line.lower().startswith('overchan-board-add'):
         self.overchan_board_add(line.split(" ")[1:])
       elif line.lower().startswith("overchan-board-del"):
@@ -633,6 +632,9 @@ class main(threading.Thread):
         if not row:
           self.log(self.logger.DEBUG, 'should delete attachments for message_id %s but there is no article matching this message_id' % message_id)
           continue
+        if len(row[0]) <= 40:
+          self.log(self.logger.WARNING, 'Attach for %s has incorrect file name %s. ignoring' % (message_id, row[0]))
+          continue
         #if row[4] > timestamp:
         #  self.log("post more recent than control message. ignoring delete-attachment for %s" % message_id, 2)
         #  continue
@@ -640,6 +642,7 @@ class main(threading.Thread):
           self.log(self.logger.DEBUG, 'attachment already censored. ignoring delete-attachment for %s' % message_id)
           continue
         self.log(self.logger.INFO, 'deleting attachments for message_id %s' % message_id)
+        self.censored_attach_processing(row[0], row[1])
         if row[3] not in self.regenerate_boards:
           self.regenerate_boards.append(row[3])
         if row[2] == '':
@@ -647,7 +650,6 @@ class main(threading.Thread):
             self.regenerate_threads.append(message_id)
         elif not row[2] in self.regenerate_threads:
           self.regenerate_threads.append(row[2])
-        self.censored_attach_processing(row[0], row[1])
       elif line.lower().startswith("delete "):
         message_id = line.split(" ")[1]
         if os.path.exists(os.path.join("articles", "restored", message_id)):
@@ -665,8 +667,7 @@ class main(threading.Thread):
         #  self.log("message already deleted/censored. ignoring delete for %s" % message_id, 4)
         #  continue
         self.log(self.logger.INFO, 'deleting message_id %s' % message_id)
-        if row[3] not in self.regenerate_boards:
-          self.regenerate_boards.append(row[3])
+        with_child = False
         if row[2] == '':
           # root post
           child_files = self.sqlite.execute("SELECT imagelink, thumblink FROM articles WHERE parent = ? AND article_uid != parent", (message_id,)).fetchall()
@@ -675,10 +676,7 @@ class main(threading.Thread):
             self.log(self.logger.DEBUG, 'deleting message_id %s, got a root post with attached child posts' % message_id)
             # delete child posts
             self.sqlite.execute('DELETE FROM articles WHERE parent = ?', (message_id,))
-            self.sqlite_conn.commit()
-            # delete child images and thumbs
-            for child_image, child_thumb in child_files:
-              self.delete_orphan_attach(child_image, child_thumb)
+            with_child = True
           else:
             # root posts without child posts
             self.log(self.logger.DEBUG, 'deleting message_id %s, got a root post without any child posts' % message_id)
@@ -696,6 +694,12 @@ class main(threading.Thread):
           # FIXME: add detection for parent == deleted message (not just censored) and if true, add to root_posts
         self.sqlite_conn.commit()
         self.delete_orphan_attach(row[0], row[1])
+        # delete child images and thumbs
+        if with_child:
+          for child_image, child_thumb in child_files:
+            self.delete_orphan_attach(child_image, child_thumb)
+        if row[3] not in self.regenerate_boards:
+          self.regenerate_boards.append(row[3])
       elif line.lower().startswith("overchan-sticky "):
         message_id = line.split(" ")[1]
         self.log(self.logger.INFO, 'sticky processing message_id %s, %s' % (message_id, self.sticky_processing(message_id)))
@@ -732,7 +736,8 @@ class main(threading.Thread):
         ret = self.queue.get(block=True, timeout=1)
         if ret[0] == "article":
           message_id = ret[1]
-          if self.sqlite.execute('SELECT subject FROM articles WHERE article_uid = ? AND imagelink != "invalid" AND thumblink != "censored"', (message_id,)).fetchone():
+          message_thumblink = self.sqlite.execute('SELECT thumblink FROM articles WHERE article_uid = ? AND imagelink != "invalid"', (message_id,)).fetchone()
+          if message_thumblink and (message_thumblink[0] != 'censored' or not os.path.exists(os.path.join("articles", "restored", message_id))):
             self.log(self.logger.DEBUG, '%s already in database..' % message_id)
             continue
           #message_id = self.queue.get(block=True, timeout=1)
@@ -834,11 +839,8 @@ class main(threading.Thread):
 
   def linkit(self, rematch):
     row = self.db_hasher.execute("SELECT message_id FROM article_hashes WHERE message_id_hash >= ? and message_id_hash < ?", (rematch.group(2), self.upp_it(rematch.group(2)))).fetchall()
-    if not row:
-      # hash not found
-      return rematch.group(0)
-    if len(row) > 1:
-      # multiple matches for that 10 char hash
+    if not row or len(row) > 1:
+      # hash not found or multiple matches for that 10 char hash
       return rematch.group(0)
     message_id = row[0][0]
     parent_row = self.sqlite.execute("SELECT parent FROM articles WHERE article_uid = ?", (message_id,)).fetchone()
@@ -1282,12 +1284,26 @@ class main(threading.Thread):
       self.sqlite.execute('DELETE FROM articles WHERE article_uid=?', (message_id,))
       self.sqlite_conn.commit()
 
-    censored_count = self.sqlite.execute('SELECT count(article_uid) FROM articles WHERE thumblink = "censored" AND imagelink = ?', (image_name,)).fetchone()
-    if censored_count and int(censored_count[0]) > 0:
-      # attach has been censored and is now being restored. Restore all thumblink
-      self.log(self.logger.INFO, 'Attach %s restored. Restore %s thumblinks for this attach' % (image_name, censored_count[0]))
-      self.sqlite.execute('UPDATE articles SET thumblink = ? WHERE imagelink = ?', (thumb_name, image_name))
-      self.sqlite_conn.commit()
+    censored_articles = self.sqlite.execute('SELECT article_uid FROM articles WHERE thumblink = "censored" AND imagelink = ?', (image_name,)).fetchall()
+    censored_count = len(censored_articles)
+    if censored_count > 0:
+      attach_iscensored = False
+      for check_article in censored_articles:
+        if os.path.exists(os.path.join("articles", "censored", check_article[0])):
+          attach_iscensored = True
+          break
+      if attach_iscensored:
+        # attach has been censored and not restored. Censoring and this attach
+        self.log(self.logger.INFO, 'Message %s contain attach censoring in %s message. %s has been continue censoring' % (message_id, check_article[0], image_name))
+        thumb_name = 'censored'
+        censored_attach_path = os.path.join(self.output_directory, 'img', image_name)
+        if os.path.exists(censored_attach_path):
+          os.remove(censored_attach_path)
+      else:
+        # attach has been censored and is now being restored. Restore all thumblink
+        self.log(self.logger.INFO, 'Attach %s restored. Restore %s thumblinks for this attach' % (image_name, censored_count))
+        self.sqlite.execute('UPDATE articles SET thumblink = ? WHERE imagelink = ?', (thumb_name, image_name))
+        self.sqlite_conn.commit()
 
     for group_id in group_ids:
       self.sqlite.execute('INSERT INTO articles(article_uid, group_id, sender, email, subject, sent, parent, message, imagename, imagelink, thumblink, last_update, public_key, received) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)', (message_id, group_id, sender.decode('UTF-8'), email.decode('UTF-8'), subject.decode('UTF-8'), sent, parent, message.decode('UTF-8'), image_name_original.decode('UTF-8'), image_name, thumb_name, last_update, public_key, int(time.time())))
@@ -1402,7 +1418,7 @@ class main(threading.Thread):
           thumblink = self.torrent_file
         else:
           thumblink = data[7]
-          if data[6] != data[7] and (data[6].rsplit('.', 1)[-1].lower() in ('gif', 'webm', 'mp4')):
+          if data[6] != data[7] and data[6].rsplit('.', 1)[-1] in ('gif', 'webm', 'mp4'):
             is_playable = True
     else:
       imagelink = thumblink = self.no_file
@@ -1443,9 +1459,7 @@ class main(threading.Thread):
           start_link = child_view / 50 * 50 + 50
           if start_link % 100 == 0: start_link += 50
           if child_count - start_link > 0:
-            message += ' ['
-            message += ''.join(' <a href="thread-{0}-{1}.html">{1}</a>'.format(message_id_hash[:10], x) for x in range(start_link, child_count, 100))
-            message += ' ]'
+            message += ' [%s ]' % ''.join(' <a href="thread-{0}-{1}.html">{1}</a>'.format(message_id_hash[:10], x) for x in range(start_link, child_count, 100))
     parsed_data['frontend'] = self.frontend(data[0])
     parsed_data['message'] = message
     parsed_data['articlehash'] = message_id_hash[:10]
