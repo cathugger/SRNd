@@ -177,6 +177,21 @@ class main(threading.Thread):
       if args['create_best_video_thumbnail'].lower() == 'true':
         self.create_best_video_thumbnail = True
 
+    self.utc_time_offset = 0.0
+    if 'utc_time_offset' in args:
+      try:    self.utc_time_offset = float(args['utc_time_offset'])
+      except: pass
+    if not (-15 < self.utc_time_offset < 15):
+      self.log(self.logger.ERROR, 'Abnormal UTC offset %s, use UTC+0' % (self.utc_time_offset,))
+      self.utc_time_offset = 0.0
+    self.utc_time_offset = int(self.utc_time_offset * 3600)
+
+    tz_name = 'UTC'
+    if 'tz_name' in args:
+      tz_name = args['tz_name'].replace('%', '')
+    if tz_name != '': tz_name = ' ' + tz_name
+    self.datetime_format = '%d.%m.%Y (%a) %H:%M' + tz_name
+
     for x in (self.no_file, self.audio_file, self.invalid_file, self.document_file, self.css_file, self.censored_file):
       cheking_file = os.path.join(self.template_directory, x)
       if not os.path.exists(cheking_file):
@@ -1469,7 +1484,7 @@ class main(threading.Thread):
       parsed_data['subject'] = ''
     else:
       parsed_data['subject'] = data[2]
-    parsed_data['sent'] = datetime.utcfromtimestamp(data[3]).strftime('%d.%m.%Y (%a) %H:%M')
+    parsed_data['sent'] = datetime.utcfromtimestamp(data[3] + self.utc_time_offset).strftime(self.datetime_format)
     parsed_data['imagelink'] = imagelink
     parsed_data['thumblink'] = thumblink
     parsed_data['imagename'] = data[5]
@@ -1758,7 +1773,7 @@ class main(threading.Thread):
         t_engine_mappings_overview['subject'] = 'Breaking news'
       else:
         t_engine_mappings_overview['subject'] = row[0]
-      t_engine_mappings_overview['sent'] = datetime.utcfromtimestamp(row[2]).strftime('%d.%m.%Y (%a) %H:%M')
+      t_engine_mappings_overview['sent'] = datetime.utcfromtimestamp(row[2] + self.utc_time_offset).strftime(self.datetime_format)
       if not row[3] == '':
           t_engine_mappings_overview['pubkey_short'] = self.generate_pubkey_short_utf_8(row[3])
           moder_name = self.pubkey_to_name(row[3])
@@ -1777,9 +1792,10 @@ class main(threading.Thread):
     stats = list()
     bar_length = 20
     days = 30
+    utc_offset = str(self.utc_time_offset) + ' seconds'
     totals = int(self.sqlite.execute('SELECT count(1) FROM articles WHERE sent > strftime("%s", "now", "-' + str(days) + ' days")').fetchone()[0])
     stats.append(self.template_stats_usage_row.replace('%%postcount%%', str(totals)).replace('%%date%%', 'all posts').replace('%%weekday%%', '').replace('%%bar%%', 'since %s days' % days))
-    for row in self.sqlite.execute('SELECT count(1) as counter, strftime("%Y-%m-%d",  sent, "unixepoch") as day, strftime("%w", sent, "unixepoch") as weekday FROM articles WHERE sent > strftime("%s", "now", "-' + str(days) + ' days") GROUP BY day ORDER BY day DESC').fetchall():
+    for row in self.sqlite.execute('SELECT count(1) as counter, strftime("%Y-%m-%d", sent, "unixepoch", "' + utc_offset + '") as day, strftime("%w", sent, "unixepoch", "' + utc_offset + '") as weekday FROM articles WHERE sent > strftime("%s", "now", "-' + str(days) + ' days") GROUP BY day ORDER BY day DESC').fetchall():
       if row[0] > max_post:
         max_post = row[0]
       stats.append((row[0], row[1], weekdays[int(row[2])]))
@@ -1798,7 +1814,7 @@ class main(threading.Thread):
       ((cast(groups.flags as integer) & ?) != ?) AND ((cast(groups.flags as integer) & ?) != ?) AND groups.blocked = 0 AND articles.group_id = groups.group_id AND \
       (articles.parent = "" OR articles.parent = articles.article_uid OR articles.parent IN (SELECT article_uid FROM articles)) \
       ORDER BY sent DESC LIMIT ?', (self.cache['flags']['hidden'], self.cache['flags']['hidden'], self.cache['flags']['no-overview'], self.cache['flags']['no-overview'], str(postcount))).fetchall():
-      sent = datetime.utcfromtimestamp(row[0]).strftime('%d.%m.%Y (%a) %H:%M UTC')
+      sent = datetime.utcfromtimestamp(row[0] + self.utc_time_offset).strftime(self.datetime_format)
       if row[6] != '':
         board = self.basicHTMLencode(row[6].replace('"', ''))
       else:
