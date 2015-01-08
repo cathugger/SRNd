@@ -699,7 +699,7 @@ class main(threading.Thread):
         else:
           # child post
           # correct root post last_update
-          all_child_time = self.sqlite.execute('SELECT article_uid, last_update FROM articles WHERE parent = ? ORDER BY sent DESC', (row[2],)).fetchall()
+          all_child_time = self.sqlite.execute('SELECT article_uid, last_update FROM articles WHERE parent = ? AND last_update >= sent ORDER BY sent DESC', (row[2],)).fetchall()
           childs_count = len(all_child_time)
           if childs_count > 1 and all_child_time[0][0] == message_id and (self.bump_limit == 0 or childs_count - 1 < self.bump_limit):
             root_last_update = int(self.sqlite.execute('SELECT last_update FROM articles WHERE article_uid = ?', (row[2],)).fetchone()[0])
@@ -1260,7 +1260,10 @@ class main(threading.Thread):
       last_update = sent
       if parent not in self.regenerate_threads:
         self.regenerate_threads.append(parent)
-      if not sage:
+      if sage:
+        # sage mark
+        last_update = sent - 10
+      else:
         result = self.sqlite.execute('SELECT last_update FROM articles WHERE article_uid = ?', (parent,)).fetchone()
         if result:
           parent_last_update = result[0]
@@ -1823,7 +1826,7 @@ class main(threading.Thread):
     postcount = 50
     exclude_flags = self.cache['flags']['hidden'] | self.cache['flags']['no-overview'] | self.cache['flags']['blocked']
     for row in self.sqlite.execute('SELECT sent, group_name, sender, subject, article_uid, parent, ph_name FROM articles, groups WHERE \
-      (cast(groups.flags as integer) & ?) = 0 AND articles.group_id = groups.group_id AND \
+      (cast(groups.flags as integer) & ?) = 0 AND articles.group_id = groups.group_id AND articles.last_update >= articles.sent AND \
       (articles.parent = "" OR articles.parent = articles.article_uid OR articles.parent IN (SELECT article_uid FROM articles)) \
       ORDER BY sent DESC LIMIT ?', (exclude_flags, str(postcount))).fetchall():
       sent = datetime.utcfromtimestamp(row[0] + self.utc_time_offset).strftime(self.datetime_format)
