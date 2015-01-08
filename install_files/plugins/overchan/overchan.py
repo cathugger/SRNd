@@ -1592,15 +1592,6 @@ class main(threading.Thread):
     else:
       thread_postfix = ''
       max_child_view = 10000
-    if self.check_board_flags(root_row[10], 'blocked'):
-      path = os.path.join(self.output_directory, 'thread-%s%s.html' % (root_message_id_hash[:10], thread_postfix))
-      if os.path.isfile(path):
-        self.log(self.logger.INFO, 'this thread belongs to some blocked board. deleting %s.' % path)
-        try:
-          os.unlink(path)
-        except Exception as e:
-          self.log(self.logger.ERROR, 'could not delete %s: %s' % (path, e))
-      return
     if thread_page == 0:
       child_count = int(self.sqlite.execute('SELECT count(article_uid) FROM articles WHERE parent = ? AND parent != article_uid AND group_id = ?', (root_row[0], root_row[10])).fetchone()[0])
       if child_count > 80:
@@ -1609,7 +1600,22 @@ class main(threading.Thread):
       thread_page -= 1
     if thread_page > 0 and thread_page % 2 == 0:
       thread_page -= 1
-    self.log(self.logger.INFO, 'generating %s/thread-%s%s.html' % (self.output_directory, root_message_id_hash[:10], thread_postfix))
+
+    thread_path = os.path.join(self.output_directory, 'thread-%s%s.html' % (root_message_id_hash[:10], thread_postfix))
+    if self.check_board_flags(root_row[10], 'blocked'):
+      if os.path.isfile(thread_path):
+        self.log(self.logger.INFO, 'this page belongs to some blocked board. deleting %s.' % thread_path)
+        try:
+          os.unlink(thread_path)
+        except Exception as e:
+          self.log(self.logger.ERROR, 'could not delete %s: %s' % (thread_path, e))
+    else:
+      self.create_thread_page(root_row, thread_path, max_child_view, root_message_id_hash)
+
+    if thread_page > 0: self.generate_thread(root_uid, thread_page)
+
+  def create_thread_page(self, root_row, thread_path, max_child_view, root_message_id_hash):
+    self.log(self.logger.INFO, 'generating %s' % (thread_path,))
     boardlist, full_board_name_unquoted, board_name_unquoted, board_name, board_description = self.generate_board_list(root_row[10], True)
 
     threads = list()
@@ -1629,10 +1635,9 @@ class main(threading.Thread):
     t_engine_mappings_thread_single['thread_single'] = ''.join(threads)
     t_engine_mappings_thread_single['board_description'] = board_description
 
-    f = codecs.open(os.path.join(self.output_directory, 'thread-{0}{1}.html'.format(root_message_id_hash[:10], thread_postfix)), 'w', 'UTF-8')
+    f = codecs.open(thread_path, 'w', 'UTF-8')
     f.write(self.t_engine_thread_single.substitute(t_engine_mappings_thread_single))
     f.close()
-    if thread_page > 0: self.generate_thread(root_uid, thread_page)
 
   def generate_index(self):
     self.log(self.logger.INFO, 'generating %s/index.html' % self.output_directory)
