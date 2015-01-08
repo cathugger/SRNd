@@ -496,28 +496,37 @@ class main(threading.Thread):
           self.log(self.logger.DEBUG, "article is a root post, deleting whole thread")
           for row in self.overchandb.execute('SELECT article_uid from articles where parent = ?', (message_id,)).fetchall():
             self.delete_article(row[0])
-    return self.delete_article(message_id)
+    return self.delete_article(message_id, command)
 
-  def delete_article(self, message_id):
+  def delete_article(self, message_id, command=''):
     groups = list()
     group_rows = list()
+    article_path = os.path.join('articles', message_id)
+    censore_path = os.path.join('articles', 'censored', message_id)
     for row in self.dropperdb.execute('SELECT group_name, article_id from articles, groups WHERE message_id=? and groups.group_id = articles.group_id', (message_id,)).fetchall():
       group_rows.append((row[0], row[1]))
       groups.append(row[0])
-    if os.path.exists(os.path.join('articles', 'censored', message_id)):
+    if os.path.exists(censore_path):
       self.log(self.logger.DEBUG, "already deleted, still handing over to redistribute further")
-    elif os.path.exists(os.path.join("articles", message_id)):
-      self.log(self.logger.DEBUG, "moving %s to articles/censored/" % message_id)
-      os.rename(os.path.join("articles", message_id), os.path.join("articles", "censored", message_id))
-      for group in group_rows:
-        self.log(self.logger.DEBUG, "deleting groups/%s/%i" % (group[0], group[1]))
-        try:
-          # FIXME race condition with dropper if currently processing this very article
-          os.unlink(os.path.join("groups", str(group[0]), str(group[1])))
-        except Exception as e:
-          self.log(self.logger.WARNING, "could not delete %s: %s" % (os.path.join("groups", str(group[0]), str(group[1])), e))
-    elif not os.path.exists(os.path.join('articles', 'censored', message_id)):
-      f = open(os.path.join('articles', 'censored', message_id), 'w')
+    elif os.path.exists(article_path):
+      if command == 'overchan-delete-attachment':
+        i = open(article_path, 'r')
+        o = open(censore_path, 'w')
+        o.write(i.read())
+        i.close()
+        o.close()
+      else:
+        self.log(self.logger.DEBUG, "moving %s to articles/censored/" % message_id)
+        os.rename(article_path, censore_path)
+        for group in group_rows:
+          self.log(self.logger.DEBUG, "deleting groups/%s/%i" % (group[0], group[1]))
+          try:
+            # FIXME race condition with dropper if currently processing this very article
+            os.unlink(os.path.join("groups", str(group[0]), str(group[1])))
+          except Exception as e:
+            self.log(self.logger.WARNING, "could not delete %s: %s" % (os.path.join("groups", str(group[0]), str(group[1])), e))
+    elif not os.path.exists(censore_path):
+      f = open(censore_path, 'w')
       f.close()
     return (message_id, groups)
 

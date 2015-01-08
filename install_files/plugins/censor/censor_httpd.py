@@ -672,10 +672,15 @@ class censor(BaseHTTPRequestHandler):
     self.send_redirect(self.root_path, "redirecting", 0)
     
   def handle_restore(self, message_id):
-    if os.path.isfile(os.path.join('articles', 'censored', message_id)):
-      os.rename(os.path.join('articles', 'censored', message_id), os.path.join('incoming', message_id + '_'))
+    censore_path = os.path.join('articles', 'censored', message_id)
+    if os.path.isfile(censore_path):
+      article_path = os.path.join('articles', message_id)
+      if os.path.isfile(article_path) and os.path.getsize(censore_path) == os.path.getsize(article_path):
+        # Attach restored? Remove article and processing now as deleted article
+        os.unlink(article_path)
       f = open(os.path.join('articles', 'restored', message_id), 'w')
       f.close()
+      os.rename(censore_path, os.path.join('incoming', message_id + '_'))
       self.send_redirect(self.root_path, "redirecting", 0)
     else:
       self.send_redirect(self.root_path, 'message_id does not exist in articles/censored', 5)
