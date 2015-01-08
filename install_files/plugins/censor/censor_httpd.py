@@ -732,7 +732,7 @@ class censor(BaseHTTPRequestHandler):
 
   def __stats_groups(self, ids=False, status=False):
     groups = list()
-    for row in self.origin.sqlite_overchan.execute('SELECT count(1) as counter, group_name, groups.group_id, blocked FROM articles, groups WHERE articles.group_id = groups.group_id GROUP BY articles.group_id ORDER BY counter DESC').fetchall():
+    for row in self.origin.sqlite_overchan.execute('SELECT count(1) as counter, group_name, groups.group_id, flags FROM articles, groups WHERE articles.group_id = groups.group_id GROUP BY articles.group_id ORDER BY counter DESC').fetchall():
       if ids and status:
         groups.append((row[0], row[1], row[2], row[3]))
       elif ids:

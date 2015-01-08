@@ -490,10 +490,6 @@ class main(threading.Thread):
       self.sqlite.execute('ALTER TABLE articles ADD COLUMN received INTEGER DEFAULT 0')
     except:
       pass
-    try:
-      self.sqlite.execute('ALTER TABLE groups ADD COLUMN blocked INTEGER DEFAULT 0')
-    except:
-      pass
     self.sqlite.execute('CREATE INDEX IF NOT EXISTS articles_group_idx ON articles(group_id);')
     self.sqlite.execute('CREATE INDEX IF NOT EXISTS articles_parent_idx ON articles(parent);')
     self.sqlite.execute('CREATE INDEX IF NOT EXISTS articles_article_idx ON articles(article_uid);')
@@ -506,7 +502,7 @@ class main(threading.Thread):
       self.regenerate_all_html()
 
   def regenerate_all_html(self):
-    for group_row in self.sqlite.execute('SELECT group_id FROM groups WHERE blocked != 1').fetchall():
+    for group_row in self.sqlite.execute('SELECT group_id FROM groups WHERE (cast(groups.flags as integer) & ?) = 0', (self.cache['flags']['blocked'],)).fetchall():
       if group_row[0] not in self.regenerate_boards:
         self.regenerate_boards.append(group_row[0])
     for thread_row in self.sqlite.execute('SELECT article_uid FROM articles WHERE parent = "" OR parent = article_uid ORDER BY last_update DESC').fetchall():
@@ -583,7 +579,7 @@ class main(threading.Thread):
     try:
       flags = int(self.sqlite.execute("SELECT flags FROM groups WHERE group_name=?", (group_name,)).fetchone()[0])
       flags ^= flags & self.cache['flags']['blocked']
-      self.sqlite.execute('UPDATE groups SET blocked = 0, flags = ? WHERE group_name = ?', (str(flags), group_name))
+      self.sqlite.execute('UPDATE groups SET flags = ? WHERE group_name = ?', (str(flags), group_name))
       self.log(self.logger.INFO, 'unblocked existing board: \'%s\'' % group_name)
     except:
       self.sqlite.execute('INSERT INTO groups(group_name, article_count, last_update, flags) VALUES (?,?,?,?)', (group_name, 0, int(time.time()), flags))
@@ -597,7 +593,7 @@ class main(threading.Thread):
     try:
       if flags == 0:
         flags = int(self.sqlite.execute("SELECT flags FROM groups WHERE group_name=?", (group_name,)).fetchone()[0]) | self.cache['flags']['blocked']
-      self.sqlite.execute('UPDATE groups SET blocked = 1, flags = ? WHERE group_name = ?', (str(flags), group_name))
+      self.sqlite.execute('UPDATE groups SET flags = ? WHERE group_name = ?', (str(flags), group_name))
       self.log(self.logger.INFO, 'blocked board: \'%s\'' % group_name)
       self.sqlite_conn.commit()
       self.regenerate_all_html()
@@ -623,9 +619,9 @@ class main(threading.Thread):
         group_name, flags = get_data[:2]
         flags = int(flags)
         group_id = self.sqlite.execute("SELECT group_id FROM groups WHERE group_name=?", (group_name,)).fetchone()[0]
-        if group_id == '' or ((flags & self.cache['flags']['blocked']) != self.cache['flags']['blocked'] and self.check_board_flags(group_id, 'blocked')):
+        if group_id == '' or ((flags & self.cache['flags']['blocked']) == 0 and self.check_board_flags(group_id, 'blocked')):
           self.overchan_board_add((group_name, flags,))
-        elif (flags & self.cache['flags']['blocked']) == self.cache['flags']['blocked'] and not self.check_board_flags(group_id, 'blocked'):
+        elif (flags & self.cache['flags']['blocked']) != 0 and not self.check_board_flags(group_id, 'blocked'):
           self.overchan_board_del(group_name, flags)
         else:
           self.sqlite.execute('UPDATE groups SET flags = ? WHERE group_name = ?', (flags, group_name))
@@ -1218,22 +1214,22 @@ class main(threading.Thread):
     for group in groups:
       try:
         group_flags = int(self.sqlite.execute("SELECT flags FROM groups WHERE group_name=?", (group,)).fetchone()[0])
-        if (group_flags & self.cache['flags']['spam-fix']) == self.cache['flags']['spam-fix'] and len(message) < 5:
+        if (group_flags & self.cache['flags']['spam-fix']) != 0 and len(message) < 5:
           self.log(self.logger.INFO, 'Spamprotect group %s, censored %s' % (group, message_id))
           self.delete_orphan_attach(image_name, thumb_name)
           return self.move_censored_article(message_id)
-        elif (group_flags & self.cache['flags']['news']) == self.cache['flags']['news'] and (not parent or parent == message_id) \
+        elif (group_flags & self.cache['flags']['news']) != 0 and (not parent or parent == message_id) \
             and (public_key == '' or not self.check_moder_flags(public_key, 'overchan-news-add')):
           self.delete_orphan_attach(image_name, thumb_name)
           return self.move_censored_article(message_id)
-        elif (group_flags & self.cache['flags']['sage']) == self.cache['flags']['sage']:
+        elif (group_flags & self.cache['flags']['sage']) != 0:
           sage = True
       except Exception as e:
         self.log(self.logger.INFO, 'Processing group %s error message %s %s' % (group, message_id, e))
 
     group_ids = list()
     for group in groups:
-      result = self.sqlite.execute('SELECT group_id FROM groups WHERE group_name=? AND blocked = 0', (group,)).fetchone()
+      result = self.sqlite.execute('SELECT group_id FROM groups WHERE group_name=? AND (cast(flags as integer) & ?) = 0', (group, self.cache['flags']['blocked'])).fetchone()
       if not result:
         try:
           self.sqlite.execute('INSERT INTO groups(group_name, article_count, last_update) VALUES (?,?,?)', (group, 1, int(time.time())))
@@ -1332,7 +1328,7 @@ class main(threading.Thread):
     boardlist, full_board_name_unquoted, board_name_unquoted, board_name, board_description = self.generate_board_list(group_id)
 
     threads = int(self.sqlite.execute('SELECT count(group_id) FROM (SELECT group_id FROM articles WHERE group_id = ? AND (parent = "" OR parent = article_uid) LIMIT ?)', (group_id, threads_per_page * pages_per_board)).fetchone()[0])
-    if self.enable_archive and ((int(self.sqlite.execute("SELECT flags FROM groups WHERE group_id=?", (group_id,)).fetchone()[0]) & self.cache['flags']['no-archive']) != self.cache['flags']['no-archive']):
+    if self.enable_archive and ((int(self.sqlite.execute("SELECT flags FROM groups WHERE group_id=?", (group_id,)).fetchone()[0]) & self.cache['flags']['no-archive']) == 0):
       total_thread_count = int(self.sqlite.execute('SELECT count(group_id) FROM (SELECT group_id FROM articles WHERE group_id = ? AND (parent = "" OR parent = article_uid))', (group_id,)).fetchone()[0])
       if total_thread_count > threads:
         generate_archive = True
@@ -1650,8 +1646,9 @@ class main(threading.Thread):
     t_engine_mappings_menu_entry = dict()
     menu_entries = list()
     menu_entries.append('<li><a href="/" target="_top">Main</a></li><br />\n')
+    exclude_flags = self.cache['flags']['hidden'] | self.cache['flags']['blocked']
     for group_row in self.sqlite.execute('SELECT group_name, group_id, ph_name, link FROM groups WHERE \
-      blocked = 0 AND ((cast(groups.flags as integer) & ?) != ?) ORDER by group_name ASC', (self.cache['flags']['hidden'], self.cache['flags']['hidden'])).fetchall():
+      (cast(groups.flags as integer) & ?) = 0 ORDER by group_name ASC', (exclude_flags,)).fetchall():
       group_name = group_row[0].split('.', 1)[1].replace('"', '').replace('/', '')
       if self.use_unsecure_aliases and group_row[3] != '':
         group_link = group_row[3]
@@ -1678,7 +1675,7 @@ class main(threading.Thread):
     try:
       flags = int(self.sqlite.execute('SELECT flags FROM groups WHERE group_id = ?', (group_id,)).fetchone()[0])
       for flag_name in args:
-        if flags & self.cache['flags'][flag_name] != self.cache['flags'][flag_name]:
+        if flags & self.cache['flags'][flag_name] == 0:
           return False
     except Exception as e:
       self.log(self.logger.WARNING, "error board flags check: %s" % e)
@@ -1689,7 +1686,7 @@ class main(threading.Thread):
     try:
       flags = int(self.censordb.execute('SELECT flags from keys WHERE key=?', (full_pubkey_hex,)).fetchone()[0])
       for flag_name in args:
-        if flags & self.cache['moder_flags'][flag_name] != self.cache['moder_flags'][flag_name]:
+        if flags & self.cache['moder_flags'][flag_name] == 0:
           return False
     except:
       return False
@@ -1705,8 +1702,9 @@ class main(threading.Thread):
     full_board_name_unquoted = board_name_unquoted = board_name = board_description = ''
     boardlist = list()
     # FIXME: cache this shit somewhere
+    exclude_flags = self.cache['flags']['hidden'] | self.cache['flags']['blocked']
     for group_row in self.sqlite.execute('SELECT group_name, group_id, ph_name, ph_shortname, link, description FROM groups \
-      WHERE blocked = 0 AND ((cast(flags as integer) & ?) != ? OR group_id = ?) ORDER by group_name ASC', (self.cache['flags']['hidden'], self.cache['flags']['hidden'], group_id)).fetchall():
+      WHERE ((cast(flags as integer) & ?) = 0 OR group_id = ?) ORDER by group_name ASC', (exclude_flags, group_id)).fetchall():
       current_group_name = group_row[0].split('.', 1)[1].replace('"', '').replace('/', '')
       if group_row[3] != '':
         current_group_name_encoded = self.basicHTMLencode(group_row[3])
@@ -1743,7 +1741,7 @@ class main(threading.Thread):
     t_engine_mappings_overview['boardlist'] = ''.join(self.generate_board_list())
     news_board_link = 'overview.html'
     news_board = self.sqlite.execute('SELECT group_id, group_name FROM groups WHERE \
-        (cast(flags as integer) & ?) == ?', (self.cache['flags']['news'], self.cache['flags']['news'])).fetchone()
+        (cast(flags as integer) & ?) != 0 AND (cast(flags as integer) & ?) = 0', (self.cache['flags']['news'], self.cache['flags']['blocked'])).fetchone()
     if news_board:
       news_board_link = '{0}-1.html'.format(news_board[1].replace('"', '').replace('/', '').split('.', 1)[1])
       row = self.sqlite.execute('SELECT subject, message, sent, public_key, article_uid, sender FROM articles \
@@ -1810,10 +1808,11 @@ class main(threading.Thread):
     del stats[:]
 
     postcount = 50
+    exclude_flags = self.cache['flags']['hidden'] | self.cache['flags']['no-overview'] | self.cache['flags']['blocked']
     for row in self.sqlite.execute('SELECT sent, group_name, sender, subject, article_uid, parent, ph_name FROM articles, groups WHERE \
-      ((cast(groups.flags as integer) & ?) != ?) AND ((cast(groups.flags as integer) & ?) != ?) AND groups.blocked = 0 AND articles.group_id = groups.group_id AND \
+      (cast(groups.flags as integer) & ?) = 0 AND articles.group_id = groups.group_id AND \
       (articles.parent = "" OR articles.parent = articles.article_uid OR articles.parent IN (SELECT article_uid FROM articles)) \
-      ORDER BY sent DESC LIMIT ?', (self.cache['flags']['hidden'], self.cache['flags']['hidden'], self.cache['flags']['no-overview'], self.cache['flags']['no-overview'], str(postcount))).fetchall():
+      ORDER BY sent DESC LIMIT ?', (exclude_flags, str(postcount))).fetchall():
       sent = datetime.utcfromtimestamp(row[0] + self.utc_time_offset).strftime(self.datetime_format)
       if row[6] != '':
         board = self.basicHTMLencode(row[6].replace('"', ''))
@@ -1840,9 +1839,10 @@ class main(threading.Thread):
     t_engine_mappings_overview['latest_posts'] = overview_latest_posts
     del stats[:]
 
+    exclude_flags = self.cache['flags']['hidden'] | self.cache['flags']['blocked']
     for row in self.sqlite.execute('SELECT count(1) as counter, group_name, ph_name FROM articles, groups WHERE \
-      ((cast(groups.flags as integer) & ?) != ?) and groups.blocked = 0 AND articles.group_id = groups.group_id GROUP BY \
-      articles.group_id ORDER BY counter DESC', (self.cache['flags']['hidden'], self.cache['flags']['hidden'])).fetchall():
+      (cast(groups.flags as integer) & ?) = 0 AND articles.group_id = groups.group_id GROUP BY \
+      articles.group_id ORDER BY counter DESC', (exclude_flags,)).fetchall():
       if row[2] != '':
         board = self.basicHTMLencode(row[2].replace('"', ''))
       else:
