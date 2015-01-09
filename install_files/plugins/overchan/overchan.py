@@ -192,13 +192,16 @@ class main(threading.Thread):
     if tz_name != '': tz_name = ' ' + tz_name
     self.datetime_format = '%d.%m.%Y (%a) %H:%M' + tz_name
 
+    if cv2_load_result != 'true':
+      self.log(self.logger.ERROR, '%s. Thumbnail for video not be creating. see http://docs.opencv.org/' % cv2_load_result)
+
     for x in (self.no_file, self.audio_file, self.invalid_file, self.document_file, self.css_file, self.censored_file):
       cheking_file = os.path.join(self.template_directory, x)
       if not os.path.exists(cheking_file):
         self.die('{0} file not found in {1}'.format(x, cheking_file))
 
     # statics
-    for x in ('help', 'stats_usage', 'stats_usage_row', 'latest_posts', 'latest_posts_row', 'stats_boards', 'stats_boards_row', 'base_pagelist', 'base_postform', 'base_footer'):
+    for x in ('stats_usage', 'stats_usage_row', 'latest_posts', 'latest_posts_row', 'stats_boards', 'stats_boards_row'):
       template_file = os.path.join(self.template_directory, '%s.tmpl' % x)
       template_var = 'template_%s' % x
       try:
@@ -208,60 +211,72 @@ class main(threading.Thread):
       except Exception as e:
         self.die('Error loading template {0}: {1}'.format(template_file, e))
 
-    if cv2_load_result != 'true':
-      self.log(self.logger.ERROR, '%s. Thumbnail for video not be creating. see http://docs.opencv.org/' % cv2_load_result)
+    # temporary templates
+    template_brick = dict()
+    for x in ('help', 'base_pagelist', 'base_postform', 'base_footer', 'single_postform'):
+      template_file = os.path.join(self.template_directory, '%s.tmpl' % x)
+      try:
+        f = codecs.open(template_file, "r", "utf-8")
+        template_brick[x] = f.read()
+        f.close()
+      except Exception as e:
+        self.die('Error loading template {0}: {1}'.format(template_file, e))
 
     f = codecs.open(os.path.join(self.template_directory, 'base_help.tmpl'), "r", "utf-8")
-    self.template_base_help = string.Template(f.read()).safe_substitute(
-      help=self.template_help
+    template_brick['base_help'] = string.Template(f.read()).safe_substitute(
+      help=template_brick['help']
     )
     f = codecs.open(os.path.join(self.template_directory, 'base_head.tmpl'), "r", "utf-8")
-    self.template_base_head = string.Template(f.read()).safe_substitute(
+    template_brick['base_head'] = string.Template(f.read()).safe_substitute(
       title=self.html_title
+    )
+    f.close()
+    f = codecs.open(os.path.join(self.template_directory, 'thread_single.tmpl'), "r", "utf-8")
+    template_brick['thread_single'] = string.Template(
+      string.Template(f.read()).safe_substitute(
+        help=template_brick['help'],
+        title=self.html_title
+      )
     )
     f.close()
     # template_engines
     f = codecs.open(os.path.join(self.template_directory, 'board.tmpl'), "r", "utf-8")
     self.t_engine_board = string.Template(
       string.Template(f.read()).safe_substitute(
-        base_head=self.template_base_head,
-        base_pagelist=self.template_base_pagelist,
-        base_postform=self.template_base_postform,
-        base_help=self.template_base_help,
-        base_footer=self.template_base_footer
+        base_head=template_brick['base_head'],
+        base_pagelist=template_brick['base_pagelist'],
+        base_postform=template_brick['base_postform'],
+        base_help=template_brick['base_help'],
+        base_footer=template_brick['base_footer']
       )
     )
     f.close()
     f = codecs.open(os.path.join(self.template_directory, 'board_archive.tmpl'), "r", "utf-8")
     self.t_engine_board_archive = string.Template(
       string.Template(f.read()).safe_substitute(
-        base_head=self.template_base_head,
-        base_pagelist=self.template_base_pagelist,
-        base_postform=self.template_base_postform,
-        base_help=self.template_base_help,
-        base_footer=self.template_base_footer
+        base_head=template_brick['base_head'],
+        base_pagelist=template_brick['base_pagelist'],
+        base_postform=template_brick['base_postform'],
+        base_help=template_brick['base_help'],
+        base_footer=template_brick['base_footer']
       )
     )
     f.close()
     f = codecs.open(os.path.join(self.template_directory, 'board_recent.tmpl'), "r", "utf-8")
     self.t_engine_board_recent = string.Template(
       string.Template(f.read()).safe_substitute(
-        base_head=self.template_base_head,
-        base_postform=self.template_base_postform,
-        base_help=self.template_base_help,
-        base_footer=self.template_base_footer
+        base_head=template_brick['base_head'],
+        base_postform=template_brick['base_postform'],
+        base_help=template_brick['base_help'],
+        base_footer=template_brick['base_footer']
       )
     )
-    f.close()
-
-    f = codecs.open(os.path.join(self.template_directory, 'thread_single.tmpl'), "r", "utf-8")
+    f.close()#string.Template(
     self.t_engine_thread_single = string.Template(
-      string.Template(f.read()).safe_substitute(
-        help=self.template_help,
-        title=self.html_title
+      template_brick['thread_single'].safe_substitute(
+        single_postform=template_brick['single_postform']
       )
     )
-    f.close()
     f = codecs.open(os.path.join(self.template_directory, 'index.tmpl'), "r", "utf-8")
     self.t_engine_index = string.Template(
       string.Template(f.read()).safe_substitute(
@@ -284,7 +299,7 @@ class main(threading.Thread):
     f = codecs.open(os.path.join(self.template_directory, 'overview.tmpl'), "r", "utf-8")
     self.t_engine_overview = string.Template(
       string.Template(f.read()).safe_substitute(
-        help=self.template_help,
+        help=template_brick['help'],
         title=self.html_title
       )
     )
@@ -307,6 +322,8 @@ class main(threading.Thread):
     f = codecs.open(os.path.join(self.template_directory, 'signed.tmpl'), "r", "utf-8")
     self.t_engine_signed = string.Template(f.read())
     f.close()
+
+    del template_brick
 
     self.upper_table = {'0': '1',
                         '1': '2',
@@ -1499,11 +1516,12 @@ class main(threading.Thread):
       parsed_data['parenthash'] = father[:10]
       parsed_data['parenthash_full'] = father
     else:
+      parsed_data['thread_status'] = ''
       if data[9] > time.time():
-        parsed_data['sticky_mark'] = ' [x]'
+        parsed_data['thread_status'] += '[x]'
         parsed_data['sticky_prefix'] = 'un'
       else:
-        parsed_data['sticky_mark'] = parsed_data['sticky_prefix'] = ''
+        parsed_data['sticky_prefix'] = ''
     if self.fake_id:
       parsed_data['article_id'] = self.message_uid_to_fake_id(data[0])
     else:

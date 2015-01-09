@@ -899,13 +899,10 @@ class censor(BaseHTTPRequestHandler):
       keypair = nacl.signing.SigningKey(unhexlify(secret))
       pubkey = hexlify(keypair.verify_key.encode())
       flags_available = int(self.origin.sqlite_censor.execute("SELECT flags FROM keys WHERE key=?", (pubkey,)).fetchone()[0])
-      flag_delete = int(self.origin.sqlite_censor.execute('SELECT flag FROM commands WHERE command="delete"').fetchone()[0])
-      flag_delete_a = int(self.origin.sqlite_censor.execute('SELECT flag FROM commands WHERE command="overchan-delete-attachment"').fetchone()[0])
-      flag_sticky = int(self.origin.sqlite_censor.execute('SELECT flag FROM commands WHERE command="overchan-sticky"').fetchone()[0])
     except Exception as e:
       self.die('local moderation request: invalid secret key received: %s' % e)
       return
-    if ((flags_available & flag_delete) != flag_delete) and ((flags_available & flag_delete_a) != flag_delete_a) and ((flags_available & flag_sticky) != flag_sticky):
+    if flags_available == 0:
       self.die('local moderation request: public key rejected, no flags required')
       return
     local_cmd = False
