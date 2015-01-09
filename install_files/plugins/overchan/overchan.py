@@ -1147,12 +1147,12 @@ class main(threading.Thread):
         deny_extensions = ('.html', '.php', '.phtml', '.php3', '.php4', '.js')
         tmp_attach = os.path.join(self.temp_directory, 'tmp_attach')
         if part.get_content_type() != 'text/plain':
+          file_data = part.get_payload(decode=True)
+          imagehash = sha1(file_data).hexdigest()
           f = open(tmp_attach, 'w')
-          f.write(part.get_payload(decode=True))
+          f.write(file_data)
           f.close()
-          f = open(tmp_attach, 'r')
-          imagehash = sha1(f.read()).hexdigest()
-          f.close()
+          del file_data
           if part.get_filename() is None or part.get_filename().strip() == '':
             image_name_original = 'empty_file_name.empty'
           else:
