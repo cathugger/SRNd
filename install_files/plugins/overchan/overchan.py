@@ -213,7 +213,8 @@ class main(threading.Thread):
 
     # temporary templates
     template_brick = dict()
-    for x in ('help', 'base_pagelist', 'base_postform', 'base_footer', 'single_postform', 'dummy_postform'):
+    for x in ('help', 'base_pagelist', 'base_postform', 'base_footer', 'single_postform', 'dummy_postform', 'message_child_pic', 'message_child_nopic',
+        'message_root', 'message_child_quickreply', 'message_root_quickreply'):
       template_file = os.path.join(self.template_directory, '%s.tmpl' % x)
       try:
         f = codecs.open(template_file, "r", "utf-8")
@@ -315,15 +316,38 @@ class main(threading.Thread):
     f = codecs.open(os.path.join(self.template_directory, 'archive_threads.tmpl'), "r", "utf-8")
     self.t_engine_archive_threads = string.Template(f.read())
     f.close()
-    f = codecs.open(os.path.join(self.template_directory, 'message_root.tmpl'), "r", "utf-8")
-    self.t_engine_message_root = string.Template(f.read())
-    f.close()
-    f = codecs.open(os.path.join(self.template_directory, 'message_child_pic.tmpl'), "r", "utf-8")
-    self.t_engine_message_pic = string.Template(f.read())
-    f.close()
-    f = codecs.open(os.path.join(self.template_directory, 'message_child_nopic.tmpl'), "r", "utf-8")
-    self.t_engine_message_nopic = string.Template(f.read())
-    f.close()
+    self.t_engine_message_root = string.Template(
+      string.Template(template_brick['message_root']).safe_substitute(
+        root_quickreply=template_brick['message_root_quickreply'],
+        click_action='Reply'
+      )
+    )
+    self.t_engine_message_root_closed = string.Template(
+      string.Template(template_brick['message_root']).safe_substitute(
+        root_quickreply='&#8470;  ${article_id}',
+        click_action='View'
+      )
+    )
+    self.t_engine_message_pic = string.Template(
+      string.Template(template_brick['message_child_pic']).safe_substitute(
+        child_quickreply=template_brick['message_child_quickreply']
+      )
+    )
+    self.t_engine_message_pic_closed = string.Template(
+      string.Template(template_brick['message_child_pic']).safe_substitute(
+        child_quickreply='${article_id}'
+      )
+    )
+    self.t_engine_message_nopic = string.Template(
+      string.Template(template_brick['message_child_nopic']).safe_substitute(
+        child_quickreply=template_brick['message_child_quickreply']
+      )
+    )
+    self.t_engine_message_nopic_closed = string.Template(
+      string.Template(template_brick['message_child_nopic']).safe_substitute(
+        child_quickreply='${article_id}'
+      )
+    )
     f = codecs.open(os.path.join(self.template_directory, 'signed.tmpl'), "r", "utf-8")
     self.t_engine_signed = string.Template(f.read())
     f.close()
@@ -1445,38 +1469,49 @@ class main(threading.Thread):
       self.generate_recent(group_id)
 
   def get_base_thread(self, root_row, root_message_id_hash, group_id, child_count=4, single=False):
+    if root_row[10] != 0:
+      isclosed = True
+    else:
+      isclosed = False
     if root_message_id_hash == '': root_message_id_hash = sha1(root_row[0]).hexdigest()
-    message_root = self.get_root_post(root_row, group_id, child_count, root_message_id_hash, single)
+    message_root = self.get_root_post(root_row, group_id, child_count, root_message_id_hash, single, isclosed)
     if child_count == 0:
       return {'message_root': message_root}
-    message_childs = ''.join(self.get_childs_posts(root_row[0], group_id, root_message_id_hash, root_row[8], child_count, single))
+    message_childs = ''.join(self.get_childs_posts(root_row[0], group_id, root_message_id_hash, root_row[8], child_count, single, isclosed))
     return {'message_root': message_root, 'message_childs': message_childs}
 
-  def get_root_post(self, data, group_id, child_view=0, message_id_hash='', single=False):
+  def get_root_post(self, data, group_id, child_count, message_id_hash, single, isclosed):
     root_data = dict()
     root_data['thread_status'] = ''
     if data[9] > time.time():
-      root_data['thread_status'] += '[x]'
+      root_data['thread_status'] += '[&#177;]'
       root_data['sticky_prefix'] = 'un'
     else:
       root_data['sticky_prefix'] = ''
-    if data[10] != 0:
+    if isclosed:
       root_data['close_action'] = 'open'
       root_data['thread_status'] += '[closed]'
+      return self.t_engine_message_root_closed.substitute(dict(self.get_preparse_post(data[:9], message_id_hash, group_id, 25, 2000, child_count, '', '', single), **root_data))
     else:
       root_data['close_action'] = 'close'
-    return self.t_engine_message_root.substitute(dict(self.get_preparse_post(data[:9], message_id_hash, group_id, 25, 2000, child_view, '', '', single), **root_data))
+      return self.t_engine_message_root.substitute(dict(self.get_preparse_post(data[:9], message_id_hash, group_id, 25, 2000, child_count, '', '', single), **root_data))
 
-  def get_childs_posts(self, parent, group_id, father, father_pubkey, child_count=4, single=False):
+  def get_childs_posts(self, parent, group_id, father, father_pubkey, child_count, single, isclosed):
     childs = list()
     childs.append('') # FIXME: the fuck is this for?
     for child_row in self.sqlite.execute('SELECT * FROM (SELECT article_uid, sender, subject, sent, message, imagename, imagelink, thumblink, public_key \
         FROM articles WHERE parent = ? AND parent != article_uid AND group_id = ? ORDER BY sent DESC LIMIT ?) ORDER BY sent ASC', (parent, group_id, child_count)).fetchall():
       childs_message = self.get_preparse_post(child_row, sha1(child_row[0]).hexdigest(), group_id, 20, 1500, 0, father, father_pubkey, single)
       if child_row[6] != '':
-        childs.append(self.t_engine_message_pic.substitute(childs_message))
+        if isclosed:
+          childs.append(self.t_engine_message_pic_closed.substitute(childs_message))
+        else:
+          childs.append(self.t_engine_message_pic.substitute(childs_message))
       else:
-        childs.append(self.t_engine_message_nopic.substitute(childs_message))
+        if isclosed:
+          childs.append(self.t_engine_message_nopic_closed.substitute(childs_message))
+        else:
+          childs.append(self.t_engine_message_nopic.substitute(childs_message))
     return childs
 
   def generate_pagelist(self, count, current, board_name_unquoted, archive_link=False):
