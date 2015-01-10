@@ -465,7 +465,7 @@ class censor(BaseHTTPRequestHandler):
         cur_template = cur_template.replace("%%postid%%", data)
         cur_template = cur_template.replace("%%restore_link%%", '<a href="settings?name=%s">modify board</a>' % (row[3]))
         cur_template = cur_template.replace("%%delete_link%%", '')
-      elif row[2] not in ('delete', 'overchan-delete-attachment', 'overchan-sticky'):
+      elif row[2] not in ('delete', 'overchan-delete-attachment', 'overchan-sticky', 'overchan-close'):
         cur_template = cur_template.replace("%%postid%%", data)
         cur_template = cur_template.replace("%%restore_link%%", '').replace("%%delete_link%%", '')
       else:
@@ -940,6 +940,15 @@ class censor(BaseHTTPRequestHandler):
         try:
           #lines.append("overchan-sticky %s" % self.__get_message_id_by_hash(item)) #only local
           self.origin.censor.add_article((pubkey, "overchan-sticky {0}#sticky\unsticky thread request".format(self.__get_message_id_by_hash(item))), "httpd")
+          local_cmd = True
+        except Exception as e:
+          self.origin.log(self.origin.logger.WARNING, "local moderation request: could not find message_id for hash %s: %s" % (item, e))
+          self.origin.log(self.origin.logger.WARNING, self.headers)
+    if 'close' in post_vars:
+      close_thread = post_vars.getlist('close')
+      for item in close_thread:
+        try:
+          self.origin.censor.add_article((pubkey, "overchan-close {0}#closing\opening thread request".format(self.__get_message_id_by_hash(item))), "httpd")
           local_cmd = True
         except Exception as e:
           self.origin.log(self.origin.logger.WARNING, "local moderation request: could not find message_id for hash %s: %s" % (item, e))

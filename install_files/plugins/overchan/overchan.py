@@ -213,7 +213,7 @@ class main(threading.Thread):
 
     # temporary templates
     template_brick = dict()
-    for x in ('help', 'base_pagelist', 'base_postform', 'base_footer', 'single_postform'):
+    for x in ('help', 'base_pagelist', 'base_postform', 'base_footer', 'single_postform', 'dummy_postform'):
       template_file = os.path.join(self.template_directory, '%s.tmpl' % x)
       try:
         f = codecs.open(template_file, "r", "utf-8")
@@ -275,6 +275,11 @@ class main(threading.Thread):
     self.t_engine_thread_single = string.Template(
       template_brick['thread_single'].safe_substitute(
         single_postform=template_brick['single_postform']
+      )
+    )
+    self.t_engine_thread_single_closed = string.Template(
+      template_brick['thread_single'].safe_substitute(
+        single_postform=template_brick['dummy_postform']
       )
     )
     f = codecs.open(os.path.join(self.template_directory, 'index.tmpl'), "r", "utf-8")
@@ -507,6 +512,10 @@ class main(threading.Thread):
       self.sqlite.execute('ALTER TABLE articles ADD COLUMN received INTEGER DEFAULT 0')
     except:
       pass
+    try:
+      self.sqlite.execute('ALTER TABLE articles ADD COLUMN closed INTEGER DEFAULT 0')
+    except:
+      pass
     self.sqlite.execute('CREATE INDEX IF NOT EXISTS articles_group_idx ON articles(group_id);')
     self.sqlite.execute('CREATE INDEX IF NOT EXISTS articles_parent_idx ON articles(parent);')
     self.sqlite.execute('CREATE INDEX IF NOT EXISTS articles_article_idx ON articles(article_uid);')
@@ -555,6 +564,26 @@ class main(threading.Thread):
     if not message_id in self.regenerate_threads:
       self.regenerate_threads.append(message_id)
     return sticky_action
+
+  def close_processing(self, message_id):
+    close_status, group_id = self.sqlite.execute('SELECT closed, group_id FROM articles WHERE article_uid = ? AND (parent = "" OR parent = article_uid)', (message_id,)).fetchone()
+    if not group_id: return 'article not found'
+    if close_status == 0:
+      close_status = 1
+      close_action = 'close thread'
+    else:
+      close_status = 0
+      close_action = 'open thread'
+    try:
+      self.sqlite.execute('UPDATE articles SET closed = ? WHERE article_uid = ? AND (parent = "" OR parent = article_uid)', (close_status, message_id))
+      self.sqlite_conn.commit()
+    except:
+      return 'Fail db update'
+    if group_id not in self.regenerate_boards:
+      self.regenerate_boards.append(group_id)
+    if not message_id in self.regenerate_threads:
+      self.regenerate_threads.append(message_id)
+    return close_action
 
   def delete_orphan_attach(self, image, thumb):
     image_link = os.path.join(self.output_directory, 'img', image)
@@ -739,6 +768,11 @@ class main(threading.Thread):
       elif line.lower().startswith("overchan-sticky "):
         message_id = line.split(" ")[1]
         self.log(self.logger.INFO, 'sticky processing message_id %s, %s' % (message_id, self.sticky_processing(message_id)))
+      elif line.lower().startswith("overchan-close "):
+        message_id = line.split(" ")[1]
+        self.log(self.logger.INFO, 'closing thread processing message_id %s, %s' % (message_id, self.close_processing(message_id)))
+      else:
+        self.log(self.logger.WARNING, 'Get unknown commandline %s. FIXME!' % (line,))
 
   def signal_handler(self, signum, frame):
     # FIXME use try: except: around open(), also check for duplicate here
@@ -1252,6 +1286,17 @@ class main(threading.Thread):
       except Exception as e:
         self.log(self.logger.INFO, 'Processing group %s error message %s %s' % (group, message_id, e))
 
+    parent_last_update = None
+
+    if parent != '' and parent != message_id:
+      result = self.sqlite.execute('SELECT last_update, closed FROM articles WHERE article_uid = ?', (parent,)).fetchone()
+      if result:
+        parent_last_update = result[0]
+        if result[1] != 0:
+          self.log(self.logger.INFO, 'censored article %s for closed thread.' % message_id)
+          self.delete_orphan_attach(image_name, thumb_name)
+          return self.move_censored_article(message_id)
+
     group_ids = list()
     for group in groups:
       result = self.sqlite.execute('SELECT group_id FROM groups WHERE group_name=? AND (cast(flags as integer) & ?) = 0', (group, self.cache['flags']['blocked'])).fetchone()
@@ -1281,9 +1326,7 @@ class main(threading.Thread):
         # sage mark
         last_update = sent - 10
       else:
-        result = self.sqlite.execute('SELECT last_update FROM articles WHERE article_uid = ?', (parent,)).fetchone()
-        if result:
-          parent_last_update = result[0]
+        if parent_last_update is not None:
           if sent > parent_last_update:
             if self.bump_limit > 0:
               child_count = self.sqlite.execute('SELECT count(article_uid) FROM articles WHERE parent = ? AND parent != article_uid ', (parent,)).fetchone()
@@ -1374,13 +1417,12 @@ class main(threading.Thread):
       threads = list()
       self.log(self.logger.INFO, 'generating %s/%s-%s.html' % (self.output_directory, board_name_unquoted, board))
       #TODO: OFFSET decrease performance? This is very bad? Maybe need create index for fix it. If this need fix
-      for root_row in self.sqlite.execute('SELECT article_uid, sender, subject, sent, message, imagename, imagelink, thumblink, public_key, last_update \
+      for root_row in self.sqlite.execute('SELECT article_uid, sender, subject, sent, message, imagename, imagelink, thumblink, public_key, last_update, closed \
           FROM articles WHERE group_id = ? AND (parent = "" OR parent = article_uid) ORDER BY last_update DESC LIMIT ? OFFSET ?', (group_id, threads_per_page, board_offset)).fetchall():
         root_message_id_hash = sha1(root_row[0]).hexdigest()
         threads.append(
           self.t_engine_board_threads.substitute(
-            message_root=self.get_root_post(root_row, group_id, 4, root_message_id_hash),
-            message_childs=''.join(self.get_childs_posts(root_row[0], group_id, root_message_id_hash, root_row[8], 4))
+            self.get_base_thread(root_row, root_message_id_hash, group_id, 4)
           )
         )
       t_engine_mapper_board = dict()
@@ -1402,23 +1444,39 @@ class main(threading.Thread):
     if self.enable_recent:
       self.generate_recent(group_id)
 
+  def get_base_thread(self, root_row, root_message_id_hash, group_id, child_count=4, single=False):
+    if root_message_id_hash == '': root_message_id_hash = sha1(root_row[0]).hexdigest()
+    message_root = self.get_root_post(root_row, group_id, child_count, root_message_id_hash, single)
+    if child_count == 0:
+      return {'message_root': message_root}
+    message_childs = ''.join(self.get_childs_posts(root_row[0], group_id, root_message_id_hash, root_row[8], child_count, single))
+    return {'message_root': message_root, 'message_childs': message_childs}
 
   def get_root_post(self, data, group_id, child_view=0, message_id_hash='', single=False):
-    if message_id_hash == '': message_id_hash = sha1(data[0]).hexdigest()
-    return self.t_engine_message_root.substitute(self.get_preparse_post(data, message_id_hash, group_id, 25, 2000, child_view, '', '', single))
-
-  def get_child_post(self, data, message_id_hash, group_id, father, father_pubkey, single):
-    if  data[6] != '':
-      return self.t_engine_message_pic.substitute  (self.get_preparse_post(data, message_id_hash, group_id, 20, 1500, 0, father, father_pubkey, single))
+    root_data = dict()
+    root_data['thread_status'] = ''
+    if data[9] > time.time():
+      root_data['thread_status'] += '[x]'
+      root_data['sticky_prefix'] = 'un'
     else:
-      return self.t_engine_message_nopic.substitute(self.get_preparse_post(data, message_id_hash, group_id, 20, 1500, 0, father, father_pubkey, single))
+      root_data['sticky_prefix'] = ''
+    if data[10] != 0:
+      root_data['close_action'] = 'open'
+      root_data['thread_status'] += '[closed]'
+    else:
+      root_data['close_action'] = 'close'
+    return self.t_engine_message_root.substitute(dict(self.get_preparse_post(data[:9], message_id_hash, group_id, 25, 2000, child_view, '', '', single), **root_data))
 
   def get_childs_posts(self, parent, group_id, father, father_pubkey, child_count=4, single=False):
     childs = list()
     childs.append('') # FIXME: the fuck is this for?
     for child_row in self.sqlite.execute('SELECT * FROM (SELECT article_uid, sender, subject, sent, message, imagename, imagelink, thumblink, public_key \
         FROM articles WHERE parent = ? AND parent != article_uid AND group_id = ? ORDER BY sent DESC LIMIT ?) ORDER BY sent ASC', (parent, group_id, child_count)).fetchall():
-      childs.append(self.get_child_post(child_row, sha1(child_row[0]).hexdigest(), group_id, father, father_pubkey, single))
+      childs_message = self.get_preparse_post(child_row, sha1(child_row[0]).hexdigest(), group_id, 20, 1500, 0, father, father_pubkey, single)
+      if child_row[6] != '':
+        childs.append(self.t_engine_message_pic.substitute(childs_message))
+      else:
+        childs.append(self.t_engine_message_nopic.substitute(childs_message))
     return childs
 
   def generate_pagelist(self, count, current, board_name_unquoted, archive_link=False):
@@ -1435,7 +1493,7 @@ class main(threading.Thread):
 
   def get_preparse_post(self, data, message_id_hash, group_id, max_row, max_chars, child_view, father='', father_pubkey='', single=False):
     #father initiate parsing child post and contain root_post_hash_id
-        #data = 0 - article_uid 1- sender 2 - subject 3 - sent 4 - message 5 - imagename 6 - imagelink 7 - thumblink -8 public_key for root post add 9-lastupdate
+        #data = 0 - article_uid 1- sender 2 - subject 3 - sent 4 - message 5 - imagename 6 - imagelink 7 - thumblink -8 public_key
     #message_id_hash = sha1(data[0]).hexdigest() #use globally for decrease sha1 root post uid iteration
     is_playable = False
     parsed_data = dict()
@@ -1515,13 +1573,6 @@ class main(threading.Thread):
     if father != '':
       parsed_data['parenthash'] = father[:10]
       parsed_data['parenthash_full'] = father
-    else:
-      parsed_data['thread_status'] = ''
-      if data[9] > time.time():
-        parsed_data['thread_status'] += '[x]'
-        parsed_data['sticky_prefix'] = 'un'
-      else:
-        parsed_data['sticky_prefix'] = ''
     if self.fake_id:
       parsed_data['article_id'] = self.message_uid_to_fake_id(data[0])
     else:
@@ -1548,11 +1599,11 @@ class main(threading.Thread):
       board_offset = threads_per_page * (board - 1) + offset
       threads = list()
       self.log(self.logger.INFO, 'generating %s/%s-archive-%s.html' % (self.output_directory, board_name_unquoted, board))
-      for root_row in self.sqlite.execute('SELECT article_uid, sender, subject, sent, message, imagename, imagelink, thumblink, public_key, last_update FROM \
+      for root_row in self.sqlite.execute('SELECT article_uid, sender, subject, sent, message, imagename, imagelink, thumblink, public_key, last_update, closed FROM \
         articles WHERE group_id = ? AND (parent = "" OR parent = article_uid) ORDER BY last_update DESC LIMIT ? OFFSET ?', (group_id, threads_per_page, board_offset)).fetchall():
         threads.append(
           self.t_engine_archive_threads.substitute(
-            message_root=self.get_root_post(root_row, group_id)
+            self.get_base_thread(root_row, '', group_id, child_count=0)
           )
         )
       t_engine_mapper_board = dict()
@@ -1574,13 +1625,12 @@ class main(threading.Thread):
     timestamp = int(time.time()) - 3600*24
     threads = list()
     self.log(self.logger.INFO, 'generating %s/%s-recent.html' % (self.output_directory, board_name_unquoted))
-    for root_row in self.sqlite.execute('SELECT article_uid, sender, subject, sent, message, imagename, imagelink, thumblink, public_key, last_update \
+    for root_row in self.sqlite.execute('SELECT article_uid, sender, subject, sent, message, imagename, imagelink, thumblink, public_key, last_update, closed \
         FROM articles WHERE group_id = ? AND (parent = "" OR parent = article_uid) AND last_update > ? ORDER BY last_update DESC', (group_id, timestamp)).fetchall():
       root_message_id_hash = sha1(root_row[0]).hexdigest()
       threads.append(
         self.t_engine_board_threads.substitute(
-          message_root=self.get_root_post(root_row, group_id, 4, root_message_id_hash),
-          message_childs=''.join(self.get_childs_posts(root_row[0], group_id, root_message_id_hash, root_row[8], 4))
+          self.get_base_thread(root_row, root_message_id_hash, group_id, 4)
         )
       )
     t_engine_mapper_board_recent = dict()
@@ -1605,7 +1655,7 @@ class main(threading.Thread):
     return frontend
 
   def generate_thread(self, root_uid, thread_page=0):
-    root_row = self.sqlite.execute('SELECT article_uid, sender, subject, sent, message, imagename, imagelink, thumblink, public_key, last_update, group_id \
+    root_row = self.sqlite.execute('SELECT article_uid, sender, subject, sent, message, imagename, imagelink, thumblink, public_key, last_update, closed, group_id \
         FROM articles WHERE article_uid = ?', (root_uid,)).fetchone()
     if not root_row:
       # FIXME: create temporary root post here? this will never get called on startup because it checks for root posts only
@@ -1613,6 +1663,7 @@ class main(threading.Thread):
       #root_row = (root_uid, 'none', 'root post not yet available', 0, 'root post not yet available', '', '', 0, '')
       self.log(self.logger.INFO, 'root post not yet available: %s, should create temporary root post here' % root_uid)
       return
+    group_id = root_row[-1]
     root_message_id_hash = sha1(root_uid).hexdigest()#self.sqlite_hashes.execute('SELECT message_id_hash from article_hashes WHERE message_id = ?', (root_row[0],)).fetchone()
     # FIXME: benchmark sha1() vs hasher_db_query
     if thread_page > 0:
@@ -1622,7 +1673,7 @@ class main(threading.Thread):
       thread_postfix = ''
       max_child_view = 10000
     if thread_page == 0:
-      child_count = int(self.sqlite.execute('SELECT count(article_uid) FROM articles WHERE parent = ? AND parent != article_uid AND group_id = ?', (root_row[0], root_row[10])).fetchone()[0])
+      child_count = int(self.sqlite.execute('SELECT count(article_uid) FROM articles WHERE parent = ? AND parent != article_uid AND group_id = ?', (root_row[0], group_id)).fetchone()[0])
       if child_count > 80:
         thread_page = child_count / 50
     else:
@@ -1631,7 +1682,7 @@ class main(threading.Thread):
       thread_page -= 1
 
     thread_path = os.path.join(self.output_directory, 'thread-%s%s.html' % (root_message_id_hash[:10], thread_postfix))
-    if self.check_board_flags(root_row[10], 'blocked'):
+    if self.check_board_flags(group_id, 'blocked'):
       if os.path.isfile(thread_path):
         self.log(self.logger.INFO, 'this page belongs to some blocked board. deleting %s.' % thread_path)
         try:
@@ -1639,19 +1690,18 @@ class main(threading.Thread):
         except Exception as e:
           self.log(self.logger.ERROR, 'could not delete %s: %s' % (thread_path, e))
     else:
-      self.create_thread_page(root_row, thread_path, max_child_view, root_message_id_hash)
+      self.create_thread_page(root_row[:-1], thread_path, max_child_view, root_message_id_hash, group_id)
 
     if thread_page > 0: self.generate_thread(root_uid, thread_page)
 
-  def create_thread_page(self, root_row, thread_path, max_child_view, root_message_id_hash):
+  def create_thread_page(self, root_row, thread_path, max_child_view, root_message_id_hash, group_id):
     self.log(self.logger.INFO, 'generating %s' % (thread_path,))
-    boardlist, full_board_name_unquoted, board_name_unquoted, board_name, board_description = self.generate_board_list(root_row[10], True)
+    boardlist, full_board_name_unquoted, board_name_unquoted, board_name, board_description = self.generate_board_list(group_id, True)
 
     threads = list()
     threads.append(
       self.t_engine_board_threads.substitute(
-        message_root=self.get_root_post(root_row[:-1], root_row[10], max_child_view, root_message_id_hash, True),
-        message_childs=''.join(self.get_childs_posts(root_row[0], root_row[10], root_message_id_hash, root_row[8], max_child_view, True))
+        self.get_base_thread(root_row, root_message_id_hash, group_id, max_child_view, True)
       )
     )
     t_engine_mappings_thread_single = dict()
@@ -1665,7 +1715,10 @@ class main(threading.Thread):
     t_engine_mappings_thread_single['board_description'] = board_description
 
     f = codecs.open(thread_path, 'w', 'UTF-8')
-    f.write(self.t_engine_thread_single.substitute(t_engine_mappings_thread_single))
+    if root_row[10] == 0:
+      f.write(self.t_engine_thread_single.substitute(t_engine_mappings_thread_single))
+    else:
+      f.write(self.t_engine_thread_single_closed.substitute(t_engine_mappings_thread_single))
     f.close()
 
   def generate_index(self):

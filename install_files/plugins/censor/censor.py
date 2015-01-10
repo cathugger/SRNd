@@ -60,13 +60,14 @@ class main(threading.Thread):
     self.log(self.logger.DEBUG, 'initializing censor_httpd..')
     args['censor'] = self
     self.httpd = censor_httpd.censor_httpd("censor_httpd", self.logger, args)
-    self.db_version = 5
+    self.db_version = 6
     self.all_flags = "1023"
     self.queue = Queue.Queue()
     self.command_mapper = dict()
     self.command_mapper['delete'] = self.handle_delete
     self.command_mapper['overchan-delete-attachment'] = self.handle_delete
     self.command_mapper['overchan-sticky'] = self.handle_sticky
+    self.command_mapper['overchan-close'] = self.handle_close
     self.command_mapper['srnd-acl-mod'] = self.handle_srnd_acl_mod
     self.command_mapper['overchan-board-add'] = self.handle_board_add
     self.command_mapper['overchan-board-del'] = self.handle_board_del
@@ -151,6 +152,13 @@ class main(threading.Thread):
       self.censordb.execute('UPDATE config SET value = "5" WHERE key = "db_version"')
       self.sqlite_censor_conn.commit()
       current_version = 5
+    if current_version == 5:
+      self.log(self.logger.INFO, "updating db from version %i to version %i" % (current_version, 6))
+      self.censordb.execute('DELETE FROM commands WHERE command = "overchan-news-del"')
+      self.censordb.execute('INSERT INTO commands (command, flag) VALUES (?,?)', ("overchan-close", str(0b10000)))
+      self.censordb.execute('UPDATE config SET value = "6" WHERE key = "db_version"')
+      self.sqlite_censor_conn.commit()
+      current_version = 6
 
   def run(self):
     #if self.should_terminate:
@@ -546,6 +554,13 @@ class main(threading.Thread):
     return (group_name, (group_name,))
 
   def handle_sticky(self, line):
+    message_id = line.split(' ')[1]
+    groups = list()
+    for row in self.overchandb.execute('SELECT groups.group_name from articles, groups WHERE articles.article_uid = ? and groups.group_id = articles.group_id', (message_id,)).fetchall():
+      groups.append(row[0])
+    return (message_id, groups)
+
+  def handle_close(self, line):
     message_id = line.split(' ')[1]
     groups = list()
     for row in self.overchandb.execute('SELECT groups.group_name from articles, groups WHERE articles.article_uid = ? and groups.group_id = articles.group_id', (message_id,)).fetchall():
