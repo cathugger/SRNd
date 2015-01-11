@@ -220,6 +220,12 @@ class main(threading.Thread):
     self.sqlite_censor_conn.close()
     self.sqlite_dropper_conn.close()
     self.log(self.logger.INFO, 'bye')
+
+  def basicHTMLencode(self, inputString):
+    html_escape_table = (("&", "&amp;"), ('"', "&quot;"), ("'", "&apos;"), (">", "&gt;"), ("<", "&lt;"),)
+    for x in html_escape_table:
+      inputString = inputString.replace(x[0], x[1])
+    return inputString.strip(' \t\n\r')
     
   def allowed(self, key_id, command="all", board=None):
     if key_id in self.allowed_cache:
@@ -417,7 +423,7 @@ class main(threading.Thread):
         self.command_cache[command] = command_id
       try:
         #timestamp_start = time.time()
-        self.censordb.execute('INSERT INTO log (accepted, command_id, data, key_id, reason_id, comment, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)', (accepted, command_id, data, key_id, reason_id, comment, int(time.time())))
+        self.censordb.execute('INSERT INTO log (accepted, command_id, data, key_id, reason_id, comment, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)', (accepted, command_id, data, key_id, reason_id, self.basicHTMLencode(comment), int(time.time())))
         self.sqlite_censor_conn.commit()
         #time_sql += time.time() - timestamp_start
       except Exception as e:
@@ -492,7 +498,7 @@ class main(threading.Thread):
       command_id = int(self.censordb.execute("SELECT id FROM commands WHERE command = ?", (command,)).fetchone()[0])
       self.command_cache[command] = command_id
     try:
-      self.censordb.execute('INSERT INTO log (accepted, command_id, data, key_id, reason_id, comment, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)', (accepted, command_id, data, key_id, reason_id, comment, int(time.time())))
+      self.censordb.execute('INSERT INTO log (accepted, command_id, data, key_id, reason_id, comment, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)', (accepted, command_id, data, key_id, reason_id, self.basicHTMLencode(comment), int(time.time())))
       self.sqlite_censor_conn.commit()
     except Exception as e:
       pass

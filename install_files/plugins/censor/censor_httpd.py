@@ -148,6 +148,12 @@ class censor(BaseHTTPRequestHandler):
     self.end_headers()
     self.wfile.write('nope')
 
+  def basicHTMLencode(self, inputString):
+    html_escape_table = (("&", "&amp;"), ('"', "&quot;"), ("'", "&apos;"), (">", "&gt;"), ("<", "&lt;"),)
+    for x in html_escape_table:
+      inputString = inputString.replace(x[0], x[1])
+    return inputString.strip(' \t\n\r')
+
   def handle_update_key(self, key):
     post_vars = FieldStorage(
       fp=self.rfile,
@@ -159,7 +165,7 @@ class censor(BaseHTTPRequestHandler):
     )
     flags = post_vars.getlist("flags")
     if 'local_nick' in post_vars:
-      local_nick = post_vars['local_nick'].value.replace("<", "&lt;").replace(">", "&gt;").replace("#", "").strip()
+      local_nick = self.basicHTMLencode(post_vars['local_nick'].value.replace("#", ""))
     else:
       local_nick = ''
     result = sum([int(flag) for flag in flags])

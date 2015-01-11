@@ -676,6 +676,8 @@ class main(threading.Thread):
     except:
       self.log(self.logger.WARNING, 'get corrupt data for %s' % group_name)
       return
+    ph_name = self.basicHTMLencode(ph_name)
+    ph_shortname = self.basicHTMLencode(ph_shortname)
     self.sqlite.execute('UPDATE groups SET ph_name= ?, ph_shortname = ?, link = ?, tag = ?, description = ? \
         WHERE group_name = ?', (ph_name.decode('UTF-8')[:42], ph_shortname.decode('UTF-8')[:42], link.decode('UTF-8')[:1000], tag.decode('UTF-8')[:42], description.decode('UTF-8')[:25000], group_name))
 
@@ -892,7 +894,10 @@ class main(threading.Thread):
     self.log(self.logger.INFO, 'bye')
 
   def basicHTMLencode(self, inputString):
-    return inputString.replace('<', '&lt;').replace('>', '&gt;').strip(' \t\n\r')
+    html_escape_table = (("&", "&amp;"), ('"', "&quot;"), ("'", "&apos;"), (">", "&gt;"), ("<", "&lt;"),)
+    for x in html_escape_table:
+      inputString = inputString.replace(x[0], x[1])
+    return inputString.strip(' \t\n\r')
 
   def generate_pubkey_short_utf_8(self, full_pubkey_hex, length=6):
     pub_short = ''
@@ -984,7 +989,7 @@ class main(threading.Thread):
     # make >quotes
     quoter = re.compile("^&gt;(?!&gt;[0-9a-f]{10}).*", re.MULTILINE)
     # Make http:// urls in posts clickable
-    clicker = re.compile("(http://|https://|ftp://|mailto:|news:|irc:)([^\s\[\]<>'\"&]*)")
+    clicker = re.compile("(http://|https://|ftp://|mailto:|news:|irc:|magnet:?)([^\s\[\]<>'\"]*)")
     # make code blocks
     coder = re.compile('\[code](?!\[/code])(.+?)\[/code]', re.DOTALL)
     # make spoilers
@@ -1777,7 +1782,7 @@ class main(threading.Thread):
       else:
         group_link = '%s-1.html' % group_name
       if group_row[2] != '':
-        group_name_encoded = self.basicHTMLencode(group_row[2].replace('"', '').replace('/', ''))
+        group_name_encoded = group_row[2]
       else:
         group_name_encoded = self.basicHTMLencode(group_row[0].split('.', 1)[1].replace('"', '').replace('/', ''))
       t_engine_mappings_menu_entry['group_link'] = group_link
@@ -1829,7 +1834,7 @@ class main(threading.Thread):
       WHERE ((cast(flags as integer) & ?) = 0 OR group_id = ?) ORDER by group_name ASC', (exclude_flags, group_id)).fetchall():
       current_group_name = group_row[0].split('.', 1)[1].replace('"', '').replace('/', '')
       if group_row[3] != '':
-        current_group_name_encoded = self.basicHTMLencode(group_row[3])
+        current_group_name_encoded = group_row[3]
       else:
         current_group_name_encoded = self.basicHTMLencode(current_group_name)
       if self.use_unsecure_aliases and group_row[4] != '':
@@ -1846,7 +1851,7 @@ class main(threading.Thread):
         board_name_unquoted = full_board_name_unquoted.split('.', 1)[1]
         board_description = group_row[5]
         if group_row[2] != '':
-          board_name = self.basicHTMLencode(group_row[2])
+          board_name = group_row[2]
         else:
           board_name = full_board_name.split('.', 1)[1]
     if not self.use_unsecure_aliases:
@@ -1937,7 +1942,7 @@ class main(threading.Thread):
       ORDER BY sent DESC LIMIT ?', (exclude_flags, str(postcount))).fetchall():
       sent = datetime.utcfromtimestamp(row[0] + self.utc_time_offset).strftime(self.datetime_format)
       if row[6] != '':
-        board = self.basicHTMLencode(row[6].replace('"', ''))
+        board = row[6]
       else:
         board = self.basicHTMLencode(row[1].replace('"', '')).split('.', 1)[1]
       author = row[2][:12]
@@ -1966,7 +1971,7 @@ class main(threading.Thread):
       (cast(groups.flags as integer) & ?) = 0 AND articles.group_id = groups.group_id GROUP BY \
       articles.group_id ORDER BY counter DESC', (exclude_flags,)).fetchall():
       if row[2] != '':
-        board = self.basicHTMLencode(row[2].replace('"', ''))
+        board = row[2]
       else:
         board = self.basicHTMLencode(row[1].replace('"', ''))
       stats.append(self.template_stats_boards_row.replace('%%postcount%%', str(row[0])).replace('%%board%%', board))
