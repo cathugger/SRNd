@@ -476,7 +476,7 @@ class main(threading.Thread):
     # ^ softlinks not gonna work because of nginx chroot
     # ^ => cp
     self.copy_out((self.css_file, 'styles.css'), ('user.css', 'user.css'), (self.no_file, os.path.join('img', self.no_file)),
-        ('suicide.txt', 'suicide.txt'), ('playbutton.png', os.path.join('img', 'playbutton.png')),
+        ('suicide.txt', os.path.join('img', 'suicide.txt')), ('playbutton.png', os.path.join('img', 'playbutton.png')),
     )
     self.gen_template_thumbs(self.invalid_file, self.document_file, self.audio_file, self.webm_file, self.no_file, self.censored_file, self.torrent_file, self.archive_file)
 
