@@ -1842,9 +1842,9 @@ class main(threading.Thread):
       else:
         board_link = '%s-1.html' % current_group_name
       if group_row[1] != group_id or selflink:
-        boardlist.append(u' <a href="{0}">{1}</a> /'.format(board_link, current_group_name_encoded))
+        boardlist.append(u' <a href="{0}">{1}</a>&nbsp;/'.format(board_link, current_group_name_encoded))
       else:
-        boardlist.append(' ' + current_group_name_encoded + ' /')
+        boardlist.append(' ' + current_group_name_encoded + '&nbsp;/')
       if group_row[1] == group_id:
         full_board_name_unquoted = group_row[0].replace('"', '').replace('/', '')
         full_board_name = self.basicHTMLencode(full_board_name_unquoted)

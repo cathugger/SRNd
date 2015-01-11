@@ -37,7 +37,7 @@
         margin-bottom: 1px;
         border: none;
         background:  #101010;
-        padding: 5px;
+        padding: 9px 9px 1em;
       }
       .message, .highlight {
         margin-left: 25px;
@@ -45,7 +45,7 @@
         border: 1px solid #363636;
         background: #1c1c1c;
         border-radius: 0px;
-        padding: 5px;
+        padding: 9px 9px 1.5em;
       }
       .highlight .highlightroot {
         background: #EEDACB;
