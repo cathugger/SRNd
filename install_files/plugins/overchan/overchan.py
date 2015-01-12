@@ -1698,7 +1698,15 @@ class main(threading.Thread):
       frontend = 'nntp'
     return frontend
 
-  def generate_thread(self, root_uid, thread_page=0):
+  def delete_thread_page(self, thread_path):
+    if os.path.isfile(thread_path):
+      self.log(self.logger.INFO, 'this page belongs to some blocked board. deleting %s.' % thread_path)
+      try:
+        os.unlink(thread_path)
+      except Exception as e:
+        self.log(self.logger.ERROR, 'could not delete %s: %s' % (thread_path, e))
+
+  def generate_thread(self, root_uid):
     root_row = self.sqlite.execute('SELECT article_uid, sender, subject, sent, message, imagename, imagelink, thumblink, public_key, last_update, closed, group_id \
         FROM articles WHERE article_uid = ?', (root_uid,)).fetchone()
     if not root_row:
@@ -1710,33 +1718,20 @@ class main(threading.Thread):
     group_id = root_row[-1]
     root_message_id_hash = sha1(root_uid).hexdigest()#self.sqlite_hashes.execute('SELECT message_id_hash from article_hashes WHERE message_id = ?', (root_row[0],)).fetchone()
     # FIXME: benchmark sha1() vs hasher_db_query
-    if thread_page > 0:
-      thread_postfix = '-%s' % (thread_page * 50)
-      max_child_view = thread_page * 50
+    child_count = int(self.sqlite.execute('SELECT count(article_uid) FROM articles WHERE parent = ? AND parent != article_uid AND group_id = ?', (root_row[0], group_id)).fetchone()[0])
+    isblocked_board = self.check_board_flags(group_id, 'blocked')
+    thread_path = os.path.join(self.output_directory, 'thread-%s.html' % (root_message_id_hash[:10],))
+    if isblocked_board:
+      self.delete_thread_page(thread_path)
     else:
-      thread_postfix = ''
-      max_child_view = 10000
-    if thread_page == 0:
-      child_count = int(self.sqlite.execute('SELECT count(article_uid) FROM articles WHERE parent = ? AND parent != article_uid AND group_id = ?', (root_row[0], group_id)).fetchone()[0])
-      if child_count > 80:
-        thread_page = child_count / 50
-    else:
-      thread_page -= 1
-    if thread_page > 0 and thread_page % 2 == 0:
-      thread_page -= 1
-
-    thread_path = os.path.join(self.output_directory, 'thread-%s%s.html' % (root_message_id_hash[:10], thread_postfix))
-    if self.check_board_flags(group_id, 'blocked'):
-      if os.path.isfile(thread_path):
-        self.log(self.logger.INFO, 'this page belongs to some blocked board. deleting %s.' % thread_path)
-        try:
-          os.unlink(thread_path)
-        except Exception as e:
-          self.log(self.logger.ERROR, 'could not delete %s: %s' % (thread_path, e))
-    else:
-      self.create_thread_page(root_row[:-1], thread_path, max_child_view, root_message_id_hash, group_id)
-
-    if thread_page > 0: self.generate_thread(root_uid, thread_page)
+      self.create_thread_page(root_row[:-1], thread_path, 10000, root_message_id_hash, group_id)
+    if child_count > 80:
+      for max_child_view in range(50, child_count, 100):
+        thread_path = os.path.join(self.output_directory, 'thread-%s-%s.html' % (root_message_id_hash[:10], max_child_view))
+        if isblocked_board:
+          self.delete_thread_page(thread_path)
+        else:
+          self.create_thread_page(root_row[:-1], thread_path, max_child_view, root_message_id_hash, group_id)
 
   def create_thread_page(self, root_row, thread_path, max_child_view, root_message_id_hash, group_id):
     self.log(self.logger.INFO, 'generating %s' % (thread_path,))
