@@ -193,7 +193,7 @@ class main(threading.Thread):
     self.datetime_format = '%d.%m.%Y (%a) %H:%M' + tz_name
 
     if cv2_load_result != 'true':
-      self.log(self.logger.ERROR, '%s. Thumbnail for video not be creating. see http://docs.opencv.org/' % cv2_load_result)
+      self.log(self.logger.ERROR, '%s. Thumbnail for video will not be created. See http://docs.opencv.org/' % cv2_load_result)
 
     for x in (self.no_file, self.audio_file, self.invalid_file, self.document_file, self.css_file, self.censored_file):
       cheking_file = os.path.join(self.template_directory, x)
@@ -1074,7 +1074,7 @@ class main(threading.Thread):
       video_capture.release()
       cv2.imwrite(tmp_image, video_frame)
     except Exception as e:
-      self.log(self.logger.WARNING, "error create image from video %s: %s" % (target, e))
+      self.log(self.logger.WARNING, "error creating image from video %s: %s" % (target, e))
       thumbname = 'video'
     else:
       try:
