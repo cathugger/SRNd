@@ -773,11 +773,15 @@ class main(threading.Thread):
           # correct root post last_update
           all_child_time = self.sqlite.execute('SELECT article_uid, last_update FROM articles WHERE parent = ? AND last_update >= sent ORDER BY sent DESC', (row[2],)).fetchall()
           childs_count = len(all_child_time)
-          if childs_count > 1 and all_child_time[0][0] == message_id and (self.bump_limit == 0 or childs_count - 1 < self.bump_limit):
-            root_last_update = int(self.sqlite.execute('SELECT last_update FROM articles WHERE article_uid = ?', (row[2],)).fetchone()[0])
+          if childs_count > 0 and all_child_time[0][0] == message_id and (self.bump_limit == 0 or childs_count - 1 < self.bump_limit):
+            root_last_update, root_sent = self.sqlite.execute('SELECT last_update, sent FROM articles WHERE article_uid = ?', (row[2],)).fetchone()
             # no sticky or abnormal last_update
-            if root_last_update < time.time() and root_last_update > int(all_child_time[1][1]):
-              self.sqlite.execute('UPDATE articles SET last_update = ? WHERE article_uid = ?', (all_child_time[1][1], row[2]))
+            if childs_count == 1:
+              new_last_update = root_sent
+            else:
+              new_last_update = all_child_time[1][1]
+            if root_last_update < time.time() and root_last_update > new_last_update:
+                self.sqlite.execute('UPDATE articles SET last_update = ? WHERE article_uid = ?', (new_last_update, row[2]))
           self.log(self.logger.DEBUG, 'deleting message_id %s, got a child post' % message_id)
           self.sqlite.execute('DELETE FROM articles WHERE article_uid = ?', (message_id,))
           # FIXME: add detection for parent == deleted message (not just censored) and if true, add to root_posts
