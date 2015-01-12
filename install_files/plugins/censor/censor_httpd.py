@@ -565,16 +565,15 @@ class censor(BaseHTTPRequestHandler):
     
   def send_messagelog(self, page=0):
     table = list()
-    #out = u'<html><head><meta http-equiv="content-type" content="text/html; charset=utf-8"><link type="text/css" href="/styles.css" rel="stylesheet"><style type="text/css">table { font-size: 9pt;} td { vertical-align: top; } .dontwrap { white-space: nowrap; } body { margin: 10px; margin-top: 20px; font-family: monospace; font-size: 9pt; } .navigation { background: #101010; padding-top: 19px; position: fixed; top: 0; width: 100%; }</style></head><body>%%navigation%%%%content%%</body></html>'
-    out = u'<html><head><meta http-equiv="content-type" content="text/html; charset=utf-8"><title>messagelog</title><link type="text/css" href="/styles.css" rel="stylesheet"></head><body class="mod">%%navigation%%%%content%%</body></html>'
-    out = out.replace("%%navigation%%", ''.join(self.__get_navigation('message_log'))) 
-    #for row in self.origin.sqlite_overchan.execute('SELECT article_uid, parent, sender, subject, message, parent, public_key, sent, group_name FROM articles, groups WHERE groups.group_id = articles.group_id ORDER BY articles.sent DESC LIMIT ?,50', (50*page,)).fetchall():
+    message_log = dict()
+    message_log['navigation'] = ''.join(self.__get_navigation('message_log'))
     for row in self.origin.sqlite_overchan.execute('SELECT article_uid, parent, sender, subject, message, parent, public_key, sent, group_name FROM articles, groups WHERE groups.group_id = articles.group_id ORDER BY articles.sent DESC LIMIT ?,100', (0,)).fetchall():
+      message_log_row = dict()
       if row[1] == '' or row[1] == row[0]:
         # parent
-        link = "thread-%s.html" % sha1(row[0]).hexdigest()[:10]
+        message_log_row['link'] = "thread-%s.html" % sha1(row[0]).hexdigest()[:10]
       else:
-        link = "thread-%s.html#%s" % (sha1(row[1]).hexdigest()[:10], sha1(row[0]).hexdigest()[:10])
+        message_log_row['link'] = "thread-%s.html#%s" % (sha1(row[1]).hexdigest()[:10], sha1(row[0]).hexdigest()[:10])
       sender = row[2]
       subject = row[3]
       message = row[4]
@@ -584,14 +583,18 @@ class censor(BaseHTTPRequestHandler):
         subject = subject[:45] + ' [..]'
       if len(message) > 200:
         message = message[:200] + "\n[..]"
-      subject = self.origin.breaker.sub(self.__breakit, subject)
-      message = self.origin.breaker.sub(self.__breakit, message)
-      table.append(u'<tr><td class="dontwrap">%s</td><td class="dontwrap">%s</td><td>%s</td><td><a href="/%s" target="_blank">%s</a></td><td class="message_span">%s</td></tr>' % (datetime.utcfromtimestamp(row[7]).strftime('%Y/%m/%d %H:%M'), row[8], sender, link, subject, message))
-    out = out.replace("%%content%%", '<table class="datatable"><tr><th>sent</th><th>board</th><th>sender</th><th>subject</th><th>message</th></tr>\n' + '\n'.join(table))
+
+      message_log_row['sender'] = sender
+      message_log_row['subject'] = self.origin.breaker.sub(self.__breakit, subject)
+      message_log_row['message'] = self.origin.breaker.sub(self.__breakit, message)
+      message_log_row['group_name'] = row[8]
+      message_log_row['sent'] = datetime.utcfromtimestamp(row[7]).strftime('%Y/%m/%d %H:%M')
+      table.append(self.origin.t_engine_message_log_row.substitute(message_log_row))
+    message_log['content'] = ''.join(table)
     self.send_response(200)
     self.send_header('Content-type', 'text/html')
     self.end_headers()
-    self.wfile.write(out.encode('UTF-8'))
+    self.wfile.write(self.origin.t_engine_message_log.substitute(message_log).encode('UTF-8'))
 
   def send_stats(self, page=0):
     stats_data = dict()
@@ -1137,6 +1140,12 @@ class censor_httpd(threading.Thread):
     f.close()
     f = open(os.path.join(template_directory, 'stats.tmpl'), 'r')
     self.httpd.t_engine_stats = string.Template(f.read())
+    f.close()
+    f = open(os.path.join(template_directory, 'message_log.tmpl'), 'r')
+    self.httpd.t_engine_message_log = string.Template(f.read())
+    f.close()
+    f = open(os.path.join(template_directory, 'message_log_row.tmpl'), 'r')
+    self.httpd.t_engine_message_log_row = string.Template(f.read())
     f.close()
     #f = open(os.path.join(template_directory, 'message_pic.template'), 'r')
     #self.httpd.template_message_pic = f.read()
