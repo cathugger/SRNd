@@ -1017,13 +1017,13 @@ class main(threading.Thread):
     else:
       message = linker.sub(self.linkit, message)
       message = quoter.sub(self.quoteit, message)
-      message = clicker.sub(self.clickit, message)
       message = spoiler.sub(self.spoilit, message)
       message = bolder1.sub(self.boldit, message)
       message = bolder2.sub(self.boldit, message)
       message = italer.sub(self.italit, message)
       message = striker.sub(self.strikeit, message)
       message = underliner.sub(self.underlineit, message)
+      message = clicker.sub(self.clickit, message)
 
     return message
 
