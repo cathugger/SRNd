@@ -3,5 +3,9 @@
         <td class="dontwrap">${group_name}</td>
         <td>${sender}</td>
         <td><a href="/${link}" target="_blank">${subject}</a></td>
+        <td class="stillevil">
+          <input type="checkbox" value="${articlehash_full}" title="delete ${delete_taget}" class="purge_msg" name="purge" id="purge${articlehash}"><label for="purge${articlehash}"> ${delete_taget}</label><br />
+          <input type="checkbox" value="${articlehash_full}" title="Massdelete by desthash" class="purge_msg" name="purge_desthash" id="purge_desthash${articlehash}"><label for="purge_desthash${articlehash}"> all</label>
+        </td>
         <td class="message_span">${message}</td>
       </tr>

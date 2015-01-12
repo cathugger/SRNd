@@ -569,28 +569,30 @@ class censor(BaseHTTPRequestHandler):
     message_log['navigation'] = ''.join(self.__get_navigation('message_log'))
     for row in self.origin.sqlite_overchan.execute('SELECT article_uid, parent, sender, subject, message, parent, public_key, sent, group_name FROM articles, groups WHERE groups.group_id = articles.group_id ORDER BY articles.sent DESC LIMIT ?,100', (0,)).fetchall():
       message_log_row = dict()
+      articlehash_full = sha1(row[0]).hexdigest()
       if row[1] == '' or row[1] == row[0]:
         # parent
-        message_log_row['link'] = "thread-%s.html" % sha1(row[0]).hexdigest()[:10]
+        message_log_row['link'] = "thread-%s.html" % articlehash_full[:10]
+        message_log_row['delete_taget'] = 'thread'
       else:
-        message_log_row['link'] = "thread-%s.html#%s" % (sha1(row[1]).hexdigest()[:10], sha1(row[0]).hexdigest()[:10])
-      sender = row[2]
+        message_log_row['link'] = "thread-%s.html#%s" % (sha1(row[1]).hexdigest()[:10], articlehash_full[:10])
+        message_log_row['delete_taget'] = 'post'
       subject = row[3]
       message = row[4]
-      if len(sender) > 15:
-        sender = sender[:15]+ ' [..]'
-      if len(subject) > 45:
-        subject = subject[:45] + ' [..]'
+      if len(subject) > 40:
+        subject = subject[:38] + '..'
       if len(message) > 200:
-        message = message[:200] + "\n[..]"
-
-      message_log_row['sender'] = sender
+        message = message[:200] + " [..]"
+      message_log_row['sender'] = row[2][:15]
       message_log_row['subject'] = self.origin.breaker.sub(self.__breakit, subject)
       message_log_row['message'] = self.origin.breaker.sub(self.__breakit, message)
       message_log_row['group_name'] = row[8]
       message_log_row['sent'] = datetime.utcfromtimestamp(row[7]).strftime('%Y/%m/%d %H:%M')
+      message_log_row['articlehash_full'] = articlehash_full
+      message_log_row['articlehash'] = articlehash_full[:10]
       table.append(self.origin.t_engine_message_log_row.substitute(message_log_row))
     message_log['content'] = ''.join(table)
+    message_log['target'] = self.root_path + 'message_log'
     self.send_response(200)
     self.send_header('Content-type', 'text/html')
     self.end_headers()
@@ -1141,8 +1143,15 @@ class censor_httpd(threading.Thread):
     f = open(os.path.join(template_directory, 'stats.tmpl'), 'r')
     self.httpd.t_engine_stats = string.Template(f.read())
     f.close()
+    f = open(os.path.join(template_directory, 'evil_mod.tmpl'), 'r')
+    template_evil_mod = f.read()
+    f.close()
     f = open(os.path.join(template_directory, 'message_log.tmpl'), 'r')
-    self.httpd.t_engine_message_log = string.Template(f.read())
+    self.httpd.t_engine_message_log = string.Template(
+      string.Template(f.read()).safe_substitute(
+        evil_mod=template_evil_mod
+      )
+    )
     f.close()
     f = open(os.path.join(template_directory, 'message_log_row.tmpl'), 'r')
     self.httpd.t_engine_message_log_row = string.Template(f.read())
