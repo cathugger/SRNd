@@ -8,6 +8,9 @@ import string
 import threading
 import time
 import traceback
+import math
+import mimetypes
+mimetypes.init()
 from binascii import unhexlify
 from calendar import timegm
 from datetime import datetime, timedelta
@@ -23,6 +26,12 @@ else:
 
 import Image
 import nacl.signing
+
+try:
+  import cv2
+  cv2_load_result = 'true'
+except ImportError as cv2_load_result:
+  pass
 
 class main(threading.Thread):
 
@@ -148,13 +157,43 @@ class main(threading.Thread):
 
     self.censored_file = 'censored.png'
     if 'censored_file' in args:
-      try:    self.censored_file = args['censored_file']
-      except: pass
+      self.censored_file = args['censored_file']
+
+    self.archive_file = 'archive.png'
+    if 'archive_file' in args:
+      self.archive_file = args['archive_file']
+
+    self.torrent_file = 'torrent.png'
+    if 'torrent_file' in args:
+      self.torrent_file = args['torrent_file']
 
     self.use_unsecure_aliases = False
     if 'use_unsecure_aliases' in args:
       if args['use_unsecure_aliases'].lower() == 'true':
-        self.sync_on_startup = True
+        self.use_unsecure_aliases = True
+
+    self.create_best_video_thumbnail = False
+    if 'create_best_video_thumbnail' in args:
+      if args['create_best_video_thumbnail'].lower() == 'true':
+        self.create_best_video_thumbnail = True
+
+    self.utc_time_offset = 0.0
+    if 'utc_time_offset' in args:
+      try:    self.utc_time_offset = float(args['utc_time_offset'])
+      except: pass
+    if not (-15 < self.utc_time_offset < 15):
+      self.log(self.logger.ERROR, 'Abnormal UTC offset %s, use UTC+0' % (self.utc_time_offset,))
+      self.utc_time_offset = 0.0
+    self.utc_time_offset = int(self.utc_time_offset * 3600)
+
+    tz_name = 'UTC'
+    if 'tz_name' in args:
+      tz_name = args['tz_name'].replace('%', '')
+    if tz_name != '': tz_name = ' ' + tz_name
+    self.datetime_format = '%d.%m.%Y (%a) %H:%M' + tz_name
+
+    if cv2_load_result != 'true':
+      self.log(self.logger.ERROR, '%s. Thumbnail for video not be creating. see http://docs.opencv.org/' % cv2_load_result)
 
     for x in (self.no_file, self.audio_file, self.invalid_file, self.document_file, self.css_file, self.censored_file):
       cheking_file = os.path.join(self.template_directory, x)
@@ -162,7 +201,7 @@ class main(threading.Thread):
         self.die('{0} file not found in {1}'.format(x, cheking_file))
 
     # statics
-    for x in ('help', 'stats_usage', 'stats_usage_row', 'latest_posts', 'latest_posts_row', 'stats_boards', 'stats_boards_row', 'base_pagelist', 'base_postform', 'base_footer'):
+    for x in ('stats_usage', 'stats_usage_row', 'latest_posts', 'latest_posts_row', 'stats_boards', 'stats_boards_row'):
       template_file = os.path.join(self.template_directory, '%s.tmpl' % x)
       template_var = 'template_%s' % x
       try:
@@ -172,57 +211,78 @@ class main(threading.Thread):
       except Exception as e:
         self.die('Error loading template {0}: {1}'.format(template_file, e))
 
+    # temporary templates
+    template_brick = dict()
+    for x in ('help', 'base_pagelist', 'base_postform', 'base_footer', 'single_postform', 'dummy_postform', 'message_child_pic', 'message_child_nopic',
+        'message_root', 'message_child_quickreply', 'message_root_quickreply'):
+      template_file = os.path.join(self.template_directory, '%s.tmpl' % x)
+      try:
+        f = codecs.open(template_file, "r", "utf-8")
+        template_brick[x] = f.read()
+        f.close()
+      except Exception as e:
+        self.die('Error loading template {0}: {1}'.format(template_file, e))
+
     f = codecs.open(os.path.join(self.template_directory, 'base_help.tmpl'), "r", "utf-8")
-    self.template_base_help = string.Template(f.read()).safe_substitute(
-      help=self.template_help
+    template_brick['base_help'] = string.Template(f.read()).safe_substitute(
+      help=template_brick['help']
     )
     f = codecs.open(os.path.join(self.template_directory, 'base_head.tmpl'), "r", "utf-8")
-    self.template_base_head = string.Template(f.read()).safe_substitute(
+    template_brick['base_head'] = string.Template(f.read()).safe_substitute(
       title=self.html_title
+    )
+    f.close()
+    f = codecs.open(os.path.join(self.template_directory, 'thread_single.tmpl'), "r", "utf-8")
+    template_brick['thread_single'] = string.Template(
+      string.Template(f.read()).safe_substitute(
+        help=template_brick['help'],
+        title=self.html_title
+      )
     )
     f.close()
     # template_engines
     f = codecs.open(os.path.join(self.template_directory, 'board.tmpl'), "r", "utf-8")
     self.t_engine_board = string.Template(
       string.Template(f.read()).safe_substitute(
-        base_head=self.template_base_head,
-        base_pagelist=self.template_base_pagelist,
-        base_postform=self.template_base_postform,
-        base_help=self.template_base_help,
-        base_footer=self.template_base_footer
+        base_head=template_brick['base_head'],
+        base_pagelist=template_brick['base_pagelist'],
+        base_postform=template_brick['base_postform'],
+        base_help=template_brick['base_help'],
+        base_footer=template_brick['base_footer']
       )
     )
     f.close()
     f = codecs.open(os.path.join(self.template_directory, 'board_archive.tmpl'), "r", "utf-8")
     self.t_engine_board_archive = string.Template(
       string.Template(f.read()).safe_substitute(
-        base_head=self.template_base_head,
-        base_pagelist=self.template_base_pagelist,
-        base_postform=self.template_base_postform,
-        base_help=self.template_base_help,
-        base_footer=self.template_base_footer
+        base_head=template_brick['base_head'],
+        base_pagelist=template_brick['base_pagelist'],
+        base_postform=template_brick['base_postform'],
+        base_help=template_brick['base_help'],
+        base_footer=template_brick['base_footer']
       )
     )
     f.close()
     f = codecs.open(os.path.join(self.template_directory, 'board_recent.tmpl'), "r", "utf-8")
     self.t_engine_board_recent = string.Template(
       string.Template(f.read()).safe_substitute(
-        base_head=self.template_base_head,
-        base_postform=self.template_base_postform,
-        base_help=self.template_base_help,
-        base_footer=self.template_base_footer
+        base_head=template_brick['base_head'],
+        base_postform=template_brick['base_postform'],
+        base_help=template_brick['base_help'],
+        base_footer=template_brick['base_footer']
       )
     )
-    f.close()
-
-    f = codecs.open(os.path.join(self.template_directory, 'thread_single.tmpl'), "r", "utf-8")
+    f.close()#string.Template(
     self.t_engine_thread_single = string.Template(
-      string.Template(f.read()).safe_substitute(
-        help=self.template_help,
-        title=self.html_title
+      template_brick['thread_single'].safe_substitute(
+        single_postform=template_brick['single_postform']
       )
     )
-    f.close()
+    self.t_engine_thread_single_closed = string.Template(
+      template_brick['thread_single'].safe_substitute(
+        single_postform=template_brick['dummy_postform']
+      )
+    )
     f = codecs.open(os.path.join(self.template_directory, 'index.tmpl'), "r", "utf-8")
     self.t_engine_index = string.Template(
       string.Template(f.read()).safe_substitute(
@@ -245,7 +305,7 @@ class main(threading.Thread):
     f = codecs.open(os.path.join(self.template_directory, 'overview.tmpl'), "r", "utf-8")
     self.t_engine_overview = string.Template(
       string.Template(f.read()).safe_substitute(
-        help=self.template_help,
+        help=template_brick['help'],
         title=self.html_title
       )
     )
@@ -256,18 +316,43 @@ class main(threading.Thread):
     f = codecs.open(os.path.join(self.template_directory, 'archive_threads.tmpl'), "r", "utf-8")
     self.t_engine_archive_threads = string.Template(f.read())
     f.close()
-    f = codecs.open(os.path.join(self.template_directory, 'message_root.tmpl'), "r", "utf-8")
-    self.t_engine_message_root = string.Template(f.read())
-    f.close()
-    f = codecs.open(os.path.join(self.template_directory, 'message_child_pic.tmpl'), "r", "utf-8")
-    self.t_engine_message_pic = string.Template(f.read())
-    f.close()
-    f = codecs.open(os.path.join(self.template_directory, 'message_child_nopic.tmpl'), "r", "utf-8")
-    self.t_engine_message_nopic = string.Template(f.read())
-    f.close()
+    self.t_engine_message_root = string.Template(
+      string.Template(template_brick['message_root']).safe_substitute(
+        root_quickreply=template_brick['message_root_quickreply'],
+        click_action='Reply'
+      )
+    )
+    self.t_engine_message_root_closed = string.Template(
+      string.Template(template_brick['message_root']).safe_substitute(
+        root_quickreply='&#8470;  ${article_id}',
+        click_action='View'
+      )
+    )
+    self.t_engine_message_pic = string.Template(
+      string.Template(template_brick['message_child_pic']).safe_substitute(
+        child_quickreply=template_brick['message_child_quickreply']
+      )
+    )
+    self.t_engine_message_pic_closed = string.Template(
+      string.Template(template_brick['message_child_pic']).safe_substitute(
+        child_quickreply='${article_id}'
+      )
+    )
+    self.t_engine_message_nopic = string.Template(
+      string.Template(template_brick['message_child_nopic']).safe_substitute(
+        child_quickreply=template_brick['message_child_quickreply']
+      )
+    )
+    self.t_engine_message_nopic_closed = string.Template(
+      string.Template(template_brick['message_child_nopic']).safe_substitute(
+        child_quickreply='${article_id}'
+      )
+    )
     f = codecs.open(os.path.join(self.template_directory, 'signed.tmpl'), "r", "utf-8")
     self.t_engine_signed = string.Template(f.read())
     f.close()
+
+    del template_brick
 
     self.upper_table = {'0': '1',
                         '1': '2',
@@ -390,8 +475,10 @@ class main(threading.Thread):
     # ^ hardlinks not gonna work because of remote filesystems
     # ^ softlinks not gonna work because of nginx chroot
     # ^ => cp
-    self.copy_out((self.css_file, 'styles.css'), ('user.css', 'user.css'), (self.no_file, os.path.join('img', self.no_file)), ('suicide.txt', 'suicide.txt'),)
-    self.gen_template_thumbs(self.invalid_file, self.document_file, self.audio_file, self.webm_file, self.no_file, self.censored_file)
+    self.copy_out((self.css_file, 'styles.css'), ('user.css', 'user.css'), (self.no_file, os.path.join('img', self.no_file)),
+        ('suicide.txt', os.path.join('img', 'suicide.txt')), ('playbutton.png', os.path.join('img', 'playbutton.png')),
+    )
+    self.gen_template_thumbs(self.invalid_file, self.document_file, self.audio_file, self.webm_file, self.no_file, self.censored_file, self.torrent_file, self.archive_file)
 
     self.regenerate_boards = list()
     self.regenerate_threads = list()
@@ -450,7 +537,7 @@ class main(threading.Thread):
     except:
       pass
     try:
-      self.sqlite.execute('ALTER TABLE groups ADD COLUMN blocked INTEGER DEFAULT 0')
+      self.sqlite.execute('ALTER TABLE articles ADD COLUMN closed INTEGER DEFAULT 0')
     except:
       pass
     self.sqlite.execute('CREATE INDEX IF NOT EXISTS articles_group_idx ON articles(group_id);')
@@ -465,7 +552,7 @@ class main(threading.Thread):
       self.regenerate_all_html()
 
   def regenerate_all_html(self):
-    for group_row in self.sqlite.execute('SELECT group_id FROM groups WHERE blocked != 1').fetchall():
+    for group_row in self.sqlite.execute('SELECT group_id FROM groups WHERE (cast(groups.flags as integer) & ?) = 0', (self.cache['flags']['blocked'],)).fetchall():
       if group_row[0] not in self.regenerate_boards:
         self.regenerate_boards.append(group_row[0])
     for thread_row in self.sqlite.execute('SELECT article_uid FROM articles WHERE parent = "" OR parent = article_uid ORDER BY last_update DESC').fetchall():
@@ -501,6 +588,26 @@ class main(threading.Thread):
     if not message_id in self.regenerate_threads:
       self.regenerate_threads.append(message_id)
     return sticky_action
+
+  def close_processing(self, message_id):
+    close_status, group_id = self.sqlite.execute('SELECT closed, group_id FROM articles WHERE article_uid = ? AND (parent = "" OR parent = article_uid)', (message_id,)).fetchone()
+    if not group_id: return 'article not found'
+    if close_status == 0:
+      close_status = 1
+      close_action = 'close thread'
+    else:
+      close_status = 0
+      close_action = 'open thread'
+    try:
+      self.sqlite.execute('UPDATE articles SET closed = ? WHERE article_uid = ? AND (parent = "" OR parent = article_uid)', (close_status, message_id))
+      self.sqlite_conn.commit()
+    except:
+      return 'Fail db update'
+    if group_id not in self.regenerate_boards:
+      self.regenerate_boards.append(group_id)
+    if not message_id in self.regenerate_threads:
+      self.regenerate_threads.append(message_id)
+    return close_action
 
   def delete_orphan_attach(self, image, thumb):
     image_link = os.path.join(self.output_directory, 'img', image)
@@ -542,21 +649,21 @@ class main(threading.Thread):
     try:
       flags = int(self.sqlite.execute("SELECT flags FROM groups WHERE group_name=?", (group_name,)).fetchone()[0])
       flags ^= flags & self.cache['flags']['blocked']
-      self.sqlite.execute('UPDATE groups SET blocked = 0, flags = ? WHERE group_name = ?', (str(flags), group_name))
+      self.sqlite.execute('UPDATE groups SET flags = ? WHERE group_name = ?', (str(flags), group_name))
       self.log(self.logger.INFO, 'unblocked existing board: \'%s\'' % group_name)
     except:
       self.sqlite.execute('INSERT INTO groups(group_name, article_count, last_update, flags) VALUES (?,?,?,?)', (group_name, 0, int(time.time()), flags))
       self.log(self.logger.INFO, 'added new board: \'%s\'' % group_name)
-    self.sqlite_conn.commit()
     if len(args) > 2:
       self.overchan_aliases_update(args[2], group_name)
+    self.sqlite_conn.commit()
     self.regenerate_all_html()
 
   def overchan_board_del(self, group_name, flags=0):
     try:
       if flags == 0:
         flags = int(self.sqlite.execute("SELECT flags FROM groups WHERE group_name=?", (group_name,)).fetchone()[0]) | self.cache['flags']['blocked']
-      self.sqlite.execute('UPDATE groups SET blocked = 1, flags = ? WHERE group_name = ?', (str(flags), group_name))
+      self.sqlite.execute('UPDATE groups SET flags = ? WHERE group_name = ?', (str(flags), group_name))
       self.log(self.logger.INFO, 'blocked board: \'%s\'' % group_name)
       self.sqlite_conn.commit()
       self.regenerate_all_html()
@@ -569,9 +676,10 @@ class main(threading.Thread):
     except:
       self.log(self.logger.WARNING, 'get corrupt data for %s' % group_name)
       return
+    ph_name = self.basicHTMLencode(ph_name)
+    ph_shortname = self.basicHTMLencode(ph_shortname)
     self.sqlite.execute('UPDATE groups SET ph_name= ?, ph_shortname = ?, link = ?, tag = ?, description = ? \
         WHERE group_name = ?', (ph_name.decode('UTF-8')[:42], ph_shortname.decode('UTF-8')[:42], link.decode('UTF-8')[:1000], tag.decode('UTF-8')[:42], description.decode('UTF-8')[:25000], group_name))
-    self.sqlite_conn.commit()
 
   def handle_control(self, lines, timestamp):
     # FIXME how should board-add and board-del react on timestamps in the past / future
@@ -583,17 +691,17 @@ class main(threading.Thread):
         group_name, flags = get_data[:2]
         flags = int(flags)
         group_id = self.sqlite.execute("SELECT group_id FROM groups WHERE group_name=?", (group_name,)).fetchone()[0]
-        if group_id == '' or ((flags & self.cache['flags']['blocked']) != self.cache['flags']['blocked'] and self.check_board_flags(group_id, 'blocked')):
+        if group_id == '' or ((flags & self.cache['flags']['blocked']) == 0 and self.check_board_flags(group_id, 'blocked')):
           self.overchan_board_add((group_name, flags,))
-        elif (flags & self.cache['flags']['blocked']) == self.cache['flags']['blocked'] and not self.check_board_flags(group_id, 'blocked'):
+        elif (flags & self.cache['flags']['blocked']) != 0 and not self.check_board_flags(group_id, 'blocked'):
           self.overchan_board_del(group_name, flags)
         else:
           self.sqlite.execute('UPDATE groups SET flags = ? WHERE group_name = ?', (flags, group_name))
+          if len(get_data) > 2:
+            self.overchan_aliases_update(get_data[2], group_name)
           self.sqlite_conn.commit()
-        if len(get_data) > 2:
-          self.overchan_aliases_update(get_data[2], group_name)
-        self.generate_overview()
-        self.generate_menu()
+          if group_id not in self.regenerate_boards:
+            self.regenerate_boards.append(group_id)
       elif line.lower().startswith('overchan-board-add'):
         self.overchan_board_add(line.split(" ")[1:])
       elif line.lower().startswith("overchan-board-del"):
@@ -607,6 +715,9 @@ class main(threading.Thread):
         if not row:
           self.log(self.logger.DEBUG, 'should delete attachments for message_id %s but there is no article matching this message_id' % message_id)
           continue
+        if len(row[0]) <= 40:
+          self.log(self.logger.WARNING, 'Attach for %s has incorrect file name %s. ignoring' % (message_id, row[0]))
+          continue
         #if row[4] > timestamp:
         #  self.log("post more recent than control message. ignoring delete-attachment for %s" % message_id, 2)
         #  continue
@@ -614,6 +725,7 @@ class main(threading.Thread):
           self.log(self.logger.DEBUG, 'attachment already censored. ignoring delete-attachment for %s' % message_id)
           continue
         self.log(self.logger.INFO, 'deleting attachments for message_id %s' % message_id)
+        self.censored_attach_processing(row[0], row[1])
         if row[3] not in self.regenerate_boards:
           self.regenerate_boards.append(row[3])
         if row[2] == '':
@@ -621,7 +733,6 @@ class main(threading.Thread):
             self.regenerate_threads.append(message_id)
         elif not row[2] in self.regenerate_threads:
           self.regenerate_threads.append(row[2])
-        self.censored_attach_processing(row[0], row[1])
       elif line.lower().startswith("delete "):
         message_id = line.split(" ")[1]
         if os.path.exists(os.path.join("articles", "restored", message_id)):
@@ -639,8 +750,7 @@ class main(threading.Thread):
         #  self.log("message already deleted/censored. ignoring delete for %s" % message_id, 4)
         #  continue
         self.log(self.logger.INFO, 'deleting message_id %s' % message_id)
-        if row[3] not in self.regenerate_boards:
-          self.regenerate_boards.append(row[3])
+        with_child = False
         if row[2] == '':
           # root post
           child_files = self.sqlite.execute("SELECT imagelink, thumblink FROM articles WHERE parent = ? AND article_uid != parent", (message_id,)).fetchall()
@@ -649,10 +759,7 @@ class main(threading.Thread):
             self.log(self.logger.DEBUG, 'deleting message_id %s, got a root post with attached child posts' % message_id)
             # delete child posts
             self.sqlite.execute('DELETE FROM articles WHERE parent = ?', (message_id,))
-            self.sqlite_conn.commit()
-            # delete child images and thumbs
-            for child_image, child_thumb in child_files:
-              self.delete_orphan_attach(child_image, child_thumb)
+            with_child = True
           else:
             # root posts without child posts
             self.log(self.logger.DEBUG, 'deleting message_id %s, got a root post without any child posts' % message_id)
@@ -663,16 +770,40 @@ class main(threading.Thread):
             self.log(self.logger.WARNING, 'could not delete thread for message_id %s: %s' % (message_id, e))
         else:
           # child post
+          # correct root post last_update
+          all_child_time = self.sqlite.execute('SELECT article_uid, last_update FROM articles WHERE parent = ? AND last_update >= sent ORDER BY sent DESC', (row[2],)).fetchall()
+          childs_count = len(all_child_time)
+          if childs_count > 0 and all_child_time[0][0] == message_id and (self.bump_limit == 0 or childs_count - 1 < self.bump_limit):
+            parent_row = self.sqlite.execute('SELECT last_update, sent FROM articles WHERE article_uid = ?', (row[2],)).fetchone()
+            if parent_row:
+              if childs_count == 1:
+                new_last_update = parent_row[1]
+              else:
+                new_last_update = all_child_time[1][1]
+              # sticky or abnormal last_update
+              if parent_row[0] < time.time() and parent_row[0] > new_last_update:
+                self.sqlite.execute('UPDATE articles SET last_update = ? WHERE article_uid = ?', (new_last_update, row[2]))
           self.log(self.logger.DEBUG, 'deleting message_id %s, got a child post' % message_id)
           self.sqlite.execute('DELETE FROM articles WHERE article_uid = ?', (message_id,))
-          if row[2] not in self.regenerate_threads:
-            self.regenerate_threads.append(row[2])
           # FIXME: add detection for parent == deleted message (not just censored) and if true, add to root_posts
         self.sqlite_conn.commit()
         self.delete_orphan_attach(row[0], row[1])
+        # delete child images and thumbs
+        if with_child:
+          for child_image, child_thumb in child_files:
+            self.delete_orphan_attach(child_image, child_thumb)
+        if row[2] != '' and row[2] not in self.regenerate_threads:
+          self.regenerate_threads.append(row[2])
+        if row[3] not in self.regenerate_boards:
+          self.regenerate_boards.append(row[3])
       elif line.lower().startswith("overchan-sticky "):
         message_id = line.split(" ")[1]
         self.log(self.logger.INFO, 'sticky processing message_id %s, %s' % (message_id, self.sticky_processing(message_id)))
+      elif line.lower().startswith("overchan-close "):
+        message_id = line.split(" ")[1]
+        self.log(self.logger.INFO, 'closing thread processing message_id %s, %s' % (message_id, self.close_processing(message_id)))
+      else:
+        self.log(self.logger.WARNING, 'Get unknown commandline %s. FIXME!' % (line,))
 
   def signal_handler(self, signum, frame):
     # FIXME use try: except: around open(), also check for duplicate here
@@ -706,7 +837,8 @@ class main(threading.Thread):
         ret = self.queue.get(block=True, timeout=1)
         if ret[0] == "article":
           message_id = ret[1]
-          if self.sqlite.execute('SELECT subject FROM articles WHERE article_uid = ? AND imagelink != "invalid" AND thumblink != "censored"', (message_id,)).fetchone():
+          message_thumblink = self.sqlite.execute('SELECT thumblink FROM articles WHERE article_uid = ? AND imagelink != "invalid"', (message_id,)).fetchone()
+          if message_thumblink and (message_thumblink[0] != 'censored' or not os.path.exists(os.path.join("articles", "restored", message_id))):
             self.log(self.logger.DEBUG, '%s already in database..' % message_id)
             continue
           #message_id = self.queue.get(block=True, timeout=1)
@@ -767,7 +899,10 @@ class main(threading.Thread):
     self.log(self.logger.INFO, 'bye')
 
   def basicHTMLencode(self, inputString):
-    return inputString.replace('<', '&lt;').replace('>', '&gt;').strip(' \t\n\r')
+    html_escape_table = (("&", "&amp;"), ('"', "&quot;"), ("'", "&apos;"), (">", "&gt;"), ("<", "&lt;"),)
+    for x in html_escape_table:
+      inputString = inputString.replace(x[0], x[1])
+    return inputString.strip(' \t\n\r')
 
   def generate_pubkey_short_utf_8(self, full_pubkey_hex, length=6):
     pub_short = ''
@@ -808,11 +943,8 @@ class main(threading.Thread):
 
   def linkit(self, rematch):
     row = self.db_hasher.execute("SELECT message_id FROM article_hashes WHERE message_id_hash >= ? and message_id_hash < ?", (rematch.group(2), self.upp_it(rematch.group(2)))).fetchall()
-    if not row:
-      # hash not found
-      return rematch.group(0)
-    if len(row) > 1:
-      # multiple matches for that 10 char hash
+    if not row or len(row) > 1:
+      # hash not found or multiple matches for that 10 char hash
       return rematch.group(0)
     message_id = row[0][0]
     parent_row = self.sqlite.execute("SELECT parent FROM articles WHERE article_uid = ?", (message_id,)).fetchone()
@@ -862,7 +994,7 @@ class main(threading.Thread):
     # make >quotes
     quoter = re.compile("^&gt;(?!&gt;[0-9a-f]{10}).*", re.MULTILINE)
     # Make http:// urls in posts clickable
-    clicker = re.compile("(http://|https://|ftp://|mailto:|news:|irc:)([^\s\[\]<>'\"&]*)")
+    clicker = re.compile("(http://|https://|ftp://|mailto:|news:|irc:|magnet:\?|maggot://)([^\s\[\]<>'\"]*)")
     # make code blocks
     coder = re.compile('\[code](?!\[/code])(.+?)\[/code]', re.DOTALL)
     # make spoilers
@@ -913,7 +1045,49 @@ class main(threading.Thread):
       f.close()
     return True
 
+  def gen_thumb_from_video(self, target, imagehash):
+    if os.path.getsize(target) == 0:
+      return 'invalid'
+    tmp_image = os.path.join(self.temp_directory, imagehash + '.jpg')
+    image_entropy = -1.1
+    try:
+      video_capture = cv2.VideoCapture(target)
+      readable, video_frame = video_capture.read()
+      fps = int(video_capture.get(cv2.cv.CV_CAP_PROP_FPS))
+      if fps > 61: fps = 60
+      if fps < 10: fps = 10
+      video_length = int(video_capture.get(cv2.cv.CV_CAP_PROP_FRAME_COUNT) / fps)
+      if video_length > 120: video_length = 120
+      tmp_video_frame = video_frame
+      current_frame = 0
+      while self.create_best_video_thumbnail and readable and current_frame < video_length:
+        histogram = cv2.calcHist(tmp_video_frame, [42], None, [256], [0, 256])
+        histogram_length = sum(histogram)
+        samples_probability = [float(h) / histogram_length for h in histogram]
+        tmp_image_entropy = float(-sum([p * math.log(p, 2) for p in samples_probability if p != 0]))
+        if tmp_image_entropy > image_entropy:
+          video_frame = tmp_video_frame
+          image_entropy = tmp_image_entropy
+        current_frame += 1
+        video_capture.set(cv2.cv.CV_CAP_PROP_POS_FRAMES, current_frame * fps - 1)
+        readable, tmp_video_frame = video_capture.read()
+      video_capture.release()
+      cv2.imwrite(tmp_image, video_frame)
+    except Exception as e:
+      self.log(self.logger.WARNING, "error create image from video %s: %s" % (target, e))
+      thumbname = 'video'
+    else:
+      try:
+        thumbname = self.gen_thumb(tmp_image, imagehash)
+      except:
+        thumbname = 'invalid'
+    try: os.remove(tmp_image)
+    except: pass
+    return thumbname
+
   def gen_thumb(self, target, imagehash):
+    if os.path.getsize(target) == 0:
+      return 'invalid'
     if target.split('.')[-1].lower() == 'gif' and os.path.getsize(target) < (128 * 1024 + 1):
       thumb_name = imagehash + '.gif'
       thumb_link = os.path.join(self.output_directory, 'thumbs', thumb_name)
@@ -939,6 +1113,14 @@ class main(threading.Thread):
     thumb.save(thumb_link, optimize=True)
     return thumb_name
 
+  def really_os_rename(self, src, dst):
+    # TODO: check if out dir is remote fs, use os.rename if not
+    c = open(dst, 'w')
+    f = open(src, 'r')
+    c.write(f.read())
+    c.close()
+    f.close()
+    os.remove(src)
 
   def parse_message(self, message_id, fd):
     self.log(self.logger.INFO, 'new message: %s' % message_id)
@@ -1040,134 +1222,73 @@ class main(threading.Thread):
     image_name = ''
     thumb_name = ''
     message = ''
-    # TODO: check if out dir is remote fs, use os.rename if not
     if result.is_multipart():
       self.log(self.logger.DEBUG, 'message is multipart, length: %i' % len(result.get_payload()))
       if len(result.get_payload()) == 1 and result.get_payload()[0].get_content_type() == "multipart/mixed":
         result = result.get_payload()[0]
       for part in result.get_payload():
         self.log(self.logger.DEBUG, 'got part == %s' % part.get_content_type())
-        if part.get_content_type().startswith('image/'):
-          tmp_link = os.path.join(self.temp_directory, 'tmpImage')
-          f = open(tmp_link, 'w')
-          f.write(part.get_payload(decode=True))
+
+        deny_extensions = ('.html', '.php', '.phtml', '.php3', '.php4', '.js')
+        tmp_attach = os.path.join(self.temp_directory, 'tmp_attach')
+        if part.get_content_type() != 'text/plain':
+          file_data = part.get_payload(decode=True)
+          imagehash = sha1(file_data).hexdigest()
+          f = open(tmp_attach, 'w')
+          f.write(file_data)
           f.close()
-          # get hash for filename
-          f = open(tmp_link, 'r')
-          image_name_original = self.basicHTMLencode(part.get_filename().replace('/', '_').replace('"', '_'))
-          # FIXME read line by line and use hasher.update(line)
-          imagehash = sha1(f.read()).hexdigest()
-          image_name = image_name_original.split('.')[-1].lower()
-          if image_name in ('html', 'php'):
-            image_name = 'txt'
-          image_name = imagehash + '.' + image_name
+          del file_data
+          if part.get_filename() is None or part.get_filename().strip() == '':
+            image_name_original = 'empty_file_name.empty'
+          else:
+            image_name_original = self.basicHTMLencode(part.get_filename().replace('/', '_').replace('"', '_'))
+          image_extension = '.' + image_name_original.split('.')[-1].lower()
+          if len(image_name_original) > 512:
+            image_name_original = image_name_original[:512] + '...'
+          local_mime_type = mimetypes.types_map.get(image_extension, '/')
+          local_mime_maintype, local_mime_subtype = local_mime_type.split('/', 2)
+          image_mime_types = mimetypes.guess_all_extensions(local_mime_type)
+          image_name = imagehash + image_extension
           out_link = os.path.join(self.output_directory, 'img', image_name)
-          f.close()
-          # copy to out directory with new filename
-          # FIXME use os.rename() for the sake of good
-          c = open(out_link, 'w')
-          f = open(tmp_link, 'r')
-          c.write(f.read())
-          c.close()
-          f.close()
+        if part.get_content_type() == 'text/plain':
+          message += part.get_payload(decode=True)
+        # Bad file type, unknown or deny type found
+        elif local_mime_type == '/' or len((set(image_extension) | set(image_mime_types)) & set(deny_extensions)) > 0:
+          self.log(self.logger.WARNING, 'Found bad attach %s in %s. Mimetype local=%s, remote=%s' % (image_name_original, message_id, local_mime_type, part.get_content_type()))
+          image_name_original = 'fake.and.gay.txt'
+          thumb_name = 'document'
+          image_name = 'suicide.txt'
+        elif local_mime_maintype == 'image':
+          self.really_os_rename(tmp_attach, out_link)
           try:
             thumb_name = self.gen_thumb(out_link, imagehash)
           except Exception as e:
             thumb_name = 'invalid'
             self.log(self.logger.WARNING, 'Error creating thumb in %s: %s' % (image_name, e))
-          os.remove(tmp_link)
-          #os.rename('tmp/tmpImage', 'html/img/' + imagelink) # damn remote file systems and stuff
-        elif part.get_content_type().lower() in ('application/pdf', 'application/postscript', 'application/ps'):
-          tmp_link = os.path.join(self.temp_directory, 'tmpImage')
-          f = open(tmp_link, 'w')
-          f.write(part.get_payload(decode=True))
-          f.close()
-          # get hash for filename
-          f = open(tmp_link, 'r')
-          image_name_original = self.basicHTMLencode(part.get_filename().replace('/', '_').replace('"', '_'))
-          imagehash = sha1(f.read()).hexdigest()
-          image_name = image_name_original.split('.')[-1].lower()
-          if image_name in ('html', 'php'):
-            image_name = 'fake.and.gay.txt'
-          image_name = imagehash + '.' + image_name
-          out_link = os.path.join(self.output_directory, 'img', image_name)
-          f.close()
-          # copy to out directory with new filename
-          c = open(out_link, 'w')
-          f = open(tmp_link, 'r')
-          c.write(f.read())
-          c.close()
-          f.close()
+        elif local_mime_type in ('application/pdf', 'application/postscript', 'application/ps'):
+          self.really_os_rename(tmp_attach, out_link)
           thumb_name = 'document'
-          os.remove(tmp_link)
-        elif part.get_content_type().lower() == 'text/plain':
-          message += part.get_payload(decode=True)
-        elif part.get_content_type().lower() in ('audio/ogg', 'audio/mpeg', 'audio/mp3', 'audio/opus'):
-          tmp_link = os.path.join(self.temp_directory, 'tmpAudio')
-          f = open(tmp_link, 'w')
-          f.write(part.get_payload(decode=True))
-          f.close()
-          # get hash for filename
-          f = open(tmp_link, 'r')
-          d = f.read()
-          is_img = d[4:] == '\x89PNG'
-          image_name_original = self.basicHTMLencode(part.get_filename().replace('/', '_').replace('"', '_'))
-          imagehash = sha1(d).hexdigest()
-          image_name = image_name_original.split('.')[-1].lower()
-          if image_name in ('jpg', 'png', 'gif', 'bmp', 'webm', 'html', 'php'):
-            image_name = 'fake.and.gay.txt'
-          elif is_img:
-            image_name = imagehash + '.fake_img'
-          else:
-            image_name = imagehash + '.' + image_name
-          out_link = os.path.join(self.output_directory, 'img', image_name)
-          f.close()
-          # copy to out directory with new filename
-          c = open(out_link, 'w')
-          f = open(tmp_link, 'r')
-          c.write(f.read())
-          c.close()
-          f.close()
-          if is_img:
-            thumb_name = 'invalid'
-          else:
-            thumb_name = 'audio'
-          os.remove(tmp_link)
-        elif part.get_content_type().lower() == 'video/webm':
-          tmp_link = os.path.join(self.temp_directory, 'tmpVideo')
-          f = open(tmp_link, 'w')
-          f.write(part.get_payload(decode=True))
-          f.close()
-          # get hash for filename
-          f = open(tmp_link, 'r')
-          d = f.read()
-          is_img = d[4:] == '\x89PNG'
-          image_name_original = self.basicHTMLencode(part.get_filename().replace('/', '_').replace('"', '_'))
-          imagehash = sha1(d).hexdigest()
-          image_name = image_name_original.split('.')[-1].lower()
-          if image_name in ('jpg', 'png', 'gif', 'bmp', 'html', 'php'):
-            image_name = 'fake.and.gay.txt'
-          elif is_img:
-            image_name = imagehash + '.fake_img'
-          else:
-            image_name = imagehash + '.' + image_name
-          out_link = os.path.join(self.output_directory, 'img', image_name)
-          f.close()
-          # copy to out directory with new filename
-          c = open(out_link, 'w')
-          f = open(tmp_link, 'r')
-          c.write(f.read())
-          c.close()
-          f.close()
-          if is_img:
-            thumb_name = 'invalid'
+        elif local_mime_type in ('audio/ogg', 'audio/mpeg', 'audio/mp3', 'audio/opus'):
+          self.really_os_rename(tmp_attach, out_link)
+          thumb_name = 'audio'
+        elif local_mime_maintype == 'video' and local_mime_subtype in ('webm', 'mp4'):
+          self.really_os_rename(tmp_attach, out_link)
+          if cv2_load_result == 'true':
+            thumb_name = self.gen_thumb_from_video(out_link, imagehash)
           else:
             thumb_name = 'video'
-          os.remove(tmp_link)
+        elif local_mime_maintype == 'application' and local_mime_subtype == 'x-bittorrent':
+          self.really_os_rename(tmp_attach, out_link)
+          thumb_name = 'torrent'
+        elif local_mime_maintype == 'application' and local_mime_subtype in ('x-7z-compressed', 'zip', 'x-gzip', 'x-tar', 'rar'):
+          self.really_os_rename(tmp_attach, out_link)
+          thumb_name = 'archive'
         else:
+          image_name_original = image_name = thumb_name = ''
           message += '\n----' + part.get_content_type() + '----\n'
           message += 'invalid content type\n'
           message += '----' + part.get_content_type() + '----\n\n'
+        if os.path.exists(tmp_attach): os.remove(tmp_attach)
     else:
       if result.get_content_type().lower() == 'text/plain':
         message += result.get_payload(decode=True)
@@ -1186,22 +1307,33 @@ class main(threading.Thread):
     for group in groups:
       try:
         group_flags = int(self.sqlite.execute("SELECT flags FROM groups WHERE group_name=?", (group,)).fetchone()[0])
-        if (group_flags & self.cache['flags']['spam-fix']) == self.cache['flags']['spam-fix'] and len(message) < 5:
+        if (group_flags & self.cache['flags']['spam-fix']) != 0 and len(message) < 5:
           self.log(self.logger.INFO, 'Spamprotect group %s, censored %s' % (group, message_id))
           self.delete_orphan_attach(image_name, thumb_name)
           return self.move_censored_article(message_id)
-        elif (group_flags & self.cache['flags']['news']) == self.cache['flags']['news'] and (not parent or parent == message_id) \
+        elif (group_flags & self.cache['flags']['news']) != 0 and (not parent or parent == message_id) \
             and (public_key == '' or not self.check_moder_flags(public_key, 'overchan-news-add')):
           self.delete_orphan_attach(image_name, thumb_name)
           return self.move_censored_article(message_id)
-        elif (group_flags & self.cache['flags']['sage']) == self.cache['flags']['sage']:
+        elif (group_flags & self.cache['flags']['sage']) != 0:
           sage = True
       except Exception as e:
         self.log(self.logger.INFO, 'Processing group %s error message %s %s' % (group, message_id, e))
 
+    parent_last_update = None
+
+    if parent != '' and parent != message_id:
+      result = self.sqlite.execute('SELECT last_update, closed FROM articles WHERE article_uid = ?', (parent,)).fetchone()
+      if result:
+        parent_last_update = result[0]
+        if result[1] != 0:
+          self.log(self.logger.INFO, 'censored article %s for closed thread.' % message_id)
+          self.delete_orphan_attach(image_name, thumb_name)
+          return self.move_censored_article(message_id)
+
     group_ids = list()
     for group in groups:
-      result = self.sqlite.execute('SELECT group_id FROM groups WHERE group_name=? AND blocked = 0', (group,)).fetchone()
+      result = self.sqlite.execute('SELECT group_id FROM groups WHERE group_name=? AND (cast(flags as integer) & ?) = 0', (group, self.cache['flags']['blocked'])).fetchone()
       if not result:
         try:
           self.sqlite.execute('INSERT INTO groups(group_name, article_count, last_update) VALUES (?,?,?)', (group, 1, int(time.time())))
@@ -1224,10 +1356,11 @@ class main(threading.Thread):
       last_update = sent
       if parent not in self.regenerate_threads:
         self.regenerate_threads.append(parent)
-      if not sage:
-        result = self.sqlite.execute('SELECT last_update FROM articles WHERE article_uid = ?', (parent,)).fetchone()
-        if result:
-          parent_last_update = result[0]
+      if sage:
+        # sage mark
+        last_update = sent - 10
+      else:
+        if parent_last_update is not None:
           if sent > parent_last_update:
             if self.bump_limit > 0:
               child_count = self.sqlite.execute('SELECT count(article_uid) FROM articles WHERE parent = ? AND parent != article_uid ', (parent,)).fetchone()
@@ -1267,12 +1400,26 @@ class main(threading.Thread):
       self.sqlite.execute('DELETE FROM articles WHERE article_uid=?', (message_id,))
       self.sqlite_conn.commit()
 
-    censored_count = self.sqlite.execute('SELECT count(article_uid) FROM articles WHERE thumblink = "censored" AND imagelink = ?', (image_name,)).fetchone()
-    if censored_count and int(censored_count[0]) > 0:
-      # attach has been censored and is now being restored. Restore all thumblink
-      self.log(self.logger.INFO, 'Attach %s restored. Restore %s thumblinks for this attach' % (image_name, censored_count[0]))
-      self.sqlite.execute('UPDATE articles SET thumblink = ? WHERE imagelink = ?', (thumb_name, image_name))
-      self.sqlite_conn.commit()
+    censored_articles = self.sqlite.execute('SELECT article_uid FROM articles WHERE thumblink = "censored" AND imagelink = ?', (image_name,)).fetchall()
+    censored_count = len(censored_articles)
+    if censored_count > 0:
+      attach_iscensored = False
+      for check_article in censored_articles:
+        if os.path.exists(os.path.join("articles", "censored", check_article[0])):
+          attach_iscensored = True
+          break
+      if attach_iscensored:
+        # attach has been censored and not restored. Censoring and this attach
+        self.log(self.logger.INFO, 'Message %s contain attach censoring in %s message. %s has been continue censoring' % (message_id, check_article[0], image_name))
+        thumb_name = 'censored'
+        censored_attach_path = os.path.join(self.output_directory, 'img', image_name)
+        if os.path.exists(censored_attach_path):
+          os.remove(censored_attach_path)
+      else:
+        # attach has been censored and is now being restored. Restore all thumblink
+        self.log(self.logger.INFO, 'Attach %s restored. Restore %s thumblinks for this attach' % (image_name, censored_count))
+        self.sqlite.execute('UPDATE articles SET thumblink = ? WHERE imagelink = ?', (thumb_name, image_name))
+        self.sqlite_conn.commit()
 
     for group_id in group_ids:
       self.sqlite.execute('INSERT INTO articles(article_uid, group_id, sender, email, subject, sent, parent, message, imagename, imagelink, thumblink, last_update, public_key, received) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)', (message_id, group_id, sender.decode('UTF-8'), email.decode('UTF-8'), subject.decode('UTF-8'), sent, parent, message.decode('UTF-8'), image_name_original.decode('UTF-8'), image_name, thumb_name, last_update, public_key, int(time.time())))
@@ -1286,7 +1433,7 @@ class main(threading.Thread):
     boardlist, full_board_name_unquoted, board_name_unquoted, board_name, board_description = self.generate_board_list(group_id)
 
     threads = int(self.sqlite.execute('SELECT count(group_id) FROM (SELECT group_id FROM articles WHERE group_id = ? AND (parent = "" OR parent = article_uid) LIMIT ?)', (group_id, threads_per_page * pages_per_board)).fetchone()[0])
-    if self.enable_archive and ((int(self.sqlite.execute("SELECT flags FROM groups WHERE group_id=?", (group_id,)).fetchone()[0]) & self.cache['flags']['no-archive']) != self.cache['flags']['no-archive']):
+    if self.enable_archive and ((int(self.sqlite.execute("SELECT flags FROM groups WHERE group_id=?", (group_id,)).fetchone()[0]) & self.cache['flags']['no-archive']) == 0):
       total_thread_count = int(self.sqlite.execute('SELECT count(group_id) FROM (SELECT group_id FROM articles WHERE group_id = ? AND (parent = "" OR parent = article_uid))', (group_id,)).fetchone()[0])
       if total_thread_count > threads:
         generate_archive = True
@@ -1304,13 +1451,12 @@ class main(threading.Thread):
       threads = list()
       self.log(self.logger.INFO, 'generating %s/%s-%s.html' % (self.output_directory, board_name_unquoted, board))
       #TODO: OFFSET decrease performance? This is very bad? Maybe need create index for fix it. If this need fix
-      for root_row in self.sqlite.execute('SELECT article_uid, sender, subject, sent, message, imagename, imagelink, thumblink, public_key, last_update \
+      for root_row in self.sqlite.execute('SELECT article_uid, sender, subject, sent, message, imagename, imagelink, thumblink, public_key, last_update, closed \
           FROM articles WHERE group_id = ? AND (parent = "" OR parent = article_uid) ORDER BY last_update DESC LIMIT ? OFFSET ?', (group_id, threads_per_page, board_offset)).fetchall():
         root_message_id_hash = sha1(root_row[0]).hexdigest()
         threads.append(
           self.t_engine_board_threads.substitute(
-            message_root=self.get_root_post(root_row, group_id, 4, root_message_id_hash),
-            message_childs=''.join(self.get_childs_posts(root_row[0], group_id, root_message_id_hash, root_row[8], 4))
+            self.get_base_thread(root_row, root_message_id_hash, group_id, 4)
           )
         )
       t_engine_mapper_board = dict()
@@ -1332,23 +1478,50 @@ class main(threading.Thread):
     if self.enable_recent:
       self.generate_recent(group_id)
 
-
-  def get_root_post(self, data, group_id, child_view=0, message_id_hash='', single=False):
-    if message_id_hash == '': message_id_hash = sha1(data[0]).hexdigest()
-    return self.t_engine_message_root.substitute(self.get_preparse_post(data, message_id_hash, group_id, 25, 2000, child_view, '', '', single))
-
-  def get_child_post(self, data, message_id_hash, group_id, father, father_pubkey, single):
-    if  data[6] != '':
-      return self.t_engine_message_pic.substitute  (self.get_preparse_post(data, message_id_hash, group_id, 20, 1500, 0, father, father_pubkey, single))
+  def get_base_thread(self, root_row, root_message_id_hash, group_id, child_count=4, single=False):
+    if root_row[10] != 0:
+      isclosed = True
     else:
-      return self.t_engine_message_nopic.substitute(self.get_preparse_post(data, message_id_hash, group_id, 20, 1500, 0, father, father_pubkey, single))
+      isclosed = False
+    if root_message_id_hash == '': root_message_id_hash = sha1(root_row[0]).hexdigest()
+    message_root = self.get_root_post(root_row, group_id, child_count, root_message_id_hash, single, isclosed)
+    if child_count == 0:
+      return {'message_root': message_root}
+    message_childs = ''.join(self.get_childs_posts(root_row[0], group_id, root_message_id_hash, root_row[8], child_count, single, isclosed))
+    return {'message_root': message_root, 'message_childs': message_childs}
 
-  def get_childs_posts(self, parent, group_id, father, father_pubkey, child_count=4, single=False):
+  def get_root_post(self, data, group_id, child_count, message_id_hash, single, isclosed):
+    root_data = dict()
+    root_data['thread_status'] = ''
+    if data[9] > time.time():
+      root_data['thread_status'] += '[&#177;]'
+      root_data['sticky_prefix'] = 'un'
+    else:
+      root_data['sticky_prefix'] = ''
+    if isclosed:
+      root_data['close_action'] = 'open'
+      root_data['thread_status'] += '[closed]'
+      return self.t_engine_message_root_closed.substitute(dict(self.get_preparse_post(data[:9], message_id_hash, group_id, 25, 2000, child_count, '', '', single), **root_data))
+    else:
+      root_data['close_action'] = 'close'
+      return self.t_engine_message_root.substitute(dict(self.get_preparse_post(data[:9], message_id_hash, group_id, 25, 2000, child_count, '', '', single), **root_data))
+
+  def get_childs_posts(self, parent, group_id, father, father_pubkey, child_count, single, isclosed):
     childs = list()
     childs.append('') # FIXME: the fuck is this for?
     for child_row in self.sqlite.execute('SELECT * FROM (SELECT article_uid, sender, subject, sent, message, imagename, imagelink, thumblink, public_key \
         FROM articles WHERE parent = ? AND parent != article_uid AND group_id = ? ORDER BY sent DESC LIMIT ?) ORDER BY sent ASC', (parent, group_id, child_count)).fetchall():
-      childs.append(self.get_child_post(child_row, sha1(child_row[0]).hexdigest(), group_id, father, father_pubkey, single))
+      childs_message = self.get_preparse_post(child_row, sha1(child_row[0]).hexdigest(), group_id, 20, 1500, 0, father, father_pubkey, single)
+      if child_row[6] != '':
+        if isclosed:
+          childs.append(self.t_engine_message_pic_closed.substitute(childs_message))
+        else:
+          childs.append(self.t_engine_message_pic.substitute(childs_message))
+      else:
+        if isclosed:
+          childs.append(self.t_engine_message_nopic_closed.substitute(childs_message))
+        else:
+          childs.append(self.t_engine_message_nopic.substitute(childs_message))
     return childs
 
   def generate_pagelist(self, count, current, board_name_unquoted, archive_link=False):
@@ -1365,8 +1538,9 @@ class main(threading.Thread):
 
   def get_preparse_post(self, data, message_id_hash, group_id, max_row, max_chars, child_view, father='', father_pubkey='', single=False):
     #father initiate parsing child post and contain root_post_hash_id
-        #data = 0 - article_uid 1- sender 2 - subject 3 - sent 4 - message 5 - imagename 6 - imagelink 7 - thumblink -8 public_key for root post add 9-lastupdate
+        #data = 0 - article_uid 1- sender 2 - subject 3 - sent 4 - message 5 - imagename 6 - imagelink 7 - thumblink -8 public_key
     #message_id_hash = sha1(data[0]).hexdigest() #use globally for decrease sha1 root post uid iteration
+    is_playable = False
     parsed_data = dict()
     if data[6] != '':
         imagelink = data[6]
@@ -1380,8 +1554,14 @@ class main(threading.Thread):
           thumblink = self.webm_file
         elif data[7] == 'censored':
           thumblink = self.censored_file
+        elif data[7] == 'archive':
+          thumblink = self.archive_file
+        elif data[7] == 'torrent':
+          thumblink = self.torrent_file
         else:
           thumblink = data[7]
+          if data[6] != data[7] and data[6].rsplit('.', 1)[-1] in ('gif', 'webm', 'mp4'):
+            is_playable = True
     else:
       imagelink = thumblink = self.no_file
     if data[8] != '':
@@ -1421,9 +1601,7 @@ class main(threading.Thread):
           start_link = child_view / 50 * 50 + 50
           if start_link % 100 == 0: start_link += 50
           if child_count - start_link > 0:
-            message += ' ['
-            message += ''.join(' <a href="thread-{0}-{1}.html">{1}</a>'.format(message_id_hash[:10], x) for x in range(start_link, child_count, 100))
-            message += ' ]'
+            message += ' [%s ]' % ''.join(' <a href="thread-{0}-{1}.html">{1}</a>'.format(message_id_hash[:10], x) for x in range(start_link, child_count, 100))
     parsed_data['frontend'] = self.frontend(data[0])
     parsed_data['message'] = message
     parsed_data['articlehash'] = message_id_hash[:10]
@@ -1433,23 +1611,21 @@ class main(threading.Thread):
       parsed_data['subject'] = ''
     else:
       parsed_data['subject'] = data[2]
-    parsed_data['sent'] = datetime.utcfromtimestamp(data[3]).strftime('%d.%m.%Y (%a) %H:%M')
+    parsed_data['sent'] = datetime.utcfromtimestamp(data[3] + self.utc_time_offset).strftime(self.datetime_format)
     parsed_data['imagelink'] = imagelink
     parsed_data['thumblink'] = thumblink
     parsed_data['imagename'] = data[5]
     if father != '':
       parsed_data['parenthash'] = father[:10]
       parsed_data['parenthash_full'] = father
-    else:
-      if data[9] > time.time():
-        parsed_data['sticky_mark'] = ' [x]'
-        parsed_data['sticky_prefix'] = 'un'
-      else:
-        parsed_data['sticky_mark'] = parsed_data['sticky_prefix'] = ''
     if self.fake_id:
       parsed_data['article_id'] = self.message_uid_to_fake_id(data[0])
     else:
       parsed_data['article_id'] = message_id_hash[:10]
+    if is_playable:
+      parsed_data['play_button'] = '<span class="play_button"></span>'
+    else:
+      parsed_data['play_button'] = ''
     return parsed_data
 
   def generate_archive(self, group_id):
@@ -1468,11 +1644,11 @@ class main(threading.Thread):
       board_offset = threads_per_page * (board - 1) + offset
       threads = list()
       self.log(self.logger.INFO, 'generating %s/%s-archive-%s.html' % (self.output_directory, board_name_unquoted, board))
-      for root_row in self.sqlite.execute('SELECT article_uid, sender, subject, sent, message, imagename, imagelink, thumblink, public_key, last_update FROM \
+      for root_row in self.sqlite.execute('SELECT article_uid, sender, subject, sent, message, imagename, imagelink, thumblink, public_key, last_update, closed FROM \
         articles WHERE group_id = ? AND (parent = "" OR parent = article_uid) ORDER BY last_update DESC LIMIT ? OFFSET ?', (group_id, threads_per_page, board_offset)).fetchall():
         threads.append(
           self.t_engine_archive_threads.substitute(
-            message_root=self.get_root_post(root_row, group_id)
+            self.get_base_thread(root_row, '', group_id, child_count=0)
           )
         )
       t_engine_mapper_board = dict()
@@ -1494,13 +1670,12 @@ class main(threading.Thread):
     timestamp = int(time.time()) - 3600*24
     threads = list()
     self.log(self.logger.INFO, 'generating %s/%s-recent.html' % (self.output_directory, board_name_unquoted))
-    for root_row in self.sqlite.execute('SELECT article_uid, sender, subject, sent, message, imagename, imagelink, thumblink, public_key, last_update \
+    for root_row in self.sqlite.execute('SELECT article_uid, sender, subject, sent, message, imagename, imagelink, thumblink, public_key, last_update, closed \
         FROM articles WHERE group_id = ? AND (parent = "" OR parent = article_uid) AND last_update > ? ORDER BY last_update DESC', (group_id, timestamp)).fetchall():
       root_message_id_hash = sha1(root_row[0]).hexdigest()
       threads.append(
         self.t_engine_board_threads.substitute(
-          message_root=self.get_root_post(root_row, group_id, 4, root_message_id_hash),
-          message_childs=''.join(self.get_childs_posts(root_row[0], group_id, root_message_id_hash, root_row[8], 4))
+          self.get_base_thread(root_row, root_message_id_hash, group_id, 4)
         )
       )
     t_engine_mapper_board_recent = dict()
@@ -1524,8 +1699,16 @@ class main(threading.Thread):
       frontend = 'nntp'
     return frontend
 
-  def generate_thread(self, root_uid, thread_page=0):
-    root_row = self.sqlite.execute('SELECT article_uid, sender, subject, sent, message, imagename, imagelink, thumblink, public_key, last_update, group_id \
+  def delete_thread_page(self, thread_path):
+    if os.path.isfile(thread_path):
+      self.log(self.logger.INFO, 'this page belongs to some blocked board. deleting %s.' % thread_path)
+      try:
+        os.unlink(thread_path)
+      except Exception as e:
+        self.log(self.logger.ERROR, 'could not delete %s: %s' % (thread_path, e))
+
+  def generate_thread(self, root_uid):
+    root_row = self.sqlite.execute('SELECT article_uid, sender, subject, sent, message, imagename, imagelink, thumblink, public_key, last_update, closed, group_id \
         FROM articles WHERE article_uid = ?', (root_uid,)).fetchone()
     if not root_row:
       # FIXME: create temporary root post here? this will never get called on startup because it checks for root posts only
@@ -1533,39 +1716,32 @@ class main(threading.Thread):
       #root_row = (root_uid, 'none', 'root post not yet available', 0, 'root post not yet available', '', '', 0, '')
       self.log(self.logger.INFO, 'root post not yet available: %s, should create temporary root post here' % root_uid)
       return
+    group_id = root_row[-1]
     root_message_id_hash = sha1(root_uid).hexdigest()#self.sqlite_hashes.execute('SELECT message_id_hash from article_hashes WHERE message_id = ?', (root_row[0],)).fetchone()
     # FIXME: benchmark sha1() vs hasher_db_query
-    if thread_page > 0:
-      thread_postfix = '-%s' % (thread_page * 50)
-      max_child_view = thread_page * 50
+    child_count = int(self.sqlite.execute('SELECT count(article_uid) FROM articles WHERE parent = ? AND parent != article_uid AND group_id = ?', (root_row[0], group_id)).fetchone()[0])
+    isblocked_board = self.check_board_flags(group_id, 'blocked')
+    thread_path = os.path.join(self.output_directory, 'thread-%s.html' % (root_message_id_hash[:10],))
+    if isblocked_board:
+      self.delete_thread_page(thread_path)
     else:
-      thread_postfix = ''
-      max_child_view = 10000
-    if self.check_board_flags(root_row[10], 'blocked'):
-      path = os.path.join(self.output_directory, 'thread-%s%s.html' % (root_message_id_hash[:10], thread_postfix))
-      if os.path.isfile(path):
-        self.log(self.logger.INFO, 'this thread belongs to some blocked board. deleting %s.' % path)
-        try:
-          os.unlink(path)
-        except Exception as e:
-          self.log(self.logger.ERROR, 'could not delete %s: %s' % (path, e))
-      return
-    if thread_page == 0:
-      child_count = int(self.sqlite.execute('SELECT count(article_uid) FROM articles WHERE parent = ? AND parent != article_uid AND group_id = ?', (root_row[0], root_row[10])).fetchone()[0])
-      if child_count > 80:
-        thread_page = child_count / 50
-    else:
-      thread_page -= 1
-    if thread_page > 0 and thread_page % 2 == 0:
-      thread_page -= 1
-    self.log(self.logger.INFO, 'generating %s/thread-%s%s.html' % (self.output_directory, root_message_id_hash[:10], thread_postfix))
-    boardlist, full_board_name_unquoted, board_name_unquoted, board_name, board_description = self.generate_board_list(root_row[10], True)
+      self.create_thread_page(root_row[:-1], thread_path, 10000, root_message_id_hash, group_id)
+    if child_count > 80:
+      for max_child_view in range(50, child_count, 100):
+        thread_path = os.path.join(self.output_directory, 'thread-%s-%s.html' % (root_message_id_hash[:10], max_child_view))
+        if isblocked_board:
+          self.delete_thread_page(thread_path)
+        else:
+          self.create_thread_page(root_row[:-1], thread_path, max_child_view, root_message_id_hash, group_id)
+
+  def create_thread_page(self, root_row, thread_path, max_child_view, root_message_id_hash, group_id):
+    self.log(self.logger.INFO, 'generating %s' % (thread_path,))
+    boardlist, full_board_name_unquoted, board_name_unquoted, board_name, board_description = self.generate_board_list(group_id, True)
 
     threads = list()
     threads.append(
       self.t_engine_board_threads.substitute(
-        message_root=self.get_root_post(root_row[:-1], root_row[10], max_child_view, root_message_id_hash, True),
-        message_childs=''.join(self.get_childs_posts(root_row[0], root_row[10], root_message_id_hash, root_row[8], max_child_view, True))
+        self.get_base_thread(root_row, root_message_id_hash, group_id, max_child_view, True)
       )
     )
     t_engine_mappings_thread_single = dict()
@@ -1578,10 +1754,12 @@ class main(threading.Thread):
     t_engine_mappings_thread_single['thread_single'] = ''.join(threads)
     t_engine_mappings_thread_single['board_description'] = board_description
 
-    f = codecs.open(os.path.join(self.output_directory, 'thread-{0}{1}.html'.format(root_message_id_hash[:10], thread_postfix)), 'w', 'UTF-8')
-    f.write(self.t_engine_thread_single.substitute(t_engine_mappings_thread_single))
+    f = codecs.open(thread_path, 'w', 'UTF-8')
+    if root_row[10] == 0:
+      f.write(self.t_engine_thread_single.substitute(t_engine_mappings_thread_single))
+    else:
+      f.write(self.t_engine_thread_single_closed.substitute(t_engine_mappings_thread_single))
     f.close()
-    if thread_page > 0: self.generate_thread(root_uid, thread_page)
 
   def generate_index(self):
     self.log(self.logger.INFO, 'generating %s/index.html' % self.output_directory)
@@ -1595,15 +1773,16 @@ class main(threading.Thread):
     t_engine_mappings_menu_entry = dict()
     menu_entries = list()
     menu_entries.append('<li><a href="/" target="_top">Main</a></li><br />\n')
+    exclude_flags = self.cache['flags']['hidden'] | self.cache['flags']['blocked']
     for group_row in self.sqlite.execute('SELECT group_name, group_id, ph_name, link FROM groups WHERE \
-      blocked = 0 AND ((cast(groups.flags as integer) & ?) != ?) ORDER by group_name ASC', (self.cache['flags']['hidden'], self.cache['flags']['hidden'])).fetchall():
+      (cast(groups.flags as integer) & ?) = 0 ORDER by group_name ASC', (exclude_flags,)).fetchall():
       group_name = group_row[0].split('.', 1)[1].replace('"', '').replace('/', '')
       if self.use_unsecure_aliases and group_row[3] != '':
         group_link = group_row[3]
       else:
         group_link = '%s-1.html' % group_name
       if group_row[2] != '':
-        group_name_encoded = self.basicHTMLencode(group_row[2].replace('"', '').replace('/', ''))
+        group_name_encoded = group_row[2]
       else:
         group_name_encoded = self.basicHTMLencode(group_row[0].split('.', 1)[1].replace('"', '').replace('/', ''))
       t_engine_mappings_menu_entry['group_link'] = group_link
@@ -1623,7 +1802,7 @@ class main(threading.Thread):
     try:
       flags = int(self.sqlite.execute('SELECT flags FROM groups WHERE group_id = ?', (group_id,)).fetchone()[0])
       for flag_name in args:
-        if flags & self.cache['flags'][flag_name] != self.cache['flags'][flag_name]:
+        if flags & self.cache['flags'][flag_name] == 0:
           return False
     except Exception as e:
       self.log(self.logger.WARNING, "error board flags check: %s" % e)
@@ -1634,7 +1813,7 @@ class main(threading.Thread):
     try:
       flags = int(self.censordb.execute('SELECT flags from keys WHERE key=?', (full_pubkey_hex,)).fetchone()[0])
       for flag_name in args:
-        if flags & self.cache['moder_flags'][flag_name] != self.cache['moder_flags'][flag_name]:
+        if flags & self.cache['moder_flags'][flag_name] == 0:
           return False
     except:
       return False
@@ -1647,14 +1826,15 @@ class main(threading.Thread):
       self.cache['moder_flags'][row[0]] = row[1]
 
   def generate_board_list(self, group_id='', selflink=False):
-    full_board_name_unquoted = full_board_name = board_name_unquoted = board_name = board_description = ''
+    full_board_name_unquoted = board_name_unquoted = board_name = board_description = ''
     boardlist = list()
     # FIXME: cache this shit somewhere
+    exclude_flags = self.cache['flags']['hidden'] | self.cache['flags']['blocked']
     for group_row in self.sqlite.execute('SELECT group_name, group_id, ph_name, ph_shortname, link, description FROM groups \
-      WHERE blocked = 0 AND ((cast(flags as integer) & ?) != ? OR group_id = ?) ORDER by group_name ASC', (self.cache['flags']['hidden'], self.cache['flags']['hidden'], group_id)).fetchall():
+      WHERE ((cast(flags as integer) & ?) = 0 OR group_id = ?) ORDER by group_name ASC', (exclude_flags, group_id)).fetchall():
       current_group_name = group_row[0].split('.', 1)[1].replace('"', '').replace('/', '')
       if group_row[3] != '':
-        current_group_name_encoded = self.basicHTMLencode(group_row[3])
+        current_group_name_encoded = group_row[3]
       else:
         current_group_name_encoded = self.basicHTMLencode(current_group_name)
       if self.use_unsecure_aliases and group_row[4] != '':
@@ -1662,16 +1842,16 @@ class main(threading.Thread):
       else:
         board_link = '%s-1.html' % current_group_name
       if group_row[1] != group_id or selflink:
-        boardlist.append(u' <a href="{0}">{1}</a> /'.format(board_link, current_group_name_encoded))
+        boardlist.append(u' <a href="{0}">{1}</a>&nbsp;/'.format(board_link, current_group_name_encoded))
       else:
-        boardlist.append(' ' + current_group_name_encoded + ' /')
+        boardlist.append(' ' + current_group_name_encoded + '&nbsp;/')
       if group_row[1] == group_id:
         full_board_name_unquoted = group_row[0].replace('"', '').replace('/', '')
         full_board_name = self.basicHTMLencode(full_board_name_unquoted)
         board_name_unquoted = full_board_name_unquoted.split('.', 1)[1]
         board_description = group_row[5]
         if group_row[2] != '':
-          board_name = self.basicHTMLencode(group_row[2])
+          board_name = group_row[2]
         else:
           board_name = full_board_name.split('.', 1)[1]
     if not self.use_unsecure_aliases:
@@ -1688,7 +1868,7 @@ class main(threading.Thread):
     t_engine_mappings_overview['boardlist'] = ''.join(self.generate_board_list())
     news_board_link = 'overview.html'
     news_board = self.sqlite.execute('SELECT group_id, group_name FROM groups WHERE \
-        (cast(flags as integer) & ?) == ?', (self.cache['flags']['news'], self.cache['flags']['news'])).fetchone()
+        (cast(flags as integer) & ?) != 0 AND (cast(flags as integer) & ?) = 0', (self.cache['flags']['news'], self.cache['flags']['blocked'])).fetchone()
     if news_board:
       news_board_link = '{0}-1.html'.format(news_board[1].replace('"', '').replace('/', '').split('.', 1)[1])
       row = self.sqlite.execute('SELECT subject, message, sent, public_key, article_uid, sender FROM articles \
@@ -1718,7 +1898,7 @@ class main(threading.Thread):
         t_engine_mappings_overview['subject'] = 'Breaking news'
       else:
         t_engine_mappings_overview['subject'] = row[0]
-      t_engine_mappings_overview['sent'] = datetime.utcfromtimestamp(row[2]).strftime('%d.%m.%Y (%a) %H:%M')
+      t_engine_mappings_overview['sent'] = datetime.utcfromtimestamp(row[2] + self.utc_time_offset).strftime(self.datetime_format)
       if not row[3] == '':
           t_engine_mappings_overview['pubkey_short'] = self.generate_pubkey_short_utf_8(row[3])
           moder_name = self.pubkey_to_name(row[3])
@@ -1737,9 +1917,10 @@ class main(threading.Thread):
     stats = list()
     bar_length = 20
     days = 30
+    utc_offset = str(self.utc_time_offset) + ' seconds'
     totals = int(self.sqlite.execute('SELECT count(1) FROM articles WHERE sent > strftime("%s", "now", "-' + str(days) + ' days")').fetchone()[0])
     stats.append(self.template_stats_usage_row.replace('%%postcount%%', str(totals)).replace('%%date%%', 'all posts').replace('%%weekday%%', '').replace('%%bar%%', 'since %s days' % days))
-    for row in self.sqlite.execute('SELECT count(1) as counter, strftime("%Y-%m-%d",  sent, "unixepoch") as day, strftime("%w", sent, "unixepoch") as weekday FROM articles WHERE sent > strftime("%s", "now", "-' + str(days) + ' days") GROUP BY day ORDER BY day DESC').fetchall():
+    for row in self.sqlite.execute('SELECT count(1) as counter, strftime("%Y-%m-%d", sent, "unixepoch", "' + utc_offset + '") as day, strftime("%w", sent, "unixepoch", "' + utc_offset + '") as weekday FROM articles WHERE sent > strftime("%s", "now", "-' + str(days) + ' days") GROUP BY day ORDER BY day DESC').fetchall():
       if row[0] > max_post:
         max_post = row[0]
       stats.append((row[0], row[1], weekdays[int(row[2])]))
@@ -1754,13 +1935,14 @@ class main(threading.Thread):
     del stats[:]
 
     postcount = 50
+    exclude_flags = self.cache['flags']['hidden'] | self.cache['flags']['no-overview'] | self.cache['flags']['blocked']
     for row in self.sqlite.execute('SELECT sent, group_name, sender, subject, article_uid, parent, ph_name FROM articles, groups WHERE \
-      ((cast(groups.flags as integer) & ?) != ?) AND ((cast(groups.flags as integer) & ?) != ?) AND groups.blocked = 0 AND articles.group_id = groups.group_id AND \
+      (cast(groups.flags as integer) & ?) = 0 AND articles.group_id = groups.group_id AND articles.last_update >= articles.sent AND \
       (articles.parent = "" OR articles.parent = articles.article_uid OR articles.parent IN (SELECT article_uid FROM articles)) \
-      ORDER BY sent DESC LIMIT ?', (self.cache['flags']['hidden'], self.cache['flags']['hidden'], self.cache['flags']['no-overview'], self.cache['flags']['no-overview'], str(postcount))).fetchall():
-      sent = datetime.utcfromtimestamp(row[0]).strftime('%d.%m.%Y (%a) %H:%M UTC')
+      ORDER BY sent DESC LIMIT ?', (exclude_flags, str(postcount))).fetchall():
+      sent = datetime.utcfromtimestamp(row[0] + self.utc_time_offset).strftime(self.datetime_format)
       if row[6] != '':
-        board = self.basicHTMLencode(row[6].replace('"', ''))
+        board = row[6]
       else:
         board = self.basicHTMLencode(row[1].replace('"', '')).split('.', 1)[1]
       author = row[2][:12]
@@ -1784,11 +1966,12 @@ class main(threading.Thread):
     t_engine_mappings_overview['latest_posts'] = overview_latest_posts
     del stats[:]
 
+    exclude_flags = self.cache['flags']['hidden'] | self.cache['flags']['blocked']
     for row in self.sqlite.execute('SELECT count(1) as counter, group_name, ph_name FROM articles, groups WHERE \
-      ((cast(groups.flags as integer) & ?) != ?) and groups.blocked = 0 AND articles.group_id = groups.group_id GROUP BY \
-      articles.group_id ORDER BY counter DESC', (self.cache['flags']['hidden'], self.cache['flags']['hidden'])).fetchall():
+      (cast(groups.flags as integer) & ?) = 0 AND articles.group_id = groups.group_id GROUP BY \
+      articles.group_id ORDER BY counter DESC', (exclude_flags,)).fetchall():
       if row[2] != '':
-        board = self.basicHTMLencode(row[2].replace('"', ''))
+        board = row[2]
       else:
         board = self.basicHTMLencode(row[1].replace('"', ''))
       stats.append(self.template_stats_boards_row.replace('%%postcount%%', str(row[0])).replace('%%board%%', board))

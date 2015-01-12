@@ -56,17 +56,24 @@ class main(threading.Thread):
     if 'sync_on_startup' in args:
       if args['sync_on_startup'].lower() == 'true':
         self.sync_on_startup = True
+    self.ignore_old = 14
+    if 'ignore_old' in args:
+      try:    self.ignore_old = int(args['ignore_old'])
+      except: pass
+    if self.ignore_old < 0: self.ignore_old = 0
+    self.ignore_old *= 3600 * 24
     self.SRNd = args['SRNd']
     self.log(self.logger.DEBUG, 'initializing censor_httpd..')
     args['censor'] = self
     self.httpd = censor_httpd.censor_httpd("censor_httpd", self.logger, args)
-    self.db_version = 5
+    self.db_version = 7
     self.all_flags = "1023"
     self.queue = Queue.Queue()
     self.command_mapper = dict()
     self.command_mapper['delete'] = self.handle_delete
     self.command_mapper['overchan-delete-attachment'] = self.handle_delete
     self.command_mapper['overchan-sticky'] = self.handle_sticky
+    self.command_mapper['overchan-close'] = self.handle_close
     self.command_mapper['srnd-acl-mod'] = self.handle_srnd_acl_mod
     self.command_mapper['overchan-board-add'] = self.handle_board_add
     self.command_mapper['overchan-board-del'] = self.handle_board_del
@@ -151,6 +158,19 @@ class main(threading.Thread):
       self.censordb.execute('UPDATE config SET value = "5" WHERE key = "db_version"')
       self.sqlite_censor_conn.commit()
       current_version = 5
+    if current_version == 5:
+      self.log(self.logger.INFO, "updating db from version %i to version %i" % (current_version, 6))
+      self.censordb.execute('DELETE FROM commands WHERE command = "overchan-news-del"')
+      self.censordb.execute('INSERT INTO commands (command, flag) VALUES (?,?)', ("overchan-close", str(0b10000)))
+      self.censordb.execute('UPDATE config SET value = "6" WHERE key = "db_version"')
+      self.sqlite_censor_conn.commit()
+      current_version = 6
+    if current_version == 6:
+      self.log(self.logger.INFO, "updating db from version %i to version %i" % (current_version, 7))
+      self.censordb.execute('ALTER TABLE signature_cache ADD COLUMN received INTEGER DEFAULT 0')
+      self.censordb.execute('UPDATE config SET value = "7" WHERE key = "db_version"')
+      self.sqlite_censor_conn.commit()
+      current_version = 7
 
   def run(self):
     #if self.should_terminate:
@@ -200,6 +220,12 @@ class main(threading.Thread):
     self.sqlite_censor_conn.close()
     self.sqlite_dropper_conn.close()
     self.log(self.logger.INFO, 'bye')
+
+  def basicHTMLencode(self, inputString):
+    html_escape_table = (("&", "&amp;"), ('"', "&quot;"), ("'", "&apos;"), (">", "&gt;"), ("<", "&lt;"),)
+    for x in html_escape_table:
+      inputString = inputString.replace(x[0], x[1])
+    return inputString.strip(' \t\n\r')
     
   def allowed(self, key_id, command="all", board=None):
     if key_id in self.allowed_cache:
@@ -213,9 +239,7 @@ class main(threading.Thread):
       #self.log("should check flags for key_id %i" % key_id, 1)
       flags_available = int(self.censordb.execute("SELECT flags FROM keys WHERE id=?", (key_id,)).fetchone()[0])
       if command == "all":
-        flag_required = 0
-        for row in self.censordb.execute("SELECT flag FROM flags").fetchall():
-          flag_required |= int(row[0])
+        flag_required = self.all_flags
       else:
         flag_required = int(self.censordb.execute("SELECT flag FROM commands WHERE command=?", (command,)).fetchone()[0])
         self.allowed_cache[key_id][command] = (flags_available & flag_required) == flag_required
@@ -227,13 +251,23 @@ class main(threading.Thread):
     
   def process_article(self, message_id):
     self.log(self.logger.DEBUG, "processing %s.." % message_id)
+    current_time = int(time.time())
     try:
-      valid = int(self.censordb.execute("SELECT valid FROM signature_cache WHERE message_uid = ?", (message_id,)).fetchone()[0])
+      signature_row = self.censordb.execute("SELECT valid, received FROM signature_cache WHERE message_uid = ?", (message_id,)).fetchone()
+      valid, received = int(signature_row[0]), int(signature_row[1])
       if not valid:
         return False
       f = open(os.path.join("articles", message_id), 'r')
       try:
-        self.parse_article(f, message_id)
+        if received != 0:
+          if self.ignore_old > 0 and current_time - received > self.ignore_old:
+            # ignore old article
+            f.close()
+            return True
+          else:
+            self.parse_article(f, message_id)
+        else:
+          self.parse_article(f, message_id, None, True)
       except Exception as e:
         self.log(self.logger.WARNING, 'something went wrong while parsing %s: %s' % (message_id, e))
         f.close()
@@ -264,7 +298,7 @@ class main(threading.Thread):
       self.log(self.logger.DEBUG, "found valid signature: %s" % message_id)
       self.log(self.logger.VERBOSE, "seeking from %i back to %i" % (f.tell(), bodyoffset))
       f.seek(bodyoffset)
-      self.censordb.execute('INSERT INTO signature_cache (message_uid, valid) VALUES (?, ?)', (message_id, 1))
+      self.censordb.execute('INSERT INTO signature_cache (message_uid, valid, received) VALUES (?, ?, ?)', (message_id, 1, current_time))
       self.sqlite_censor_conn.commit()
     except Exception as e:
       if self.loglevel < self.logger.INFO:
@@ -272,7 +306,7 @@ class main(threading.Thread):
       else:
         self.log(self.logger.INFO, "could not verify signature: %s" % message_id)
       f.close()
-      self.censordb.execute('INSERT INTO signature_cache (message_uid, valid) VALUES (?, ?)', (message_id, 0))
+      self.censordb.execute('INSERT INTO signature_cache (message_uid, valid, received) VALUES (?, ?, ?)', (message_id, 0, current_time))
       self.sqlite_censor_conn.commit()
       return False
     self.parse_article(f, message_id, self.get_key_id(public_key))
@@ -293,7 +327,7 @@ class main(threading.Thread):
     self.key_cache[public_key] = key_id
     return key_id
 
-  def parse_article(self, article_fd, message_id, key_id=None):
+  def parse_article(self, article_fd, message_id, key_id=None, fix_received=False):
     #counter = 0
     #time_key_cache = float(0)
     #time_allowed_cache = float(0)
@@ -305,13 +339,15 @@ class main(threading.Thread):
     #time_total = time.time()
     self.log(self.logger.DEBUG, "parsing %s.." % message_id)
     if key_id == None:
+      public_key = ''
       for line in article_fd:
         if len(line) == 1:
           break
         elif line.lower().startswith('x-pubkey-ed25519:'):
           public_key = line.lower()[:-1].split(' ', 1)[1]
       #timestamp_start = time.time()
-      key_id = self.get_key_id(public_key)
+      if public_key != '':
+        key_id = self.get_key_id(public_key)
       #time_key_cache += time.time() - timestamp_start
     sent = None
     for line in article_fd:
@@ -329,7 +365,12 @@ class main(threading.Thread):
     if not sent:
       self.log(self.logger.INFO, "received article does not contain a date: header. using current timestamp instead")
       sent = int(time.time())
-    
+    if fix_received:
+      try:
+        self.censordb.execute('UPDATE signature_cache SET received = ? WHERE message_uid = ?', (sent, message_id))
+        self.sqlite_censor_conn.commit()
+      except:
+        pass
     #self.handle_line(line[:-1], key_id, sent)
     #self.log("parsing %s, starting to parse commands" % message_id, 4)
     redistributors = dict()
@@ -382,7 +423,7 @@ class main(threading.Thread):
         self.command_cache[command] = command_id
       try:
         #timestamp_start = time.time()
-        self.censordb.execute('INSERT INTO log (accepted, command_id, data, key_id, reason_id, comment, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)', (accepted, command_id, data, key_id, reason_id, comment, int(time.time())))
+        self.censordb.execute('INSERT INTO log (accepted, command_id, data, key_id, reason_id, comment, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)', (accepted, command_id, data, key_id, reason_id, self.basicHTMLencode(comment), int(time.time())))
         self.sqlite_censor_conn.commit()
         #time_sql += time.time() - timestamp_start
       except Exception as e:
@@ -457,7 +498,7 @@ class main(threading.Thread):
       command_id = int(self.censordb.execute("SELECT id FROM commands WHERE command = ?", (command,)).fetchone()[0])
       self.command_cache[command] = command_id
     try:
-      self.censordb.execute('INSERT INTO log (accepted, command_id, data, key_id, reason_id, comment, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)', (accepted, command_id, data, key_id, reason_id, comment, int(time.time())))
+      self.censordb.execute('INSERT INTO log (accepted, command_id, data, key_id, reason_id, comment, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)', (accepted, command_id, data, key_id, reason_id, self.basicHTMLencode(comment), int(time.time())))
       self.sqlite_censor_conn.commit()
     except Exception as e:
       pass
@@ -466,11 +507,11 @@ class main(threading.Thread):
     self.log(self.logger.DEBUG, "handle acl_mod: %s" % line)
     flags = '0'
     local_nick = ''
+    row = line.split(" ", 3)[1:]
+    key = row[0]
+    if len(row) > 1: flags = row[1]
+    if len(row) > 2: local_nick = row[2]
     try:
-      row = line.split(" ", 3)[1:]
-      key = row[0]
-      if len(row) > 1: flags = row[1]
-      if len(row) > 2: local_nick = row[2]
       if int(self.censordb.execute('SELECT count(key) FROM keys WHERE key = ?', (key,)).fetchone()[0]) == 0:
         self.log(self.logger.DEBUG, "handle acl_mod: new key")
         self.censordb.execute("INSERT INTO keys (key, local_name, flags) VALUES (?, ?, ?)", (key, local_nick, flags))
@@ -496,37 +537,38 @@ class main(threading.Thread):
           self.log(self.logger.DEBUG, "article is a root post, deleting whole thread")
           for row in self.overchandb.execute('SELECT article_uid from articles where parent = ?', (message_id,)).fetchall():
             self.delete_article(row[0])
-    return self.delete_article(message_id)
+    return self.delete_article(message_id, command)
 
-  def delete_article(self, message_id):
+  def delete_article(self, message_id, command=''):
     groups = list()
     group_rows = list()
-    #timestamp_start = time.time()
+    article_path = os.path.join('articles', message_id)
+    censore_path = os.path.join('articles', 'censored', message_id)
     for row in self.dropperdb.execute('SELECT group_name, article_id from articles, groups WHERE message_id=? and groups.group_id = articles.group_id', (message_id,)).fetchall():
       group_rows.append((row[0], row[1]))
       groups.append(row[0])
-    #time_sql += time.time() - timestamp_start
-    #timestamp_start = time.time()
-    if os.path.exists(os.path.join('articles', 'censored', message_id)):
-      #time_fs += time.time() - timestamp_start
+    if os.path.exists(censore_path):
       self.log(self.logger.DEBUG, "already deleted, still handing over to redistribute further")
-    elif os.path.exists(os.path.join("articles", message_id)):
-      #time_fs += time.time() - timestamp_start
-      self.log(self.logger.DEBUG, "moving %s to articles/censored/" % message_id)
-      os.rename(os.path.join("articles", message_id), os.path.join("articles", "censored", message_id))
-      self.log(self.logger.DEBUG, "deleting groups/%s/%i" % (row[0], row[1]))
-      for group in group_rows:
-        try:
-          # FIXME race condition with dropper if currently processing this very article
-          os.unlink(os.path.join("groups", str(group[0]), str(group[1])))
-        except Exception as e:
-          self.log(self.logger.WARNING, "could not delete %s: %s" % (os.path.join("groups", str(group[0]), str(group[1])), e))
-    elif not os.path.exists(os.path.join('articles', 'censored', message_id)):
-      #time_fs += time.time() - timestamp_start
-      f = open(os.path.join('articles', 'censored', message_id), 'w')
+    elif os.path.exists(article_path):
+      if command == 'overchan-delete-attachment':
+        i = open(article_path, 'r')
+        o = open(censore_path, 'w')
+        o.write(i.read())
+        i.close()
+        o.close()
+      else:
+        self.log(self.logger.DEBUG, "moving %s to articles/censored/" % message_id)
+        os.rename(article_path, censore_path)
+        for group in group_rows:
+          self.log(self.logger.DEBUG, "deleting groups/%s/%i" % (group[0], group[1]))
+          try:
+            # FIXME race condition with dropper if currently processing this very article
+            os.unlink(os.path.join("groups", str(group[0]), str(group[1])))
+          except Exception as e:
+            self.log(self.logger.WARNING, "could not delete %s: %s" % (os.path.join("groups", str(group[0]), str(group[1])), e))
+    elif not os.path.exists(censore_path):
+      f = open(censore_path, 'w')
       f.close()
-    #if debug:
-    #  return (message_id, groups, time_fs, time_sql)
     return (message_id, groups)
 
   def handle_board_add(self, line):
@@ -545,6 +587,13 @@ class main(threading.Thread):
     return (group_name, (group_name,))
 
   def handle_sticky(self, line):
+    message_id = line.split(' ')[1]
+    groups = list()
+    for row in self.overchandb.execute('SELECT groups.group_name from articles, groups WHERE articles.article_uid = ? and groups.group_id = articles.group_id', (message_id,)).fetchall():
+      groups.append(row[0])
+    return (message_id, groups)
+
+  def handle_close(self, line):
     message_id = line.split(' ')[1]
     groups = list()
     for row in self.overchandb.execute('SELECT groups.group_name from articles, groups WHERE articles.article_uid = ? and groups.group_id = articles.group_id', (message_id,)).fetchall():

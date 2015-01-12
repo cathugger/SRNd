@@ -148,6 +148,12 @@ class censor(BaseHTTPRequestHandler):
     self.end_headers()
     self.wfile.write('nope')
 
+  def basicHTMLencode(self, inputString):
+    html_escape_table = (("&", "&amp;"), ('"', "&quot;"), ("'", "&apos;"), (">", "&gt;"), ("<", "&lt;"),)
+    for x in html_escape_table:
+      inputString = inputString.replace(x[0], x[1])
+    return inputString.strip(' \t\n\r')
+
   def handle_update_key(self, key):
     post_vars = FieldStorage(
       fp=self.rfile,
@@ -158,9 +164,8 @@ class censor(BaseHTTPRequestHandler):
       }
     )
     flags = post_vars.getlist("flags")
-    result = 0
     if 'local_nick' in post_vars:
-      local_nick = post_vars['local_nick'].value.replace("<", "&lt;").replace(">", "&gt;").replace("#", "").strip()
+      local_nick = self.basicHTMLencode(post_vars['local_nick'].value.replace("#", ""))
     else:
       local_nick = ''
     result = sum([int(flag) for flag in flags])
@@ -186,7 +191,6 @@ class censor(BaseHTTPRequestHandler):
       }
     )
     flags = post_vars.getlist("flags")
-    result = 0
     comment = ''
     aliases = ('ph_name', 'ph_shortname', 'link', 'tag', 'description',)
     if 'board_name' in post_vars:
@@ -306,7 +310,6 @@ class censor(BaseHTTPRequestHandler):
       row = (key, '', 0, 0)
 
     flags = self.origin.sqlite_censor.execute("SELECT command, flag FROM commands").fetchall()
-    cur_template = self.origin.template_log_flagnames
     flagset_template = self.origin.template_modify_key_flagset
     out = self.origin.template_modify_key.replace("%%key%%", row[0]).replace("%%nick%%", row[1])
     flaglist = list()
@@ -347,7 +350,6 @@ class censor(BaseHTTPRequestHandler):
       return 'Board not found'
 
     flags = self.origin.sqlite_overchan.execute("SELECT flag_name, flag FROM flags").fetchall()
-    cur_template = self.origin.template_log_flagnames
     flagset_template = self.origin.template_modify_key_flagset
     form_data = dict()
     flaglist = list()
@@ -431,7 +433,7 @@ class censor(BaseHTTPRequestHandler):
 
   def hidden_line(self, line, max_len = 60):
     line = line.replace("<", "&lt;").replace(">", "&gt;").strip()
-    if max_len > 16 and len(line) > max_len:
+    if 16 < max_len < len(line):
       return '%s[..]%s' % (line[:6], line[-6:])
     else:
       return line
@@ -469,7 +471,7 @@ class censor(BaseHTTPRequestHandler):
         cur_template = cur_template.replace("%%postid%%", data)
         cur_template = cur_template.replace("%%restore_link%%", '<a href="settings?name=%s">modify board</a>' % (row[3]))
         cur_template = cur_template.replace("%%delete_link%%", '')
-      elif row[2] not in ('delete', 'overchan-delete-attachment', 'overchan-sticky'):
+      elif row[2] not in ('delete', 'overchan-delete-attachment', 'overchan-sticky', 'overchan-close'):
         cur_template = cur_template.replace("%%postid%%", data)
         cur_template = cur_template.replace("%%restore_link%%", '').replace("%%delete_link%%", '')
       else:
@@ -563,33 +565,38 @@ class censor(BaseHTTPRequestHandler):
     
   def send_messagelog(self, page=0):
     table = list()
-    #out = u'<html><head><meta http-equiv="content-type" content="text/html; charset=utf-8"><link type="text/css" href="/styles.css" rel="stylesheet"><style type="text/css">table { font-size: 9pt;} td { vertical-align: top; } .dontwrap { white-space: nowrap; } body { margin: 10px; margin-top: 20px; font-family: monospace; font-size: 9pt; } .navigation { background: #101010; padding-top: 19px; position: fixed; top: 0; width: 100%; }</style></head><body>%%navigation%%%%content%%</body></html>'
-    out = u'<html><head><meta http-equiv="content-type" content="text/html; charset=utf-8"><title>messagelog</title><link type="text/css" href="/styles.css" rel="stylesheet"></head><body class="mod">%%navigation%%%%content%%</body></html>'
-    out = out.replace("%%navigation%%", ''.join(self.__get_navigation('message_log'))) 
-    #for row in self.origin.sqlite_overchan.execute('SELECT article_uid, parent, sender, subject, message, parent, public_key, sent, group_name FROM articles, groups WHERE groups.group_id = articles.group_id ORDER BY articles.sent DESC LIMIT ?,50', (50*page,)).fetchall():
+    message_log = dict()
+    message_log['navigation'] = ''.join(self.__get_navigation('message_log'))
     for row in self.origin.sqlite_overchan.execute('SELECT article_uid, parent, sender, subject, message, parent, public_key, sent, group_name FROM articles, groups WHERE groups.group_id = articles.group_id ORDER BY articles.sent DESC LIMIT ?,100', (0,)).fetchall():
+      message_log_row = dict()
+      articlehash_full = sha1(row[0]).hexdigest()
       if row[1] == '' or row[1] == row[0]:
         # parent
-        link = "thread-%s.html" % sha1(row[0]).hexdigest()[:10]
+        message_log_row['link'] = "thread-%s.html" % articlehash_full[:10]
+        message_log_row['delete_taget'] = 'thread'
       else:
-        link = "thread-%s.html#%s" % (sha1(row[1]).hexdigest()[:10], sha1(row[0]).hexdigest()[:10])
-      sender = row[2]
+        message_log_row['link'] = "thread-%s.html#%s" % (sha1(row[1]).hexdigest()[:10], articlehash_full[:10])
+        message_log_row['delete_taget'] = 'post'
       subject = row[3]
       message = row[4]
-      if len(sender) > 15:
-        sender = sender[:15]+ ' [..]'
-      if len(subject) > 45:
-        subject = subject[:45] + ' [..]'
+      if len(subject) > 40:
+        subject = subject[:38] + '..'
       if len(message) > 200:
-        message = message[:200] + "\n[..]"
-      subject = self.origin.breaker.sub(self.__breakit, subject)
-      message = self.origin.breaker.sub(self.__breakit, message)
-      table.append(u'<tr><td class="dontwrap">%s</td><td class="dontwrap">%s</td><td>%s</td><td><a href="/%s" target="_blank">%s</a></td><td class="message_span">%s</td></tr>' % (datetime.utcfromtimestamp(row[7]).strftime('%Y/%m/%d %H:%M'), row[8], sender, link, subject, message))
-    out = out.replace("%%content%%", '<table class="datatable"><tr><th>sent</th><th>board</th><th>sender</th><th>subject</th><th>message</th></tr>\n' + '\n'.join(table))
+        message = message[:200] + " [..]"
+      message_log_row['sender'] = row[2][:15]
+      message_log_row['subject'] = self.origin.breaker.sub(self.__breakit, subject)
+      message_log_row['message'] = self.origin.breaker.sub(self.__breakit, message)
+      message_log_row['group_name'] = row[8]
+      message_log_row['sent'] = datetime.utcfromtimestamp(row[7]).strftime('%Y/%m/%d %H:%M')
+      message_log_row['articlehash_full'] = articlehash_full
+      message_log_row['articlehash'] = articlehash_full[:10]
+      table.append(self.origin.t_engine_message_log_row.substitute(message_log_row))
+    message_log['content'] = ''.join(table)
+    message_log['target'] = self.root_path + 'message_log'
     self.send_response(200)
     self.send_header('Content-type', 'text/html')
     self.end_headers()
-    self.wfile.write(out.encode('UTF-8'))
+    self.wfile.write(self.origin.t_engine_message_log.substitute(message_log).encode('UTF-8'))
 
   def send_stats(self, page=0):
     stats_data = dict()
@@ -676,10 +683,15 @@ class censor(BaseHTTPRequestHandler):
     self.send_redirect(self.root_path, "redirecting", 0)
     
   def handle_restore(self, message_id):
-    if os.path.isfile(os.path.join('articles', 'censored', message_id)):
-      os.rename(os.path.join('articles', 'censored', message_id), os.path.join('incoming', message_id + '_'))
+    censore_path = os.path.join('articles', 'censored', message_id)
+    if os.path.isfile(censore_path):
+      article_path = os.path.join('articles', message_id)
+      if os.path.isfile(article_path) and os.path.getsize(censore_path) == os.path.getsize(article_path):
+        # Attach restored? Remove article and processing now as deleted article
+        os.unlink(article_path)
       f = open(os.path.join('articles', 'restored', message_id), 'w')
       f.close()
+      os.rename(censore_path, os.path.join('incoming', message_id + '_'))
       self.send_redirect(self.root_path, "redirecting", 0)
     else:
       self.send_redirect(self.root_path, 'message_id does not exist in articles/censored', 5)
@@ -736,7 +748,7 @@ class censor(BaseHTTPRequestHandler):
 
   def __stats_groups(self, ids=False, status=False):
     groups = list()
-    for row in self.origin.sqlite_overchan.execute('SELECT count(1) as counter, group_name, groups.group_id, blocked FROM articles, groups WHERE articles.group_id = groups.group_id GROUP BY articles.group_id ORDER BY counter DESC').fetchall():
+    for row in self.origin.sqlite_overchan.execute('SELECT count(1) as counter, group_name, groups.group_id, flags FROM articles, groups WHERE articles.group_id = groups.group_id GROUP BY articles.group_id ORDER BY counter DESC').fetchall():
       if ids and status:
         groups.append((row[0], row[1], row[2], row[3]))
       elif ids:
@@ -898,13 +910,10 @@ class censor(BaseHTTPRequestHandler):
       keypair = nacl.signing.SigningKey(unhexlify(secret))
       pubkey = hexlify(keypair.verify_key.encode())
       flags_available = int(self.origin.sqlite_censor.execute("SELECT flags FROM keys WHERE key=?", (pubkey,)).fetchone()[0])
-      flag_delete = int(self.origin.sqlite_censor.execute('SELECT flag FROM commands WHERE command="delete"').fetchone()[0])
-      flag_delete_a = int(self.origin.sqlite_censor.execute('SELECT flag FROM commands WHERE command="overchan-delete-attachment"').fetchone()[0])
-      flag_sticky = int(self.origin.sqlite_censor.execute('SELECT flag FROM commands WHERE command="overchan-sticky"').fetchone()[0])
     except Exception as e:
       self.die('local moderation request: invalid secret key received: %s' % e)
       return
-    if ((flags_available & flag_delete) != flag_delete) and ((flags_available & flag_delete_a) != flag_delete_a) and ((flags_available & flag_sticky) != flag_sticky):
+    if flags_available == 0:
       self.die('local moderation request: public key rejected, no flags required')
       return
     local_cmd = False
@@ -920,15 +929,14 @@ class censor(BaseHTTPRequestHandler):
     if 'purge_desthash' in post_vars:
       delete_by_desthash = post_vars.getlist('purge_desthash')
       for item in delete_by_desthash:
-        i2p_dest_hash = ''
         try:
           i2p_dest_hash = self.__get_dest_hash_by_hash(item)
         except Exception as e:
           self.origin.log(self.origin.logger.WARNING, "local moderation request: could not find X-I2P-DestHash for hash %s: %s" % (item, e))
           self.origin.log(self.origin.logger.WARNING, self.headers)
-          continue
-        if len(i2p_dest_hash) == 44:
-          lines.extend("delete %s" % message_id for message_id in self.__get_messages_id_by_dest_hash(i2p_dest_hash))
+        else:
+          if len(i2p_dest_hash) == 44:
+            lines.extend("delete %s" % message_id for message_id in self.__get_messages_id_by_dest_hash(i2p_dest_hash))
     if 'delete_a' in post_vars:
       delete_attachments = post_vars.getlist('delete_a')
       for item in delete_attachments:
@@ -943,6 +951,15 @@ class censor(BaseHTTPRequestHandler):
         try:
           #lines.append("overchan-sticky %s" % self.__get_message_id_by_hash(item)) #only local
           self.origin.censor.add_article((pubkey, "overchan-sticky {0}#sticky\unsticky thread request".format(self.__get_message_id_by_hash(item))), "httpd")
+          local_cmd = True
+        except Exception as e:
+          self.origin.log(self.origin.logger.WARNING, "local moderation request: could not find message_id for hash %s: %s" % (item, e))
+          self.origin.log(self.origin.logger.WARNING, self.headers)
+    if 'close' in post_vars:
+      close_thread = post_vars.getlist('close')
+      for item in close_thread:
+        try:
+          self.origin.censor.add_article((pubkey, "overchan-close {0}#closing\opening thread request".format(self.__get_message_id_by_hash(item))), "httpd")
           local_cmd = True
         except Exception as e:
           self.origin.log(self.origin.logger.WARNING, "local moderation request: could not find message_id for hash %s: %s" % (item, e))
@@ -1125,6 +1142,19 @@ class censor_httpd(threading.Thread):
     f.close()
     f = open(os.path.join(template_directory, 'stats.tmpl'), 'r')
     self.httpd.t_engine_stats = string.Template(f.read())
+    f.close()
+    f = open(os.path.join(template_directory, 'evil_mod.tmpl'), 'r')
+    template_evil_mod = f.read()
+    f.close()
+    f = open(os.path.join(template_directory, 'message_log.tmpl'), 'r')
+    self.httpd.t_engine_message_log = string.Template(
+      string.Template(f.read()).safe_substitute(
+        evil_mod=template_evil_mod
+      )
+    )
+    f.close()
+    f = open(os.path.join(template_directory, 'message_log_row.tmpl'), 'r')
+    self.httpd.t_engine_message_log_row = string.Template(f.read())
     f.close()
     #f = open(os.path.join(template_directory, 'message_pic.template'), 'r')
     #self.httpd.template_message_pic = f.read()

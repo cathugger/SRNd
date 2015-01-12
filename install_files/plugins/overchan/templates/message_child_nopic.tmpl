@@ -1,5 +1,5 @@
       <div class="message" id="${articlehash}">
-        <a name="${articlehash}"></a><span class="topicline"><b>${subject}</b> ${author} <span class=published>${sent} UTC</span>  <a href="thread-${parenthash}.html#${articlehash}" onclick="return highlight('${articlehash}');">№</a> <a href="#i${articlehash}" onmouseover="get_quote();" onclick="return quickreply('${articlehash}', '${parenthash_full}');">${article_id}</a></span>
+        <a name="${articlehash}"></a><span class="topicline"><b>${subject}</b> ${author} <span class=published>${sent}</span>  <a href="thread-${parenthash}.html#${articlehash}" onclick="return highlight('${articlehash}');">&#8470;</a> ${child_quickreply}</span>
         ${signed}          <div class="stillevil">
           <input type="checkbox" value="${articlehash_full}" title="purge" class="purge_msg" name="purge" id="purge${articlehash}">
           <label for="purge${articlehash}">delete post</label>
@@ -8,7 +8,6 @@
         </div><br />
         <span class="frontend">[ ${frontend} ]</span>
         <br /><br />
-        <span class="message_span">${message}
-        </span>
+        <span class="message_span">${message}</span>
         <br style="clear: both;"/>
       </div>

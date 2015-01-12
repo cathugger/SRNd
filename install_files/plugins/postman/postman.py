@@ -244,7 +244,7 @@ class postman(BaseHTTPRequestHandler):
       self.send_header('Content-type', 'text/html')
     self.end_headers()
     # use file_name as key and file content + current time as value
-    if self.origin.fast_uploads == True:
+    if self.origin.fast_uploads:
       if file_b64 != '':
         # we can have empty file_b64 here whether captcha was entered wrong first time
         self.origin.temp_file_obj[file_name] = [file_b64, int(time.time())]
@@ -445,7 +445,7 @@ class postman(BaseHTTPRequestHandler):
     else:
       f.write(self.origin.template_message_pic.format(sender, date, group, subject, message_uid, reply, uid_host, boundary, comment, content_type, file_name, sage, i2p_desthash).replace('\r', ''))
       if 'hash' in post_vars:
-        if self.origin.fast_uploads == True:
+        if self.origin.fast_uploads:
           # get file looking by file_name
           if file_name not in self.origin.temp_file_obj:
             self.origin.temp_file_obj[file_name] = ['', '']
@@ -637,7 +637,7 @@ class main(threading.Thread):
     f = open(os.path.join(template_directory, 'redirect.template'), 'r')
     self.httpd.template_redirect = f.read()
     f.close()
-    if self.httpd.fast_uploads == True:
+    if self.httpd.fast_uploads:
       f = open(os.path.join(template_directory, 'verify_fast.template'), 'r')
       self.httpd.template_verify_fast = f.read()
       f.close()
@@ -788,7 +788,7 @@ class main(threading.Thread):
     self.log(self.logger.INFO, 'bye')
 
   def captcha_generate(self, text, secret, expires=300):
-    expires = int(time.time()) + expires
+    expires += int(time.time())
     if not expires % 3: solution_hash = sha256('%s%s%i' % (text, secret, expires)).hexdigest()
     elif expires % 2: solution_hash = sha256('%i%s%s' % (expires, text, secret)).hexdigest()
     else: solution_hash = sha256('%s%i%s' % (secret, expires, text)).hexdigest()
