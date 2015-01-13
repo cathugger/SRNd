@@ -213,7 +213,10 @@ class postman(BaseHTTPRequestHandler):
         file_ct = ''
         file_b64 = ''
       else:
-        file_name = post_vars['file'].filename.replace('"', '&quot;')
+        try:
+          file_name = post_vars['file'].filename.replace('"', '&quot;')
+        except KeyError:
+          file_name = ''
         if file_name == '':
           file_ct = ''
           file_b64 = ''
