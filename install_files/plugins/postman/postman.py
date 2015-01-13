@@ -732,16 +732,21 @@ class main(threading.Thread):
     self.httpd.captcha_require_cookie = False
     self.httpd.captcha_bypass_after_seconds_reply = 60 * 10
     self.httpd.captcha_bypass_after_timestamp_reply = int(time.time()) 
-    self.httpd.captcha_alphabet = string.ascii_letters + string.digits
-    for char in ('I', 'l', 'O', '0', 'k', 'K'):
-      self.httpd.captcha_alphabet = self.httpd.captcha_alphabet.replace(char, '')
     self.httpd.captcha_generate = self.captcha_generate
-    self.httpd.captcha_verify = self.captcha_verify
     if self.new_captcha is not None:
+      self.httpd.captcha_verify = self.new_captcha_verify
+      self.httpd.captcha_alphabet = string.ascii_uppercase + string.digits
+      for char in ('I', 'O', '0', '1'):
+        self.httpd.captcha_alphabet = self.httpd.captcha_alphabet.replace(char, '')
       self.captcha_alt = new_captcha(self.new_captcha)
+      self.log(self.logger.INFO, self.captcha_alt.init_cache())
       self.httpd.captcha_render_b64 = self.captcha_alt.captcha
       self.httpd.get_captcha_font = self.captcha_alt.get_captcha_font
     else:
+      self.httpd.captcha_verify = self.captcha_verify
+      self.httpd.captcha_alphabet = string.ascii_letters + string.digits
+      for char in ('I', 'l', 'O', '0', 'k', 'K'):
+        self.httpd.captcha_alphabet = self.httpd.captcha_alphabet.replace(char, '')
       self.httpd.captcha_render_b64 = self.captcha_render_b64
       self.httpd.get_captcha_font = self.get_captcha_font
     self.httpd.captcha_filter = ImageFilter.EMBOSS
@@ -824,6 +829,9 @@ class main(threading.Thread):
         self.httpd.captcha_backlog.pop()
     return True
 
+  def new_captcha_verify(self, expires, solution_hash, guess, secret):
+    return self.captcha_verify(expires, solution_hash, guess.upper(), secret)
+
   def captcha_verify(self, expires, solution_hash, guess, secret):
     try: expires = int(expires)
     except: return False
@@ -876,37 +884,59 @@ class main(threading.Thread):
 class new_captcha:
   def __init__(self, diff=2):
     self.gauss = diff
+    self.plazma_cache = dict()
+    self.plazma_cache_size = 10
+    self.plazma_cache['reusage'] = 0
+    self.plazma_cache['plazma'] = [[None] * 2] * self.plazma_cache_size
+    self.plazma_cache['size'] = [[None] * 2] * self.plazma_cache_size
+
+  def init_cache(self):
+    check_time = time.time()
+    self.__init_cache()
+    return 'new_captcha: init %s plazma cache in %s seconds...' % (self.plazma_cache_size, int(time.time() - check_time))
+
+  def __init_cache(self):
+    for x in xrange(self.plazma_cache_size):
+      self.plazma_cache['size'][x] = [
+        (300 + random.randint(4, 50)),
+        (100 + random.randint(4, 50))
+      ]
+      self.plazma_cache['plazma'][x] = [
+        self.plazma(self.plazma_cache['size'][x][0], self.plazma_cache['size'][x][1]),
+        self.plazma(self.plazma_cache['size'][x][0], self.plazma_cache['size'][x][1])
+      ]
+    self.plazma_cache['reusage'] = random.randint(3, 10) * self.plazma_cache_size
 
   def get_captcha_font(self, fontdir='plugins/postman/fonts/' ):
-    """ get random font """
-    font = random.choice(os.listdir(fontdir))
-    font = fontdir+font
-    return ImageFont.truetype(font, random.randint(46, 54) )
+    #font = random.choice(os.listdir(fontdir))
+    #font = fontdir + font
+    font_list = ('FreeSansBold.ttf', 'FreeSerifBold.ttf', 'FreeMonoBold.ttf')
+    font = fontdir + font_list[random.randint(0, 2)]
+    return ImageFont.truetype(font, random.randint(43, 54) )
 
   def captcha(self, guess, tiles, font, filter=None):
-    width, height = 300, 100
-    width += random.randint(4, 50)
-    height += random.randint(4, 50)
-    mask = Image.new('RGBA', (width, height))
+    if self.plazma_cache['reusage'] <= 0:
+      self.__init_cache()
+
+    self.plazma_cache['reusage'] -=1
+    random_plazma =  random.randint(0, self.plazma_cache_size - 1)
+    mask = Image.new('RGBA', (self.plazma_cache['size'][random_plazma][0], self.plazma_cache['size'][random_plazma][1]))
     font_width, font_height = font.getsize(guess)
     font_width /= len(guess)
 
     x_offset = random.randint(-5, 5)
     draw = ImageDraw.Draw(mask)
-    for i in range(len(guess)):
-      x_offset += font_width + random.randint(-5, 12)
+    for i in guess:
+      x_offset += font_width + random.randint(-5, 10)
       y_offset = random.randint(5, 40)
-      draw.text((x_offset, y_offset), guess[i], font=font)
-    angle = random.randint(-15, 15)
+      draw.text((x_offset, y_offset), i, font=font)
+    angle = random.randint(-10, 15)
     mask = mask.rotate(angle)
 
-    bg = self.plazma(width, height)
-    fg = self.plazma(width, height)
-    result = Image.composite(bg, fg, mask)
+    result = Image.composite(self.plazma_cache['plazma'][random_plazma][0], self.plazma_cache['plazma'][random_plazma][1], mask)
 
-    if self.gauss > 0:
-      for i in range(self.gauss):
-        result = result.filter(self.GAUSSIAN)
+    for i in xrange(self.gauss):
+      result = result.filter(self.GAUSSIAN)
 
     f = cStringIO.StringIO()
     result.save(f, 'PNG')
@@ -920,7 +950,7 @@ class new_captcha:
 
     for xy in [(0,0), (width-1, 0), (0, height-1), (width-1, height-1)]:
       rgb = []
-      for i in range(3):
+      for i in xrange(3):
         rgb.append(int(random.random()*256))
       pix[xy[0],xy[1]] = (rgb[0], rgb[1], rgb[2])
 
@@ -931,7 +961,7 @@ class new_captcha:
     if (abs(x1 - x2) <= 1) and (abs(y1 - y2) <= 1):
       return
     rgb = []
-    for i in range(3):
+    for i in xrange(3):
       rgb.append((pix[x1, y1][i] + pix[x1, y2][i])/2)
       rgb.append((pix[x2, y1][i] + pix[x2, y2][i])/2)
       rgb.append((pix[x1, y1][i] + pix[x2, y1][i])/2)
