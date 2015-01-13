@@ -600,6 +600,11 @@ class main(threading.Thread):
       f.close()
       os.chmod('seed', 0o600)
 
+    self.new_captcha = False
+    if 'new_captcha' in args:
+      if args['new_captcha'].lower() in ('true', 'yes', '1'):
+        self.new_captcha = True
+
     self.httpd.fast_uploads = False
     if 'fast_uploads' in args:
       if args['fast_uploads'].lower() in ('true', 'yes', '1'):
@@ -727,8 +732,13 @@ class main(threading.Thread):
       self.httpd.captcha_alphabet = self.httpd.captcha_alphabet.replace(char, '')
     self.httpd.captcha_generate = self.captcha_generate
     self.httpd.captcha_verify = self.captcha_verify
-    self.httpd.captcha_render_b64 = self.captcha_render_b64
-    self.httpd.get_captcha_font = self.get_captcha_font
+    if self.new_captcha:
+      self.captcha_alt = new_captcha()
+      self.httpd.captcha_render_b64 = self.captcha_alt.captcha
+      self.httpd.get_captcha_font = self.captcha_alt.get_captcha_font
+    else:
+      self.httpd.captcha_render_b64 = self.captcha_render_b64
+      self.httpd.get_captcha_font = self.get_captcha_font
     self.httpd.captcha_filter = ImageFilter.EMBOSS
     self.httpd.captcha_tiles = list()
     self.httpd.captcha_backlog = list()
@@ -857,6 +867,97 @@ class main(threading.Thread):
     content = f.getvalue()
     f.close()
     return content.encode("base64").replace("\n", "")
+
+class new_captcha:
+  def __init__(self):
+    pass
+
+  def get_captcha_font(self, fontdir='plugins/postman/fonts/' ):
+    """ get random font """
+    font = random.choice(os.listdir(fontdir))
+    font = fontdir+font
+    return ImageFont.truetype(font, random.randint(46, 54) )
+
+  def captcha(self, guess, tiles, font, filter=None):
+    gauss = 2
+    width, height = 300, 100
+    width += random.randint(4, 50)
+    height += random.randint(4, 50)
+    mask = Image.new('RGBA', (width, height))
+    font_width, font_height = font.getsize(guess)
+    font_width /= len(guess)
+
+    x_offset = random.randint(-5, 5)
+    draw = ImageDraw.Draw(mask)
+    for i in range(len(guess)):
+      x_offset += font_width + random.randint(-5, 12)
+      y_offset = random.randint(5, 40)
+      draw.text((x_offset, y_offset), guess[i], font=font)
+    angle = random.randint(-15, 15)
+    mask = mask.rotate(angle)
+
+    bg = self.plazma(width, height)
+    fg = self.plazma(width, height)
+    result = Image.composite(bg, fg, mask)
+
+    if gauss > 0:
+      for i in range(gauss):
+        result = result.filter(self.GAUSSIAN)
+
+    f = cStringIO.StringIO()
+    result.save(f, 'PNG')
+    content = f.getvalue()
+    f.close()
+    return content.encode("base64").replace("\n", "")
+
+  def plazma(self, width, height):
+    img = Image.new('RGB', (width, height))
+    pix = img.load()
+
+    for xy in [(0,0), (width-1, 0), (0, height-1), (width-1, height-1)]:
+      rgb = []
+      for i in range(3):
+        rgb.append(int(random.random()*256))
+      pix[xy[0],xy[1]] = (rgb[0], rgb[1], rgb[2])
+
+    self.plazmaRec(pix, 0, 0, width-1, height-1)
+    return img
+
+  def plazmaRec(self, pix, x1, y1, x2, y2):
+    if (abs(x1 - x2) <= 1) and (abs(y1 - y2) <= 1):
+      return
+    rgb = []
+    for i in range(3):
+      rgb.append((pix[x1, y1][i] + pix[x1, y2][i])/2)
+      rgb.append((pix[x2, y1][i] + pix[x2, y2][i])/2)
+      rgb.append((pix[x1, y1][i] + pix[x2, y1][i])/2)
+      rgb.append((pix[x1, y2][i] + pix[x2, y2][i])/2)
+
+      tmp = (pix[x1, y1][i] + pix[x1, y2][i] +
+             pix[x2, y1][i] + pix[x2, y2][i])/4
+      diagonal =  ((x1-x2)**2 + (y1-y2)**2)**0.5
+      while True:
+        delta = int ( ((random.random() - 0.5)/100 * min(100, diagonal))*255 )
+        if (tmp + delta >= 0) and (tmp + delta <= 255):
+          tmp += delta
+          break
+      rgb.append(tmp)
+
+    pix[x1, (y1 + y2)/2] = (rgb[0], rgb[5], rgb[10])
+    pix[x2, (y1 + y2)/2]= (rgb[1], rgb[6], rgb[11])
+    pix[(x1 + x2)/2, y1] = (rgb[2], rgb[7], rgb[12])
+    pix[(x1 + x2)/2, y2] = (rgb[3], rgb[8], rgb[13])
+    pix[(x1 + x2)/2, (y1 + y2)/2] = (rgb[4], rgb[9], rgb[14])
+
+    self.plazmaRec(pix, x1, y1, (x1+x2)/2, (y1+y2)/2)
+    self.plazmaRec(pix, (x1+x2)/2, y1, x2, (y1+y2)/2)
+    self.plazmaRec(pix, x1, (y1+y2)/2, (x1+x2)/2, y2)
+    self.plazmaRec(pix, (x1+x2)/2, (y1+y2)/2, x2, y2)
+
+  class GAUSSIAN(ImageFilter.BuiltinFilter):
+    name = "Gaussian"
+    gaussian_grid = (1, 4, 7, 4, 1, 4, 20, 33, 20, 4, 7, 33, 55, 33, 7, 4, 20, 33, 20, 4, 1, 4, 7, 4, 1)
+    filterargs = (5,5), sum(gaussian_grid), 0, gaussian_grid
 
 if __name__ == '__main__':
   args = dict()
