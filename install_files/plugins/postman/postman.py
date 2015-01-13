@@ -600,10 +600,15 @@ class main(threading.Thread):
       f.close()
       os.chmod('seed', 0o600)
 
-    self.new_captcha = False
+    self.new_captcha = None
     if 'new_captcha' in args:
-      if args['new_captcha'].lower() in ('true', 'yes', '1'):
-        self.new_captcha = True
+      if args['new_captcha'].lower() in ('true', 'yes'):
+        self.new_captcha = 2
+      else:
+        try: self.new_captcha = int(args['new_captcha'])
+        except: pass
+        if self.new_captcha is not None and (self.new_captcha < 0 or self.new_captcha > 100):
+          self.new_captcha = 2
 
     self.httpd.fast_uploads = False
     if 'fast_uploads' in args:
@@ -732,8 +737,8 @@ class main(threading.Thread):
       self.httpd.captcha_alphabet = self.httpd.captcha_alphabet.replace(char, '')
     self.httpd.captcha_generate = self.captcha_generate
     self.httpd.captcha_verify = self.captcha_verify
-    if self.new_captcha:
-      self.captcha_alt = new_captcha()
+    if self.new_captcha is not None:
+      self.captcha_alt = new_captcha(self.new_captcha)
       self.httpd.captcha_render_b64 = self.captcha_alt.captcha
       self.httpd.get_captcha_font = self.captcha_alt.get_captcha_font
     else:
@@ -869,8 +874,8 @@ class main(threading.Thread):
     return content.encode("base64").replace("\n", "")
 
 class new_captcha:
-  def __init__(self):
-    pass
+  def __init__(self, diff=2):
+    self.gauss = diff
 
   def get_captcha_font(self, fontdir='plugins/postman/fonts/' ):
     """ get random font """
@@ -879,7 +884,6 @@ class new_captcha:
     return ImageFont.truetype(font, random.randint(46, 54) )
 
   def captcha(self, guess, tiles, font, filter=None):
-    gauss = 2
     width, height = 300, 100
     width += random.randint(4, 50)
     height += random.randint(4, 50)
@@ -900,8 +904,8 @@ class new_captcha:
     fg = self.plazma(width, height)
     result = Image.composite(bg, fg, mask)
 
-    if gauss > 0:
-      for i in range(gauss):
+    if self.gauss > 0:
+      for i in range(self.gauss):
         result = result.filter(self.GAUSSIAN)
 
     f = cStringIO.StringIO()
