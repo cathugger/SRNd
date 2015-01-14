@@ -251,7 +251,7 @@ class postman(BaseHTTPRequestHandler):
       self.wfile.write(self.origin.template_verify_fast.format(message, b64, solution_hash, expires, frontend, board, reply, target, name, email, subject, comment, file_name, file_ct))
     else:
       self.wfile.write(self.origin.template_verify_slow.format(message, b64, solution_hash, expires, frontend, board, reply, target, name, email, subject, comment, file_name, file_ct, file_b64))
-    return 
+    return self.origin.captcha_cache_bump()
 
   def fake_id_to_overchan_id(self, comment, board):
     def reverse_mapping(rematch):
@@ -734,22 +734,25 @@ class main(threading.Thread):
     self.httpd.captcha_bypass_after_timestamp_reply = int(time.time()) 
     self.httpd.captcha_generate = self.captcha_generate
     if self.new_captcha is not None:
+      self.httpd.captcha_filter = ImageFilter.GaussianBlur(4)
       self.httpd.captcha_verify = self.new_captcha_verify
       self.httpd.captcha_alphabet = string.ascii_uppercase + string.digits
       for char in ('I', 'O', '0', '1'):
         self.httpd.captcha_alphabet = self.httpd.captcha_alphabet.replace(char, '')
-      self.captcha_alt = new_captcha(self.new_captcha)
+      self.captcha_alt = new_captcha(self.new_captcha, self.httpd.captcha_filter)
       self.log(self.logger.INFO, self.captcha_alt.init_cache())
-      self.httpd.captcha_render_b64 = self.captcha_alt.captcha
+      self.httpd.captcha_render_b64 = self.captcha_alt.captcha_render_b64
       self.httpd.get_captcha_font = self.captcha_alt.get_captcha_font
+      self.httpd.captcha_cache_bump = self.captcha_alt.captcha_cache_bump
     else:
+      self.httpd.captcha_filter = ImageFilter.EMBOSS
       self.httpd.captcha_verify = self.captcha_verify
       self.httpd.captcha_alphabet = string.ascii_letters + string.digits
       for char in ('I', 'l', 'O', '0', 'k', 'K'):
         self.httpd.captcha_alphabet = self.httpd.captcha_alphabet.replace(char, '')
       self.httpd.captcha_render_b64 = self.captcha_render_b64
       self.httpd.get_captcha_font = self.get_captcha_font
-    self.httpd.captcha_filter = ImageFilter.EMBOSS
+      self.httpd.captcha_cache_bump = self.captcha_cache_bump
     self.httpd.captcha_tiles = list()
     self.httpd.captcha_backlog = list()
     self.httpd.captcha_backlog_maxlen = 100
@@ -881,14 +884,19 @@ class main(threading.Thread):
     f.close()
     return content.encode("base64").replace("\n", "")
 
+  def captcha_cache_bump(self):
+    # TODO: create captcha before query
+    return True
+
 class new_captcha:
-  def __init__(self, diff=2):
+  def __init__(self, diff=2, img_filter=None):
+    self.img_filter = img_filter
     self.gauss = diff
     self.plazma_cache = dict()
-    self.plazma_cache_size = 10
+    self.plazma_cache_size = 15
     self.plazma_cache['reusage'] = 0
-    self.plazma_cache['plazma'] = [[None] * 2] * self.plazma_cache_size
-    self.plazma_cache['size'] = [[None] * 2] * self.plazma_cache_size
+    self.plazma_cache['plazma'] = [None] * self.plazma_cache_size
+    self.plazma_cache['size'] = list()
 
   def init_cache(self):
     check_time = time.time()
@@ -896,16 +904,13 @@ class new_captcha:
     return 'new_captcha: init %s plazma cache in %s seconds...' % (self.plazma_cache_size, int(time.time() - check_time))
 
   def __init_cache(self):
+    self.plazma_cache['size'] = [
+      300 + random.randint(4, 50),
+      100 + random.randint(4, 50)
+    ]
     for x in xrange(self.plazma_cache_size):
-      self.plazma_cache['size'][x] = [
-        (300 + random.randint(4, 50)),
-        (100 + random.randint(4, 50))
-      ]
-      self.plazma_cache['plazma'][x] = [
-        self.plazma(self.plazma_cache['size'][x][0], self.plazma_cache['size'][x][1]),
-        self.plazma(self.plazma_cache['size'][x][0], self.plazma_cache['size'][x][1])
-      ]
-    self.plazma_cache['reusage'] = random.randint(3, 10) * self.plazma_cache_size
+      self.plazma_cache['plazma'][x] = self.__plazma(self.plazma_cache['size'][0], self.plazma_cache['size'][1])
+    self.plazma_cache['reusage'] = random.randint(2, 5) * self.plazma_cache_size
 
   def get_captcha_font(self, fontdir='plugins/postman/fonts/' ):
     #font = random.choice(os.listdir(fontdir))
@@ -914,39 +919,53 @@ class new_captcha:
     font = fontdir + font_list[random.randint(0, 2)]
     return ImageFont.truetype(font, random.randint(43, 54) )
 
-  def captcha(self, guess, tiles, font, filter=None):
+  def captcha_render_b64(self, guess, tiles, font, filter=None):
+    img_to_str = cStringIO.StringIO()
+    self.captcha(guess, font).save(img_to_str, 'PNG')
+    content = img_to_str.getvalue()
+    img_to_str.close()
+    return content.encode("base64").replace("\n", "")
+
+  def captcha_cache_bump(self):
     if self.plazma_cache['reusage'] <= 0:
       self.__init_cache()
+    return True
 
+  def captcha(self, guess, font):
+    if self.plazma_cache['reusage'] <= -5:
+      self.__init_cache()
     self.plazma_cache['reusage'] -=1
-    random_plazma =  random.randint(0, self.plazma_cache_size - 1)
-    mask = Image.new('RGBA', (self.plazma_cache['size'][random_plazma][0], self.plazma_cache['size'][random_plazma][1]))
+    mask = Image.new('RGBA', (self.plazma_cache['size'][0], self.plazma_cache['size'][1]))
     font_width, font_height = font.getsize(guess)
     font_width /= len(guess)
 
-    x_offset = random.randint(-5, 5)
+    x_offset = random.randint(-1, 1) * 5
+
     draw = ImageDraw.Draw(mask)
     for i in guess:
-      x_offset += font_width + random.randint(-5, 10)
-      y_offset = random.randint(5, 40)
-      draw.text((x_offset, y_offset), i, font=font)
-    angle = random.randint(-10, 15)
+      x_offset += font_width + random.randint(1, 5)
+      y_offset = random.randint(1, 7) * 5
+      draw.text((x_offset + random.randint(-(font_width / 10), (font_width / 10)) * 2, y_offset), i, font=font)
+
+    angle = random.randint(-2, 3) * 5
     mask = mask.rotate(angle)
 
-    result = Image.composite(self.plazma_cache['plazma'][random_plazma][0], self.plazma_cache['plazma'][random_plazma][1], mask)
+    pattern_1 = pattern_2 = None
+    while pattern_1 is pattern_2:
+      pattern_1 = self.plazma_cache['plazma'][random.randint(0, self.plazma_cache_size - 1)]
+      pattern_2 = self.plazma_cache['plazma'][random.randint(0, self.plazma_cache_size - 1)]
 
-    for i in xrange(self.gauss):
-      result = result.filter(self.GAUSSIAN)
+    result = Image.composite(pattern_1, pattern_2, mask)
 
-    f = cStringIO.StringIO()
-    result.save(f, 'PNG')
-    content = f.getvalue()
-    f.close()
-    return content.encode("base64").replace("\n", "")
+    if self.img_filter is not None:
+      for x in range(self.gauss):
+        result = result.filter(self.img_filter)
 
-  def plazma(self, width, height):
-    img = Image.new('RGB', (width, height))
-    pix = img.load()
+    return result
+
+  def __plazma(self, width, height):
+    plazma = Image.new('RGB', (width, height))
+    pix = plazma.load()
 
     for xy in [(0,0), (width-1, 0), (0, height-1), (width-1, height-1)]:
       rgb = []
@@ -954,10 +973,10 @@ class new_captcha:
         rgb.append(int(random.random()*256))
       pix[xy[0],xy[1]] = (rgb[0], rgb[1], rgb[2])
 
-    self.plazmaRec(pix, 0, 0, width-1, height-1)
-    return img
+    self.__plazmaRec(pix, 0, 0, width-1, height-1)
+    return plazma
 
-  def plazmaRec(self, pix, x1, y1, x2, y2):
+  def __plazmaRec(self, pix, x1, y1, x2, y2):
     if (abs(x1 - x2) <= 1) and (abs(y1 - y2) <= 1):
       return
     rgb = []
@@ -983,15 +1002,10 @@ class new_captcha:
     pix[(x1 + x2)/2, y2] = (rgb[3], rgb[8], rgb[13])
     pix[(x1 + x2)/2, (y1 + y2)/2] = (rgb[4], rgb[9], rgb[14])
 
-    self.plazmaRec(pix, x1, y1, (x1+x2)/2, (y1+y2)/2)
-    self.plazmaRec(pix, (x1+x2)/2, y1, x2, (y1+y2)/2)
-    self.plazmaRec(pix, x1, (y1+y2)/2, (x1+x2)/2, y2)
-    self.plazmaRec(pix, (x1+x2)/2, (y1+y2)/2, x2, y2)
-
-  class GAUSSIAN(ImageFilter.BuiltinFilter):
-    name = "Gaussian"
-    gaussian_grid = (1, 4, 7, 4, 1, 4, 20, 33, 20, 4, 7, 33, 55, 33, 7, 4, 20, 33, 20, 4, 1, 4, 7, 4, 1)
-    filterargs = (5,5), sum(gaussian_grid), 0, gaussian_grid
+    self.__plazmaRec(pix, x1, y1, (x1+x2)/2, (y1+y2)/2)
+    self.__plazmaRec(pix, (x1+x2)/2, y1, x2, (y1+y2)/2)
+    self.__plazmaRec(pix, x1, (y1+y2)/2, (x1+x2)/2, y2)
+    self.__plazmaRec(pix, (x1+x2)/2, (y1+y2)/2, x2, y2)
 
 if __name__ == '__main__':
   args = dict()
