@@ -773,7 +773,7 @@ class main(threading.Thread):
           # correct root post last_update
           all_child_time = self.sqlite.execute('SELECT article_uid, last_update FROM articles WHERE parent = ? AND last_update >= sent ORDER BY sent DESC', (row[2],)).fetchall()
           childs_count = len(all_child_time)
-          if childs_count > 0 and all_child_time[0][0] == message_id and (self.bump_limit == 0 or childs_count - 1 < self.bump_limit):
+          if childs_count > 0 and all_child_time[0][0] == message_id:
             parent_row = self.sqlite.execute('SELECT last_update, sent FROM articles WHERE article_uid = ?', (row[2],)).fetchone()
             if parent_row:
               if childs_count == 1:
@@ -1367,6 +1367,8 @@ class main(threading.Thread):
               if not (child_count and int(child_count[0]) >= self.bump_limit):
                 self.sqlite.execute('UPDATE articles SET last_update=? WHERE article_uid=?', (sent, parent))
                 self.sqlite_conn.commit()
+              else:
+                last_update = sent - 10
             else:
               self.sqlite.execute('UPDATE articles SET last_update=? WHERE article_uid=?', (sent, parent))
               self.sqlite_conn.commit()
@@ -1400,26 +1402,26 @@ class main(threading.Thread):
       self.sqlite.execute('DELETE FROM articles WHERE article_uid=?', (message_id,))
       self.sqlite_conn.commit()
 
-    censored_articles = self.sqlite.execute('SELECT article_uid FROM articles WHERE thumblink = "censored" AND imagelink = ?', (image_name,)).fetchall()
-    censored_count = len(censored_articles)
-    if censored_count > 0:
-      attach_iscensored = False
-      for check_article in censored_articles:
-        if os.path.exists(os.path.join("articles", "censored", check_article[0])):
-          attach_iscensored = True
-          break
-      if attach_iscensored:
-        # attach has been censored and not restored. Censoring and this attach
-        self.log(self.logger.INFO, 'Message %s contain attach censoring in %s message. %s has been continue censoring' % (message_id, check_article[0], image_name))
-        thumb_name = 'censored'
-        censored_attach_path = os.path.join(self.output_directory, 'img', image_name)
-        if os.path.exists(censored_attach_path):
-          os.remove(censored_attach_path)
-      else:
-        # attach has been censored and is now being restored. Restore all thumblink
-        self.log(self.logger.INFO, 'Attach %s restored. Restore %s thumblinks for this attach' % (image_name, censored_count))
-        self.sqlite.execute('UPDATE articles SET thumblink = ? WHERE imagelink = ?', (thumb_name, image_name))
-        self.sqlite_conn.commit()
+    if len(image_name) > 40:
+      censored_articles = self.sqlite.execute('SELECT article_uid FROM articles WHERE thumblink = "censored" AND imagelink = ?', (image_name,)).fetchall()
+      censored_count = len(censored_articles)
+      if censored_count > 0:
+        attach_iscensored = False
+        for check_article in censored_articles:
+          if os.path.exists(os.path.join("articles", "censored", check_article[0])):
+            attach_iscensored = True
+            break
+        if attach_iscensored:
+          # attach has been censored and not restored. Censoring and this attach
+          self.log(self.logger.INFO, 'Message %s contain attach censoring in %s message. %s has been continue censoring' % (message_id, check_article[0], image_name))
+          thumb_name = 'censored'
+          censored_attach_path = os.path.join(self.output_directory, 'img', image_name)
+          if os.path.exists(censored_attach_path):
+            os.remove(censored_attach_path)
+        else:
+          # attach has been censored and is now being restored. Restore all thumblink
+          self.log(self.logger.INFO, 'Attach %s restored. Restore %s thumblinks for this attach' % (image_name, censored_count))
+          self.sqlite.execute('UPDATE articles SET thumblink = ? WHERE imagelink = ?', (thumb_name, image_name))
 
     for group_id in group_ids:
       self.sqlite.execute('INSERT INTO articles(article_uid, group_id, sender, email, subject, sent, parent, message, imagename, imagelink, thumblink, last_update, public_key, received) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)', (message_id, group_id, sender.decode('UTF-8'), email.decode('UTF-8'), subject.decode('UTF-8'), sent, parent, message.decode('UTF-8'), image_name_original.decode('UTF-8'), image_name, thumb_name, last_update, public_key, int(time.time())))
