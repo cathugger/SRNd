@@ -1493,8 +1493,7 @@ class main(threading.Thread):
     return {'message_root': message_root, 'message_childs': message_childs}
 
   def get_root_post(self, data, group_id, child_count, message_id_hash, single, isclosed):
-    root_data = dict()
-    root_data['thread_status'] = ''
+    root_data = self.get_preparse_post(data[:9], message_id_hash, group_id, 25, 2000, child_count, '', '', single)
     if data[9] > time.time():
       root_data['thread_status'] += '[&#177;]'
       root_data['sticky_prefix'] = 'un'
@@ -1503,10 +1502,10 @@ class main(threading.Thread):
     if isclosed:
       root_data['close_action'] = 'open'
       root_data['thread_status'] += '[closed]'
-      return self.t_engine_message_root_closed.substitute(dict(self.get_preparse_post(data[:9], message_id_hash, group_id, 25, 2000, child_count, '', '', single), **root_data))
+      return self.t_engine_message_root_closed.substitute(root_data)
     else:
       root_data['close_action'] = 'close'
-      return self.t_engine_message_root.substitute(dict(self.get_preparse_post(data[:9], message_id_hash, group_id, 25, 2000, child_count, '', '', single), **root_data))
+      return self.t_engine_message_root.substitute(root_data)
 
   def get_childs_posts(self, parent, group_id, father, father_pubkey, child_count, single, isclosed):
     childs = list()
@@ -1592,6 +1591,10 @@ class main(threading.Thread):
     message = self.markup_parser(message)
     if father == '':
       child_count = int(self.sqlite.execute('SELECT count(article_uid) FROM articles WHERE parent = ? AND parent != article_uid AND group_id = ?', (data[0], group_id)).fetchone()[0])
+      if self.bump_limit > 0 and child_count >= self.bump_limit:
+        parsed_data['thread_status'] = '[fat]'
+      else:
+        parsed_data['thread_status'] = ''
       if child_count > child_view:
         missing = child_count - child_view
         if missing == 1:
