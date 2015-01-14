@@ -705,8 +705,8 @@ class SRNd(threading.Thread):
           file_list.sort()
           synclist[group] = {'targets': current_sync_targets, 'file_list': file_list }
     while len(synclist) > 0:
+      empty_sync_group = list()
       for group in synclist:
-        empty_sync_group = list()
         if len(synclist[group]['file_list']) == 0:
           empty_sync_group.append(group)
         else:
