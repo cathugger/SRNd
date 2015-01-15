@@ -501,7 +501,7 @@ class SRNd(threading.Thread):
         name = "outfeed-{0}-{1}".format(host, port)
         # open track db here, read, close
         if sync_on_startup:
-          self.feed_db[name] = list()
+          self.feed_db[name] = set()
           try:
             f = open('{0}.trackdb'.format(name), 'r')
           except IOError as e:
@@ -511,7 +511,7 @@ class SRNd(threading.Thread):
               self.log(self.logger.ERROR, 'cannot open: %s: %s' % ('{0}.trackdb'.format(name), e.strerror))
           else:
             for line in f.readlines():
-              self.feed_db[name].append(line.rstrip('\n'))
+              self.feed_db[name].add(line.rstrip('\n'))
         current_feedlist.append(name)
         proxy = None
         if proxy_type != None:
@@ -636,6 +636,26 @@ class SRNd(threading.Thread):
       return { "blacklist": self.hook_blacklist, "whitelist": self.hooks }
     return "obviously all fine in %s" % str(data["data"])
 
+  def get_message_list_by_group(self, group):
+    group_dir = os.path.join('groups', group)
+    # send fresh articles first
+    file_list = [int(k) for k in os.listdir(group_dir)]
+    file_list.sort()
+
+    message_list = list()
+    for link in file_list:
+      try:
+        target = os.path.join(group_dir, str(link))
+        message_id = os.path.basename(os.readlink(target))
+        if os.stat(target).st_size == 0:
+          self.log(self.logger.WARNING, 'empty article found in group %s with id %s pointing to %s' % (group_dir, link, message_id))
+          continue
+      except:
+        self.log(self.logger.ERROR, 'invalid link found in group %s with id %s' % (group_dir, link))
+        continue
+      message_list.append(message_id)
+    return message_list
+
   def run(self):
     self.running = True
     self.feeds = dict()
@@ -699,34 +719,18 @@ class SRNd(threading.Thread):
                   self.log(self.logger.WARNING, 'unknown hook detected. wtf? %s' % current_hook)
         # got all whitelist matching hooks for current group which are not matched by blacklist as well in current_sync_targets. hopefully.
         if len(current_sync_targets) > 0:
-          # send fresh articles first
-          file_list = os.listdir(group_dir)
-          file_list = [int(k) for k in file_list]
-          file_list.sort()
-          synclist[group] = {'targets': current_sync_targets, 'file_list': file_list }
+          synclist[group] = {'targets': current_sync_targets, 'file_list': self.get_message_list_by_group(group) }
     while len(synclist) > 0:
       empty_sync_group = list()
       for group in synclist:
         if len(synclist[group]['file_list']) == 0:
           empty_sync_group.append(group)
         else:
-          group_dir = os.path.join('groups', group)
           sync_chunk = synclist[group]['file_list'][:500]
-          for link in sync_chunk:
-            link = str(link)
-            try:
-              message_id = os.path.basename(os.readlink(os.path.join(group_dir, link)))
-              if os.stat(os.path.join(group_dir, link)).st_size == 0:
-                self.log(self.logger.WARNING, 'empty article found in group %s with id %s pointing to %s' % (group_dir, link, message_id))
-                continue
-            except:
-              self.log(self.logger.ERROR, 'invalid link found in group %s with id %s' % (group_dir, link))
-              continue
+          for message_id in sync_chunk:
             for current_hook in synclist[group]['targets']:
               if current_hook.startswith('outfeed-'):
-                try:
-                  self.feed_db[current_hook].index(message_id)
-                except ValueError:
+                if message_id not in self.feed_db[current_hook]:
                   self.feeds[current_hook].add_article(message_id)
               elif current_hook.startswith('plugin-'):
                 self.plugins[current_hook].add_article(message_id)
