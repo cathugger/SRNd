@@ -797,17 +797,43 @@ class main(threading.Thread):
   def add_article(self, message_id, source=None, timestamp=None):
     self.log(self.logger.WARNING, 'this plugin does not handle any article. remove hook parts from %s' % os.path.join('config', 'plugins', self.name.split('-', 1)[1]))
 
+
+
+  def update_db(self, current_version):
+    self.log(self.logger.INFO, "should update db from version %i" % current_version)
+    if current_version == 0:
+      self.log(self.logger.INFO, "updating db from version %i to version %i" % (current_version, 1))
+      # create configuration
+      self.httpd.postmandb.execute("CREATE TABLE config (key text PRIMARY KEY, value text)")
+      self.httpd.postmandb.execute('INSERT INTO config VALUES ("db_version","1")')
+
+      self.httpd.postmandb.execute('CREATE TABLE userkey (userkey text PRIMARY KEY, \
+        local_name text, expires INTEGER, allow INTEGER, cookie text, last_login INTEGER, postcount INTEGER DEFAULT 0, last_message INTEGER, last_message_id text)')
+      self.httpd.postmandb.execute("CREATE INDEX IF NOT EXISTS userkey_cookie_idx ON userkey(cookie, allow, expires)")
+      self.httpd.postmandb_conn.commit()
+      current_version = 1
+
   def run(self):
     if self.should_terminate:
       return
     # connect to hasher database
     # FIXME: add database_directory to postman?
     self.database_directory = ''
+    self.db_version = 0
     self.httpd.sqlite_conn = sqlite3.connect(os.path.join(self.database_directory, 'hashes.db3'))
     self.httpd.sqlite = self.httpd.sqlite_conn.cursor()
     if self.httpd.overchan_fake_id:
       self.httpd.dropperdb_conn = sqlite3.connect(os.path.join(self.database_directory, 'dropper.db3'))
       self.httpd.dropperdb = self.httpd.dropperdb_conn.cursor()
+    self.httpd.postmandb_conn = sqlite3.connect(os.path.join(self.database_directory, 'postman.db3'))
+    self.httpd.postmandb = self.httpd.postmandb_conn.cursor()
+    try:
+      db_version = int(self.httpd.postmandb.execute("SELECT value FROM config WHERE key = ?", ("db_version",)).fetchone()[0])
+      if db_version < self.db_version:
+        self.update_db(db_version)
+    except Exception as e:
+      self.log(self.logger.DEBUG, "error while fetching db_version: %s. assuming new database" % e)
+      self.update_db(0)
     self.log(self.logger.INFO, 'start listening at http://%s:%i' % (self.ip, self.port))
     self.serving = True
     self.httpd.serve_forever()

@@ -1,0 +1,62 @@
+<html>
+  <head>
+    <title>postman settings</title>
+    <link type="text/css" href="/styles.css" rel="stylesheet">
+    <style type="text/css">
+      .key {
+        text-align: right;
+      }
+      .date {
+        padding-right: 10px;
+      }
+      .action {
+        padding-left: 10px;
+        text-align: center;
+      }
+      .postid {
+        padding-left: 10px;
+      }
+      .reason {
+        text-align: right;
+        padding-left: 10px;
+      }
+      .actions {
+        padding-left: 10px;
+      }
+      .data_center {
+        text-align: center;
+        padding-left: 10px;
+      }
+      .box {
+        border: 1px dotted #AFAFAF;
+      }
+      .good {
+        color: #00E000;
+        text-align: center;
+      }
+      .bad {
+        color: #C92D4E;
+        text-align: center;
+      }
+    </style>
+  </head>
+  <body class="mod">
+    ${navigation}
+    ${modify_user}
+    <div class="box">
+      <b>allow user key</b>
+      <table border="0px" class="datatable">
+        <tr><th>&nbsp;&nbsp;&nbsp;</th><th>local_name</th><th>&nbsp;postcount</th><th>&nbsp;last login</th><th>&nbsp;expires</th><th>&nbsp;status</th><th>&nbsp;<a href="postman?new">add key</a></th></tr>
+        ${allow_userkey}
+      </table>
+    </div>
+    <br />
+    <div class="box">
+      <b>disallow</b>
+      <table border="0px" class="datatable">
+         <tr><th>&nbsp;&nbsp;&nbsp;</th><th>local_name</th><th>&nbsp;postcount</th><th>&nbsp;last login</th><th>&nbsp;expires</th><th>&nbsp;</th></tr>
+         ${disallow_userkey}
+      </table>
+    </div>
+  </body>
+</html>

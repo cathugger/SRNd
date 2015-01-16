@@ -6,6 +6,7 @@ import sqlite3
 import threading
 import time
 import traceback
+import base64
 from binascii import unhexlify
 from calendar import timegm
 from datetime import datetime, timedelta
@@ -66,7 +67,7 @@ class main(threading.Thread):
     self.log(self.logger.DEBUG, 'initializing censor_httpd..')
     args['censor'] = self
     self.httpd = censor_httpd.censor_httpd("censor_httpd", self.logger, args)
-    self.db_version = 7
+    self.db_version = 8
     self.all_flags = "1023"
     self.queue = Queue.Queue()
     self.command_mapper = dict()
@@ -78,6 +79,7 @@ class main(threading.Thread):
     self.command_mapper['overchan-board-add'] = self.handle_board_add
     self.command_mapper['overchan-board-del'] = self.handle_board_del
     self.command_mapper['overchan-board-mod'] = self.handle_overchan_board_mod
+    self.command_mapper['handle-postman-mod'] = self.handle_postman_mod
 
   def shutdown(self):
     self.httpd.shutdown()
@@ -107,7 +109,6 @@ class main(threading.Thread):
       self.censordb.execute('INSERT INTO commands (command, flag) VALUES (?,?)', ("overchan-board-del",         str(0b1000000)))
       self.censordb.execute('INSERT INTO commands (command, flag) VALUES (?,?)', ("srnd-acl-view",              str(0b10000000)))
       self.censordb.execute('INSERT INTO commands (command, flag) VALUES (?,?)', ("srnd-acl-mod",               str(0b100000000)))
-      #self.censordb.execute('INSERT INTO commands (command, flag) VALUES (?,?)', ("srnd-acl-add",      str(0b10000000)))
       #self.censordb.execute('INSERT INTO commands (command, flag) VALUES (?,?)', ("srnd-acl-del",      str(0b1000000000)))
       #self.censordb.execute('INSERT INTO commands (command, flag) VALUES (?,?)', ("testing",           str(0b1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000)))
       
@@ -171,6 +172,12 @@ class main(threading.Thread):
       self.censordb.execute('UPDATE config SET value = "7" WHERE key = "db_version"')
       self.sqlite_censor_conn.commit()
       current_version = 7
+    if current_version == 7:
+      self.log(self.logger.INFO, "updating db from version %i to version %i" % (current_version, 8))
+      self.censordb.execute('INSERT INTO commands (command, flag) VALUES (?,?)', ("handle-postman-mod", str(1024)))
+      self.censordb.execute('UPDATE config SET value = "8" WHERE key = "db_version"')
+      self.sqlite_censor_conn.commit()
+      current_version = 8
 
   def run(self):
     #if self.should_terminate:
@@ -182,6 +189,8 @@ class main(threading.Thread):
     self.censordb = self.sqlite_censor_conn.cursor()
     self.sqlite_overchan_conn = sqlite3.connect('plugins/overchan/overchan.db3')
     self.overchandb = self.sqlite_overchan_conn.cursor()
+    self.postmandb_conn = sqlite3.connect('postman.db3')
+    self.postmandb = self.postmandb_conn.cursor()
     self.allowed_cache = dict()
     self.key_cache = dict()
     self.command_cache = dict()
@@ -522,6 +531,44 @@ class main(threading.Thread):
     except Exception as e:
       self.log(self.logger.WARNING, "could not handle srnd-acl-mod: %s, line = '%s'" % (e, line))
     return (key, None)
+
+  def handle_postman_mod(self, line):
+    self.log(self.logger.DEBUG, "handle postman-mod: %s" % line)
+    userkey, base64_blob = line.split(" ", 2)[1:]
+    try:
+      local_name, allow, expires, logout  = [base64.urlsafe_b64decode(x) for x in base64_blob.split(':')]
+    except:
+      self.log(self.logger.WARNING, 'get corrupt data for %s' % userkey)
+      return (userkey, None)
+    local_name = self.basicHTMLencode(local_name)[:12]
+    try:
+      allow = int(allow)
+      if allow not in (0, 1):
+        allow = 0
+    except ValueError:
+      allow = 0
+    current_time = int(time.time())
+    try:
+      expires = int(expires) * 24 * 3600 + current_time
+      if expires < current_time or expires - current_time > 3650 * 24 * 3600:
+        expires = current_time
+    except ValueError:
+      expires = current_time
+    if logout != '':
+      logout = True
+
+    try:
+      if int(self.postmandb.execute('SELECT count(userkey) FROM userkey WHERE userkey = ?', (userkey,)).fetchone()[0]) == 0:
+        self.log(self.logger.DEBUG, "handle postman-mod: new userkey")
+        self.postmandb.execute("INSERT INTO userkey (userkey, local_name, allow, expires) VALUES (?, ?, ?, ?)", (userkey, local_name, allow, expires))
+      else:
+        self.postmandb.execute("UPDATE userkey SET local_name = ?, allow = ?, expires = ? WHERE userkey = ?", (local_name, allow, expires, userkey))
+        if logout:
+          self.postmandb.execute("UPDATE userkey SET cookie = ? WHERE userkey = ?", ('', userkey))
+      self.postmandb_conn.commit()
+    except Exception as e:
+      self.log(self.logger.WARNING, "could not handle postman-mod: %s, line = '%s'" % (e, line))
+    return (userkey, None)
 
   def handle_delete(self, line, debug=False):
     command, message_id = line.split(" ", 1)

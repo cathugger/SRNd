@@ -80,6 +80,18 @@ class censor(BaseHTTPRequestHandler):
           self.send_redirect(self.root_path + 'settings', "update ok<br />redirecting you in a moment.", 4)
         except Exception as e:
           self.send_redirect(self.root_path + 'settings', "update board failed: %s<br />redirecting you in a moment." % e, 9)
+      elif path.startswith('/postman?'):
+        key = path[9:]
+        flags_available = int(self.origin.sqlite_censor.execute("SELECT flags FROM keys WHERE key=?", (self.origin.sessions[self.session][1],)).fetchone()[0])
+        flag_required = int(self.origin.sqlite_censor.execute('SELECT flag FROM commands WHERE command="handle-postman-mod"').fetchone()[0])
+        if (flags_available & flag_required) != flag_required:
+          self.send_redirect(self.root_path + 'postman', "not authorized, flag handle-postman-mod missing.<br />redirecting you in a moment.", 7)
+          return
+        try:
+          self.handle_update_postman(key)
+          self.send_redirect(self.root_path + 'postman', "update ok<br />redirecting you in a moment.", 4)
+        except Exception as e:
+          self.send_redirect(self.root_path + 'postman', "update postman db failed: %s<br />redirecting you in a moment." % e, 9)
       else:
         self.send_keys()
       return
@@ -131,6 +143,12 @@ class censor(BaseHTTPRequestHandler):
           self.send_settings(key)
         else:
           self.send_settings()
+      elif path.startswith('/postman'):
+        if path.startswith('/postman?'):
+          key = path[9:]
+          self.send_postman_settings(key)
+        else:
+          self.send_postman_settings()
       elif path.startswith('/showmessage?'):
         self.send_message(path[13:])
       elif path.startswith('/delete?'):
@@ -215,6 +233,31 @@ class censor(BaseHTTPRequestHandler):
       aliases_blob = ''
     if comment == '': return
     self.origin.censor.add_article((self.origin.sessions[self.session][1], "overchan-board-mod {0} {1} {2}#{3}".format(board_name, result, aliases_blob, comment)), "httpd")
+
+  def handle_update_postman(self, userkey_new=''):
+    post_vars = FieldStorage(
+      fp=self.rfile,
+      headers=self.headers,
+      environ={
+        'REQUEST_METHOD':'POST',
+        'CONTENT_TYPE':self.headers['Content-Type'],
+      }
+    )
+    userkey = post_vars.getvalue('userkey', userkey_new)
+    try:
+      vk = nacl.signing.VerifyKey(unhexlify(userkey))
+      del vk
+    except Exception as e:
+      raise Exception("invalid key: %s" % e)
+
+    data_row = ('local_name', 'allow', 'expires', 'logout',)
+    data_blob = ':'.join([base64.urlsafe_b64encode(post_vars.getvalue(x, '').strip()) for x in data_row])
+    if userkey_new == 'new':
+      comment = 'add new key'
+    else:
+      comment = 'modify key, sign: %s' % sha1(data_blob).hexdigest()[:6]
+
+    self.origin.censor.add_article((self.origin.sessions[self.session][1], "handle-postman-mod {0} {1}#{2}".format(userkey, data_blob, comment)), "httpd")
 
   def get_senderhash(self):
     if 'X-I2P-DestHash' in self.headers:
@@ -671,6 +714,78 @@ class censor(BaseHTTPRequestHandler):
     self.send_header('Content-type', 'text/html')
     self.end_headers()
     self.wfile.write(out.encode('UTF-8'))
+
+  def send_postman_settings(self, userkey=''):
+    data = dict()
+    data['navigation'] = ''.join(self.__get_navigation('postman'))
+    allow_table = list()
+    disallow_table = list()
+    current_time = int(time.time())
+    modify_user = list()
+    for row in self.origin.postmandb.execute('SELECT userkey, local_name, postcount, last_login, expires, allow FROM userkey ORDER BY abs(postcount) DESC, last_login ASC').fetchall():
+      if row[0] == userkey:
+        modify_user = (row[0], row[1], row[4], row[5])
+      postman_row = dict()
+      postman_row['userkey'] = row[0]
+      postman_row['local_name'] = row[1]
+      postman_row['postcount'] = row[2]
+      try:
+        postman_row['last_login'] = datetime.utcfromtimestamp(row[3]).strftime('%d.%m.%y %H:%M')
+      except TypeError:
+        postman_row['last_login'] = 'None'
+      postman_row['expires'] = datetime.utcfromtimestamp(row[4]).strftime('%d.%m.%y %H:%M')
+      if row[5]:
+        if int(row[4]) < current_time:
+          postman_row['status'] = '<td class="bad">expired</td>'
+        else:
+          postman_row['status'] = '<td class="good">OK</td>'
+        allow_table.append(self.origin.t_engine_postman_row.substitute(postman_row))
+      else:
+        postman_row['status'] = ''
+        disallow_table.append(self.origin.t_engine_postman_row.substitute(postman_row))
+
+    data['allow_userkey'] = ''.join(allow_table)
+    data['disallow_userkey'] = ''.join(disallow_table)
+
+    if len(modify_user) > 0:
+      data['modify_user'] = self.postman_modify_user(modify_user)
+    elif userkey == 'new':
+      data['modify_user'] = self.postman_modify_user(('new', '', 0, 0))
+    else:
+      data['modify_user'] = ''
+
+    self.send_response(200)
+    self.send_header('Content-type', 'text/html')
+    self.end_headers()
+    self.wfile.write(self.origin.t_engine_postman.substitute(data).encode('UTF-8'))
+
+  def postman_modify_user(self, user_data):
+    current_time = int(time.time())
+    form_data = dict()
+    form_data['userkey'] = user_data[0]
+    if user_data[0] == 'new':
+      form_data['action'] = 'add'
+      form_data['userkey_edit'] = '<input type="text" name="userkey" value="" class="posttext" maxlength="64"/>'
+      pass
+    else:
+      form_data['action'] = 'modify'
+      form_data['userkey_edit'] = user_data[0]
+    form_data['local_name'] = user_data[1]
+    try:
+      form_data['expires'] = int(round((user_data[2] - current_time) / (24 * 3600.0)))
+      if form_data['expires'] < 0:
+        form_data['expires'] = 0
+    except ValueError:
+      form_data['expires'] = 0
+    try:
+      if int(user_data[3]) > 0:
+        form_data['allow'] = ' checked="checked"'
+      else:
+        form_data['allow'] = ''
+    except ValueError:
+      form_data['allow'] = ''
+
+    return self.origin.t_engine_modify_postman.substitute(form_data)
     
   def handle_delete(self, message_id):
     path = os.path.join('articles', 'censored', message_id)
@@ -843,7 +958,8 @@ class censor(BaseHTTPRequestHandler):
   def __get_navigation(self, current, add_after=None):
     out = list()
     #out.append('<div class="navigation">')
-    for item in (('key_stats', 'key stats'), ('moderation_log', 'moderation log'), ('pic_log', 'pic log'), ('message_log', 'message log'),('stats', 'stats'), ('settings', 'settings')):
+    for item in (('key_stats', 'key stats'), ('moderation_log', 'moderation log'), ('pic_log', 'pic log'),
+        ('message_log', 'message log'),('stats', 'stats'), ('settings', 'settings'), ( 'postman', 'postman')):
       if item[0] == current:
         out.append(item[1] + '&nbsp;')
       else:
@@ -1156,6 +1272,15 @@ class censor_httpd(threading.Thread):
     f = open(os.path.join(template_directory, 'message_log_row.tmpl'), 'r')
     self.httpd.t_engine_message_log_row = string.Template(f.read())
     f.close()
+    f = open(os.path.join(template_directory, 'postman.tmpl'), 'r')
+    self.httpd.t_engine_postman = string.Template(f.read())
+    f.close()
+    f = open(os.path.join(template_directory, 'postman_row.tmpl'), 'r')
+    self.httpd.t_engine_postman_row = string.Template(f.read())
+    f.close()
+    f = open(os.path.join(template_directory, 'modify_postman.tmpl'), 'r')
+    self.httpd.t_engine_modify_postman = string.Template(f.read())
+    f.close()
     #f = open(os.path.join(template_directory, 'message_pic.template'), 'r')
     #self.httpd.template_message_pic = f.read()
     #f.close()
@@ -1182,11 +1307,15 @@ class censor_httpd(threading.Thread):
     # FIXME get overchan db path via arg
     self.httpd.sqlite_overchan_conn = sqlite3.connect('plugins/overchan/overchan.db3', timeout=15)
     self.httpd.sqlite_overchan = self.httpd.sqlite_overchan_conn.cursor()
+    self.httpd.postmandb_conn = sqlite3.connect('postman.db3', timeout=15)
+    self.httpd.postmandb = self.httpd.postmandb_conn.cursor()
+
     self.log(self.logger.INFO, 'start listening at http://%s:%i' % (self.ip, self.port))
     self.httpd.serve_forever()
     self.httpd.sqlite_hasher_conn.close()
     self.httpd.sqlite_censor_conn.close()
     self.httpd.sqlite_overchan_conn.close()
+    self.httpd.postmandb_conn.close()
     self.httpd.rnd.close()
     self.log(self.logger.INFO, 'bye')
 
