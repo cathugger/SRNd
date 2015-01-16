@@ -232,7 +232,7 @@ class postman(BaseHTTPRequestHandler):
       identifier.update(comment)
       self.origin.log(self.origin.logger.WARNING, 'failed capture try for %s' % identifier.hexdigest())
       self.origin.log(self.origin.logger.WARNING, self.headers)
-    passphrase = ''.join([random.choice(self.origin.captcha_alphabet) for i in xrange(6)])
+    passphrase = ''.join([random.choice(self.origin.captcha_alphabet) for i in xrange(self.origin.captcha_len)])
     #passphrase += ' ' + ''.join([random.choice(self.origin.captcha_alphabet) for i in xrange(6)])
     b64 = self.origin.captcha_render_b64(passphrase, self.origin.captcha_tiles, self.origin.get_captcha_font(), self.origin.captcha_filter)
     if self.origin.captcha_require_cookie:
@@ -733,6 +733,7 @@ class main(threading.Thread):
     self.httpd.fake_ok = False
     self.httpd.captcha_verification = True
     self.httpd.captcha_require_cookie = False
+    self.httpd.captcha_len = 6
     self.httpd.captcha_bypass_after_seconds_reply = 60 * 10
     self.httpd.captcha_bypass_after_timestamp_reply = int(time.time()) 
     self.httpd.captcha_generate = self.captcha_generate
@@ -867,7 +868,7 @@ class main(threading.Thread):
   def captcha_verify(self, expires, solution_hash, guess, secret):
     try: expires = int(expires)
     except: return False
-    if int(time.time()) > expires:
+    if int(time.time()) > expires or len(guess) != self.httpd.captcha_len or expires - int(time.time()) > 3600:
       return False
     if not expires % 3:
       if solution_hash != sha256('%s%s%i' % (guess, secret, expires)).hexdigest(): return False
