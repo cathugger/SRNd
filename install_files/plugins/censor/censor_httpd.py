@@ -45,6 +45,13 @@ class censor(BaseHTTPRequestHandler):
       else:
         self.send_login("totally not")
       return
+    elif self.path =='/moderate?login':
+      is_success, new_cookie = self.user_login('ananas')
+      if is_success:
+        self.send_redirect('/', 'Welcome, again!', 3, new_cookie)
+      else:
+        self.send_redirect('/img/suicide.txt', 'totally not', 1)
+      return
     elif self.path.startswith("/moderate"):
       if not self.legal_session(self.path[10:58]):
         self.send_login()
@@ -107,6 +114,10 @@ class censor(BaseHTTPRequestHandler):
       secret = self.origin.rnd.read(32)
       public = nacl.signing.SigningKey(secret).verify_key.encode()
       self.send_error("secret: %s\npublic: %s" % (hexlify(secret), hexlify(public)))
+      return
+    elif self.path == '/moderate?login':
+      cookie = self.get_cookie('ananas')
+      self.send_login(self.get_name_by_cookie(cookie), '/moderate?login')
       return
     elif self.path.startswith("/moderate"):
       if not self.legal_session(self.path[10:58]):
@@ -314,18 +325,77 @@ class censor(BaseHTTPRequestHandler):
       self.origin.log(self.origin.logger.WARNING, self.headers)
       return False
 
-  def send_redirect(self, target, message, wait=0):
+  def user_login(self, cookie_name='Error'):
+    current_time = int(time.time())
+    post_vars = FieldStorage(
+      fp=self.rfile,
+      headers=self.headers,
+      environ={
+        'REQUEST_METHOD':'POST',
+        'CONTENT_TYPE':self.headers['Content-Type'],
+      }
+    )
+
+    if not 'secret' in post_vars:
+      self.origin.log(self.origin.logger.WARNING, 'user login: no secret key received')
+      self.origin.log(self.origin.logger.WARNING, self.headers)
+      return False, None
+    if len(post_vars['secret'].value) != 64:
+      self.origin.log(self.origin.logger.WARNING, 'user login: invalid secret key received, length != 64')
+      self.origin.log(self.origin.logger.WARNING, self.headers)
+      return False, None
+    try:
+      public = hexlify(nacl.signing.SigningKey(unhexlify(post_vars['secret'].value)).verify_key.encode())
+      expires = self.origin.postmandb.execute('SELECT expires FROM userkey WHERE userkey = ? AND allow = 1 AND expires > ?', (public, current_time)).fetchone()
+    except Exception as e:
+      self.origin.log(self.origin.logger.WARNING, 'user login: invalid secret key received: %s' % e)
+      self.origin.log(self.origin.logger.WARNING, self.headers)
+      return False, None
+    if expires:
+      new_cookie = hexlify(self.origin.rnd.read(24))
+      set_cookie = '{0}={1}; expires={2}; path=/;'.format(cookie_name, new_cookie, datetime.utcfromtimestamp(expires[0]).strftime('%a, %d-%b-%Y %T GMT'))
+      try:
+        self.origin.postmandb.execute('UPDATE userkey SET last_login = ?, cookie = ? WHERE userkey = ?', (current_time, new_cookie, public))
+        self.origin.postmandb_conn.commit()
+      except Exception as e:
+        self.origin.log(self.origin.logger.WARNING, 'user login: error database update %s' % e)
+        return False, set_cookie
+      return True, set_cookie
+    else:
+      self.origin.log(self.origin.logger.WARNING, 'user login: disallow user key %s' % public)
+      return False, None
+
+  def send_redirect(self, target, message, wait=0, set_cookie=''):
     self.send_response(200)
     self.send_header('Content-type', 'text/html')
+    if set_cookie != '':
+      self.send_header('Set-Cookie', set_cookie)
     self.end_headers()
     self.wfile.write('<html><head><link type="text/css" href="/styles.css" rel="stylesheet"><META HTTP-EQUIV="Refresh" CONTENT="%i; URL=%s"></head><body class="mod"><center><br /><b>%s</b></center></body></html>' % (wait, target, message))
     return
 
-  def send_login(self, message=""):
+  def send_login(self, message='', target='/moderate?auth'):
     self.send_response(200)
     self.send_header('Content-type', 'text/html')
     self.end_headers()
-    self.wfile.write('<html><head><link type="text/css" href="/styles.css" rel="stylesheet"></head><body class="mod"><center>%s<br /><form action="/moderate?auth" enctype="multipart/form-data" method="POST"><label>your secret</label>&nbsp;<input type="text" name="secret" style="width: 400px;"/><input type="submit" /></form></html></html>' % message)
+    self.wfile.write(self.origin.t_engine_send_login.substitute({'message': message, 'target': target}).encode('UTF-8'))
+
+  def get_cookie(self, cookie_name):
+    cookie = self.headers.get('Cookie')
+    if cookie:
+      cookie = cookie.strip()
+      for item in cookie.split(';'):
+        if item.startswith('%s=' % cookie_name):
+          cookie = item
+          break
+      return cookie.strip().split('=', 1)[1]
+    return ''
+
+  def get_name_by_cookie(self, cookie):
+    if cookie != '':
+      return 'What you want?'
+    return 'Hello $username'
+
 
   def send_modify_key(self, key, create_key=False):    
     if create_key:
@@ -1280,6 +1350,9 @@ class censor_httpd(threading.Thread):
     f.close()
     f = open(os.path.join(template_directory, 'modify_postman.tmpl'), 'r')
     self.httpd.t_engine_modify_postman = string.Template(f.read())
+    f.close()
+    f = open(os.path.join(template_directory, 'send_login.tmpl'), 'r')
+    self.httpd.t_engine_send_login = string.Template(f.read())
     f.close()
     #f = open(os.path.join(template_directory, 'message_pic.template'), 'r')
     #self.httpd.template_message_pic = f.read()
