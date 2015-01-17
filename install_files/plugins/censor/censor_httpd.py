@@ -715,12 +715,12 @@ class censor(BaseHTTPRequestHandler):
     stats_data = dict()
     t_2_rows = '<tr><td class="right">%s</td><td>%s</td></tr>'
     t_3_rows = '<tr><td>%s</td><td class="right">%s</td><td>%s</td></tr>'
-    t_4_rows = '<tr><td>%s</td><td class="right">%s</td><td>%s</td><td>%s</td></tr>'
+    t_g_stat = '<tr><td class="right">%s</td><td>%s</td><td class="right">%s</td></tr>'
 
     stats_data['navigation']             = ''.join(self.__get_navigation('stats'))
     stats_data['stats_usage']            = ''.join( t_3_rows % x for x in self.__stats_usage(31, 30)    )
     stats_data['stats_fronteds']         = ''.join( t_2_rows % x for x in self.__stats_frontends()      )
-    stats_data['stats_groups']           = ''.join( t_2_rows % x for x in self.__stats_groups()         )
+    stats_data['stats_groups']           = ''.join( t_g_stat % x for x in self.__stats_groups()         )
     stats_data['stats_usage_month']      = ''.join( t_3_rows % x for x in self.__stats_usage_month(30)  )
     stats_data['stats_usage_weekday_28'] = ''.join( t_3_rows % x for x in self.__stats_usage_weekday(28))
     stats_data['stats_usage_weekday']    = ''.join( t_3_rows % x for x in self.__stats_usage_weekday()  )
@@ -931,18 +931,33 @@ class censor(BaseHTTPRequestHandler):
         hosts.append((row[0], row[1]))        
     return hosts
 
-  def __stats_groups(self, ids=False, status=False):
+  def __sizeof_human_readable(self, num, suffix='B'):
+    for unit in ['','Ki','Mi','Gi','Ti','Pi','Ei','Zi']:
+        if abs(num) < 1024.0:
+            return "%3.1f%s%s" % (num, unit, suffix)
+        num /= 1024.0
+    return "%.1f%s%s" % (num, 'Yi', suffix)
+
+  def __stats_groups(self):
+    find_path = 'groups'
+    articles_path = 'articles'
     groups = list()
-    for row in self.origin.sqlite_overchan.execute('SELECT count(1) as counter, group_name, groups.group_id, flags FROM articles, groups WHERE articles.group_id = groups.group_id GROUP BY articles.group_id ORDER BY counter DESC').fetchall():
-      if ids and status:
-        groups.append((row[0], row[1], row[2], row[3]))
-      elif ids:
-        groups.append((row[0], row[1], row[2]))
-      elif status:
-        groups.append((row[0], row[1], row[3]))
-      else:
-        groups.append((row[0], row[1].replace(',', ',<br />')))
-    return groups
+    summary = [0, 0]
+    for group in os.listdir(find_path):
+      target = os.path.join(find_path, group)
+      if os.path.isdir(target):
+        all_size, counts = 0, 0
+        for article in os.listdir(target):
+          try:
+            all_size += os.path.getsize(os.path.join(articles_path, os.path.basename(os.readlink(os.path.join(target, article)))))
+          except: pass
+          else: counts += 1
+        if counts > 0:
+          summary[0] += counts
+          summary[1] += all_size
+          groups.append((counts, group, self.__sizeof_human_readable(all_size)))
+    groups.append((summary[0], 'all', self.__sizeof_human_readable(summary[1])))
+    return sorted(groups, key=lambda x: x[0], reverse=True)
 
   def __stats_usage_by_frontend(self, days=7, bar_length=29):    
     stats = list()
