@@ -42,20 +42,19 @@
   </head>
   <body class="mod">
     ${navigation}
-    ${modify_user}
-    <div class="box">
+${modify_user}    <div class="box">
       <b>allow user key</b>
       <table border="0px" class="datatable">
         <tr><th>&nbsp;&nbsp;&nbsp;</th><th>local_name</th><th>&nbsp;postcount</th><th>&nbsp;last login</th><th>&nbsp;expires</th><th>&nbsp;status</th><th>&nbsp;<a href="postman?new">add key</a></th></tr>
-        ${allow_userkey}
+${allow_userkey}
       </table>
     </div>
     <br />
     <div class="box">
       <b>disallow</b>
       <table border="0px" class="datatable">
-         <tr><th>&nbsp;&nbsp;&nbsp;</th><th>local_name</th><th>&nbsp;postcount</th><th>&nbsp;last login</th><th>&nbsp;expires</th><th>&nbsp;</th></tr>
-         ${disallow_userkey}
+        <tr><th>&nbsp;&nbsp;&nbsp;</th><th>local_name</th><th>&nbsp;postcount</th><th>&nbsp;last login</th><th>&nbsp;expires</th><th>&nbsp;</th></tr>
+${disallow_userkey}
       </table>
     </div>
   </body>

@@ -678,7 +678,7 @@ class censor(BaseHTTPRequestHandler):
       message_log_row['articlehash_full'] = articlehash_full
       message_log_row['articlehash'] = articlehash_full[:10]
       table.append(self.origin.t_engine_message_log_row.substitute(message_log_row))
-    message_log['content'] = ''.join(table)
+    message_log['content'] = '\n'.join(table)
     message_log['target'] = self.root_path + 'message_log'
     self.send_response(200)
     self.send_header('Content-type', 'text/html')
@@ -780,16 +780,16 @@ class censor(BaseHTTPRequestHandler):
       postman_row['expires'] = datetime.utcfromtimestamp(row[4]).strftime('%d.%m.%y %H:%M')
       if row[5]:
         if int(row[4]) < current_time:
-          postman_row['status'] = '<td class="bad">expired</td>'
+          postman_row['status'] = '\n          <td class="bad">expired</td>'
         else:
-          postman_row['status'] = '<td class="good">OK</td>'
+          postman_row['status'] = '\n          <td class="good">OK</td>'
         allow_table.append(self.origin.t_engine_postman_row.substitute(postman_row))
       else:
         postman_row['status'] = ''
         disallow_table.append(self.origin.t_engine_postman_row.substitute(postman_row))
 
-    data['allow_userkey'] = ''.join(allow_table)
-    data['disallow_userkey'] = ''.join(disallow_table)
+    data['allow_userkey'] = '\n'.join(allow_table)
+    data['disallow_userkey'] = '\n'.join(disallow_table)
 
     if len(modify_user) > 0:
       data['modify_user'] = self.postman_modify_user(modify_user)
