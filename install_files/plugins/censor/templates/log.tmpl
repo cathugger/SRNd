@@ -3,10 +3,7 @@
     <title>foobar</title>
     <link type="text/css" href="/styles.css" rel="stylesheet">
     <style type="text/css">
-      .mod_accepted tr:nth-child(2n+2) {
-          background: none repeat scroll 0 0 #151515;
-      }
-      .mod_ignored tr:nth-child(2n+2) {
+      .mod_log tr:nth-child(2n+2) {
           background: none repeat scroll 0 0 #151515;
       }
       td, th {
@@ -42,10 +39,10 @@
     </style>
   </head>
   <body class="mod">
-    %%navigation%%
+    ${navigation}
     <div class="box">
-      <b>moderation accepted log</b>
-      <table class="mod_accepted">
+      <b>moderation [ ${accepted_log} | ${ignored_log} ]</b>
+      <table class="mod_log">
         <tr>
           <th>&nbsp;</th>
           <th>&nbsp;</th>
@@ -55,27 +52,11 @@
           <th>&nbsp;</th>
           <th>comment</th>
         </tr>
-        %%mod_accepted%%
+${mod_log}
       </table>
     </div>
     <br />
-    <div class="box">
-      <b>moderation ignored log</b>
-      <table class="mod_ignored">
-        <tr>
-          <th>&nbsp;</th>
-          <th>&nbsp;</th>
-          <th class="data">action</th>
-          <th>target</th>
-          <th>reason</th>
-          <th>&nbsp;</th>
-          <th>comment</th>
-        </tr>
-        %%mod_ignored%%
-      </table>
-    </div>
-    <br />
-    %%pagination%%
+    ${pagination}
     <br />
   </body>
 </html>

@@ -131,7 +131,7 @@ class censor(BaseHTTPRequestHandler):
       elif path.startswith('/moderation_log'):
         try:    page = int(path[16:])
         except: page = 1
-        if page < 1: page = 1
+        if page == 0: page = 1
         self.send_log(page)
       elif path.startswith('/message_log'):
         self.send_messagelog()
@@ -531,107 +531,95 @@ class censor(BaseHTTPRequestHandler):
     self.wfile.write(out)
 
   def hidden_line(self, line, max_len = 60):
-    line = line.replace("<", "&lt;").replace(">", "&gt;").strip()
     if 16 < max_len < len(line):
       return '%s[..]%s' % (line[:6], line[-6:])
     else:
       return line
 
   def send_log(self, page=1, pagecount=100):
-    out = self.origin.template_log
-    pagination = '<div style="float:right;">'
-    if page > 1:
-      pagination += '<a href="moderation_log?%i">previous</a>' % (page-1)
+    log_body = dict()
+    if page < 0:
+      page *= -1
+      log_accepted = 0
+      page_corrector = -1
+      log_body['accepted_log'] = '<a href="moderation_log?1">accepted log</a>'
+      log_body['ignored_log'] = 'ignored log'
     else:
-      pagination += 'previous'
-    pagination += '&nbsp;<a href="moderation_log?%i">next</a></div>' % (page+1)
-    out = out.replace("%%navigation%%", ''.join(self.__get_navigation('moderation_log', add_after=pagination)))
-    out = out.replace('%%pagination%%', pagination)
-    table = list()    
-    for row in self.origin.sqlite_censor.execute("SELECT key, local_name, command, data, reason, comment, timestamp FROM log, commands, keys, reasons WHERE log.accepted = 1 AND keys.id = log.key_id AND commands.id = log.command_id AND reasons.id = log.reason_id ORDER BY log.id DESC LIMIT ?, ?", ((page-1)*pagecount, pagecount)).fetchall():
-      cur_template = self.origin.template_log_accepted
+      page_corrector = 1
+      log_accepted = 1
+      log_body['accepted_log'] = 'accepted log'
+      log_body['ignored_log'] = '<a href="moderation_log?-1">ignored log</a>'
+    log_body['pagination'] = '<div style="float:right;">'
+    if page > 1:
+      log_body['pagination'] += '<a href="moderation_log?%i">previous</a>' % ((page-1)*page_corrector)
+    else:
+      log_body['pagination'] += 'previous'
+    log_body['pagination'] += '&nbsp;<a href="moderation_log?%i">next</a></div>' % ((page+1)*page_corrector)
+    log_body['navigation'] = ''.join(self.__get_navigation('moderation_log', add_after=log_body['pagination']))
+    table = list()
+    for row in self.origin.sqlite_censor.execute("SELECT key, local_name, command, data, reason, comment, timestamp FROM log, commands, keys, reasons WHERE\
+        log.accepted = ? AND keys.id = log.key_id AND commands.id = log.command_id AND reasons.id = log.reason_id ORDER BY log.id DESC LIMIT ?, ?",
+        (log_accepted, (page-1)*pagecount, pagecount)).fetchall():
+      log_row = dict()
       if row[1] != '':
-        cur_template = cur_template.replace("%%key_or_nick%%", self.hidden_line(row[1], 30))
+        log_row['key_or_nick'] = self.basicHTMLencode(self.hidden_line(row[1], 30))
       else:
-        cur_template = cur_template.replace("%%key_or_nick%%", self.hidden_line(row[0]))
-      cur_template = cur_template.replace("%%key%%", row[0])
-      cur_template = cur_template.replace("%%action%%", row[2])
-      cur_template = cur_template.replace("%%reason%%", row[4])
-      cur_template = cur_template.replace("%%date%%", datetime.utcfromtimestamp(row[6]).strftime('%Y/%m/%d %H:%M'))
-      comment_zip  = [self.hidden_line(x, 30)  for x in row[5].split(' ')]
-      cur_template = cur_template.replace("%%comment%%", " ".join(comment_zip))
-      del comment_zip[:]
-      data = self.hidden_line(row[3], 64)
-      if row[2] == 'srnd-acl-mod':
-        cur_template = cur_template.replace("%%postid%%", data)
-        cur_template = cur_template.replace("%%restore_link%%", '<a href="modify?%s">modify key</a>' % (row[3]))
-        cur_template = cur_template.replace("%%delete_link%%", '')
-      elif row[2] in ('overchan-board-mod', 'overchan-board-add', 'overchan-board-del'):
-        cur_template = cur_template.replace("%%postid%%", data)
-        cur_template = cur_template.replace("%%restore_link%%", '<a href="settings?name=%s">modify board</a>' % (row[3]))
-        cur_template = cur_template.replace("%%delete_link%%", '')
-      elif row[2] not in ('delete', 'overchan-delete-attachment', 'overchan-sticky', 'overchan-close'):
-        cur_template = cur_template.replace("%%postid%%", data)
-        cur_template = cur_template.replace("%%restore_link%%", '').replace("%%delete_link%%", '')
-      else:
+        log_row['key_or_nick'] = self.hidden_line(row[0])
+      log_row['key'] = row[0]
+      log_row['action'] = row[2]
+      log_row['reason'] = row[4]
+      log_row['comment'] = self.basicHTMLencode(row[5][:60])
+      log_row['date'] = datetime.utcfromtimestamp(row[6]).strftime('%d.%m.%y %H:%M')
+      data = self.basicHTMLencode(self.hidden_line(row[3], 64))
+      if row[2] in ('delete', 'overchan-delete-attachment', 'overchan-sticky', 'overchan-close'):
         message_id = row[3].replace("<", "&lt;").replace(">", "&gt;")
         try:
           if os.stat(os.path.join('articles', 'censored', row[3])).st_size > 0:
-            cur_template = cur_template.replace("%%postid%%", '<a href="showmessage?%s" target="_blank">%s</a>' % (message_id, data))
+            log_row['postid'] = '<a href="showmessage?%s" target="_blank">%s</a>' % (message_id, data)
             if row[2] in ('delete', 'overchan-delete-attachment'):
-              cur_template = cur_template.replace("%%restore_link%%", '<a href="restore?%s">restore</a>&nbsp;' % message_id)
+              log_row['restore_link'] = '<a href="restore?%s">restore</a>&nbsp;' % message_id
             else:
-              cur_template = cur_template.replace("%%restore_link%%", '')
-            cur_template = cur_template.replace("%%delete_link%%", '<a href="delete?%s">delete</a>&nbsp;' % message_id)
+              log_row['restore_link'] = ''
+            log_row['delete_link'] = '<a href="delete?%s">delete</a>&nbsp;' % message_id
           else:
-            cur_template = cur_template.replace("%%postid%%", data)
-            cur_template = cur_template.replace("%%restore_link%%", '').replace("%%delete_link%%", '')
+            log_row['postid'] = data
+            log_row['restore_link'] = ''
+            log_row['delete_link'] = ''
         except:
-          cur_template = cur_template.replace("%%postid%%", data)
-          cur_template = cur_template.replace("%%delete_link%%", '')
+          log_row['postid'] = data
+          log_row['delete_link'] = ''
           if os.path.isfile(os.path.join('articles', row[3])):
             item_row = self.origin.sqlite_overchan.execute('SELECT parent FROM articles WHERE article_uid = ?', (row[3],)).fetchone()
             if item_row:
               if item_row[0] == '':
-                cur_template = cur_template.replace("%%restore_link%%", '<a href="/thread-%s.html" target="_blank">view thread</a>&nbsp;' % sha1(row[3]).hexdigest()[:10])
+                log_row['restore_link'] = '<a href="/thread-%s.html" target="_blank">view thread</a>&nbsp;' % sha1(row[3]).hexdigest()[:10]
               else:
-                cur_template = cur_template.replace("%%restore_link%%", '<a href="/thread-%s.html#%s" target="_blank">view post</a>&nbsp;' % (sha1(item_row[0]).hexdigest()[:10], sha1(row[3]).hexdigest()[:10]))
+                log_row['restore_link'] = '<a href="/thread-%s.html#%s" target="_blank">view post</a>&nbsp;' % (sha1(item_row[0]).hexdigest()[:10], sha1(row[3]).hexdigest()[:10])
             else:
-              cur_template = cur_template.replace("%%restore_link%%", 'restored&nbsp;')
+              log_row['restore_link'] = 'restored&nbsp;'
           else:
-            cur_template = cur_template.replace("%%restore_link%%", '')
-      table.append(cur_template)
-    out = out.replace("%%mod_accepted%%", "\n".join(table))
-    del table[:]
-    for row in self.origin.sqlite_censor.execute("SELECT key, local_name, command, data, reason, comment, timestamp FROM log, commands, keys, reasons WHERE log.accepted = 0 AND keys.id = log.key_id AND commands.id = log.command_id AND reasons.id = log.reason_id ORDER BY log.id DESC LIMIT ?, ?", ((page-1)*pagecount, pagecount)).fetchall():
-      cur_template = self.origin.template_log_ignored
-      if row[1] != '':
-        cur_template = cur_template.replace("%%key_or_nick%%", self.hidden_line(row[1], 30))
+            log_row['restore_link'] = ''
       else:
-        cur_template = cur_template.replace("%%key_or_nick%%", self.hidden_line(row[0]))
-      cur_template = cur_template.replace("%%key%%", row[0])
-      cur_template = cur_template.replace("%%action%%", row[2])
-      comment_zip  = [self.hidden_line(x, 30)  for x in row[5].split(' ')]
-      cur_template = cur_template.replace("%%comment%%", " ".join(comment_zip))
-      message_id = row[3].replace("<", "&lt;").replace(">", "&gt;")
-      data = self.hidden_line(row[3], 64)
-      try:
-        if os.stat(os.path.join('articles', row[3])).st_size > 0:
-          cur_template = cur_template.replace("%%postid%%", '<a href="showmessage?%s" target="_blank">%s</a>' % (message_id, data))
+        log_row['postid'] = data
+        log_row['delete_link'] = ''
+        if row[2] == 'srnd-acl-mod':
+          log_row['restore_link'] = '<a href="modify?%s">modify key</a>' % row[3]
+        elif row[2] == 'handle-postman-mod':
+          log_row['restore_link'] = '<a href="postman?%s">modify key</a>' % row[3]
+        elif row[2] in ('overchan-board-mod', 'overchan-board-add', 'overchan-board-del'):
+          log_row['restore_link'] = '<a href="settings?name=%s">modify board</a>' % self.basicHTMLencode(row[3])
         else:
-          cur_template = cur_template.replace("%%postid%%", data)
-      except:
-        cur_template = cur_template.replace("%%postid%%", message_id)
-      cur_template = cur_template.replace("%%reason%%", row[4])
-      cur_template = cur_template.replace("%%date%%", datetime.utcfromtimestamp(row[6]).strftime('%Y/%m/%d %H:%M'))
-      table.append(cur_template)
-    out = out.replace("%%mod_ignored%%", "\n".join(table))
-    del table[:]
+          log_row['restore_link'] = ''
+      if log_accepted == 1:
+        table.append(self.origin.t_engine_log_accepted.substitute(log_row))
+      else:
+        table.append(self.origin.t_engine_log_ignored.substitute(log_row))
 
+    log_body['mod_log'] = ''.join(table).rstrip()
     self.send_response(200)
     self.send_header('Content-type', 'text/html')
     self.end_headers()
-    self.wfile.write(out)
+    self.wfile.write(self.origin.t_engine_log.substitute(log_body).encode('UTF-8'))
     
   def send_piclog(self, page=1, pagecount=30):
     #out = '<html><head><link type="text/css" href="/styles.css" rel="stylesheet"><style type="text/css">body { margin: 10px; margin-top: 20px; font-family: monospace; font-size: 9pt; } .navigation { background: #101010; padding-top: 19px; position: fixed; top: 0; width: 100%; }</style></head><body>%%navigation%%'
@@ -1285,20 +1273,11 @@ class censor_httpd(threading.Thread):
     f = open(os.path.join(template_directory, 'keys.tmpl'), 'r')
     self.httpd.template_keys = f.read()
     f.close()
-    f = open(os.path.join(template_directory, 'log.tmpl'), 'r')
-    self.httpd.template_log = f.read()
-    f.close()
-    f = open(os.path.join(template_directory, 'log_accepted.tmpl'), 'r')
-    self.httpd.template_log_accepted = f.read()
-    f.close()
     f = open(os.path.join(template_directory, 'log_flagnames.tmpl'), 'r')
     self.httpd.template_log_flagnames = f.read()
     f.close()
     f = open(os.path.join(template_directory, 'log_flagset.tmpl'), 'r')
     self.httpd.template_log_flagset = f.read()
-    f.close()
-    f = open(os.path.join(template_directory, 'log_ignored.tmpl'), 'r')
-    self.httpd.template_log_ignored = f.read()
     f.close()
     f = open(os.path.join(template_directory, 'log_unknown.tmpl'), 'r')
     self.httpd.template_log_unknown = f.read()
@@ -1333,6 +1312,9 @@ class censor_httpd(threading.Thread):
     f = open(os.path.join(template_directory, 'evil_mod.tmpl'), 'r')
     template_evil_mod = f.read()
     f.close()
+    f = open(os.path.join(template_directory, 'log_row.tmpl'), 'r')
+    template_log_row = f.read()
+    f.close()
     f = open(os.path.join(template_directory, 'message_log.tmpl'), 'r')
     self.httpd.t_engine_message_log = string.Template(
       string.Template(f.read()).safe_substitute(
@@ -1354,6 +1336,23 @@ class censor_httpd(threading.Thread):
     f.close()
     f = open(os.path.join(template_directory, 'send_login.tmpl'), 'r')
     self.httpd.t_engine_send_login = string.Template(f.read())
+    f.close()
+    f = open(os.path.join(template_directory, 'log.tmpl'), 'r')
+    self.httpd.t_engine_log = string.Template(f.read())
+    f.close()
+    f = open(os.path.join(template_directory, 'log_row_ignored.tmpl'), 'r')
+    self.httpd.t_engine_log_ignored = string.Template(
+      string.Template(template_log_row).safe_substitute(
+        log_type=f.read().rstrip()
+      )
+    )
+    f.close()
+    f = open(os.path.join(template_directory, 'log_row_accepted.tmpl'), 'r')
+    self.httpd.t_engine_log_accepted = string.Template(
+      string.Template(template_log_row).safe_substitute(
+        log_type=f.read().rstrip()
+      )
+    )
     f.close()
     #f = open(os.path.join(template_directory, 'message_pic.template'), 'r')
     #self.httpd.template_message_pic = f.read()
