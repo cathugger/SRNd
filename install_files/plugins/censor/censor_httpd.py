@@ -62,9 +62,7 @@ class censor(BaseHTTPRequestHandler):
       path = self.path[58:]
       if path.startswith('/modify?'):
         key = path[8:]
-        flags_available = int(self.origin.sqlite_censor.execute("SELECT flags FROM keys WHERE key=?", (self.origin.sessions[self.session][1],)).fetchone()[0])
-        flag_required = int(self.origin.sqlite_censor.execute('SELECT flag FROM commands WHERE command="srnd-acl-mod"').fetchone()[0])
-        if (flags_available & flag_required) != flag_required:
+        if not self.__check_legal_access('srnd-acl-mod'):
           self.send_redirect(self.root_path, "not authorized, flag srnd-acl-mod flag missing.<br />redirecting you in a moment.", 7)
           return
         if key == 'create':
@@ -77,9 +75,7 @@ class censor(BaseHTTPRequestHandler):
           self.send_redirect(self.root_path, "update failed: %s<br />redirecting you in a moment." % e, 9)
       elif path.startswith('/settings?'):
         key = path[10:]
-        flags_available = int(self.origin.sqlite_censor.execute("SELECT flags FROM keys WHERE key=?", (self.origin.sessions[self.session][1],)).fetchone()[0])
-        flag_required = int(self.origin.sqlite_censor.execute('SELECT flag FROM commands WHERE command="overchan-board-mod"').fetchone()[0])
-        if (flags_available & flag_required) != flag_required:
+        if not self.__check_legal_access('overchan-board-mod'):
           self.send_redirect(self.root_path + 'settings', "not authorized, flag overchan-board-mod missing.<br />redirecting you in a moment.", 7)
           return
         try:
@@ -89,9 +85,7 @@ class censor(BaseHTTPRequestHandler):
           self.send_redirect(self.root_path + 'settings', "update board failed: %s<br />redirecting you in a moment." % e, 9)
       elif path.startswith('/postman?'):
         key = path[9:]
-        flags_available = int(self.origin.sqlite_censor.execute("SELECT flags FROM keys WHERE key=?", (self.origin.sessions[self.session][1],)).fetchone()[0])
-        flag_required = int(self.origin.sqlite_censor.execute('SELECT flag FROM commands WHERE command="handle-postman-mod"').fetchone()[0])
-        if (flags_available & flag_required) != flag_required:
+        if not self.__check_legal_access('handle-postman-mod'):
           self.send_redirect(self.root_path + 'postman', "not authorized, flag handle-postman-mod missing.<br />redirecting you in a moment.", 7)
           return
         try:
@@ -128,38 +122,25 @@ class censor(BaseHTTPRequestHandler):
       self.origin.sessions[self.session][0] = int(time.time()) + 3600
       path = self.path[58:]
       if path.startswith('/modify?'):
-        key = path[8:]
-        self.send_modify_key(key)
+        self.send_modify_key(path[8:])
       elif path.startswith('/pic_log'):
-        page = 1
-        if '?' in path:
-          try: page = int(path.split('?')[-1])
-          except: pass
-          if page < 1: page = 1 
+        try: page = int(path[9:])
+        except: page = 1
+        if page < 1: page = 1
         self.send_piclog(page)
       elif path.startswith('/moderation_log'):
-        page = 1
-        if '?' in path:
-          try: page = int(path.split('?')[-1])
-          except: pass
-          if page < 1: page = 1 
+        try:    page = int(path[16:])
+        except: page = 1
+        if page < 1: page = 1
         self.send_log(page)
       elif path.startswith('/message_log'):
         self.send_messagelog()
       elif path.startswith('/stats'):
         self.send_stats()
       elif path.startswith('/settings'):
-        if path.startswith('/settings?'):
-          key = path[10:]
-          self.send_settings(key)
-        else:
-          self.send_settings()
+        self.send_settings(path[10:])
       elif path.startswith('/postman'):
-        if path.startswith('/postman?'):
-          key = path[9:]
-          self.send_postman_settings(key)
-        else:
-          self.send_postman_settings()
+        self.send_postman_settings(path[9:])
       elif path.startswith('/showmessage?'):
         self.send_message(path[13:])
       elif path.startswith('/delete?'):
@@ -182,6 +163,11 @@ class censor(BaseHTTPRequestHandler):
     for x in html_escape_table:
       inputString = inputString.replace(x[0], x[1])
     return inputString.strip(' \t\n\r')
+
+  def __check_legal_access(self, flag_name):
+    flags_available = int(self.origin.sqlite_censor.execute('SELECT flags FROM keys WHERE key = ?', (self.origin.sessions[self.session][1],)).fetchone()[0])
+    flag_required = int(self.origin.sqlite_censor.execute('SELECT flag FROM commands WHERE command = ?', (flag_name,)).fetchone()[0])
+    return (flags_available & flag_required) == flag_required
 
   def handle_update_key(self, key):
     post_vars = FieldStorage(
