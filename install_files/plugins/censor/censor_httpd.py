@@ -568,7 +568,7 @@ class censor(BaseHTTPRequestHandler):
       log_row['key'] = row[0]
       log_row['action'] = row[2]
       log_row['reason'] = row[4]
-      log_row['comment'] = self.basicHTMLencode(row[5][:60])
+      log_row['comment'] = row[5][:60]
       log_row['date'] = datetime.utcfromtimestamp(row[6]).strftime('%d.%m.%y %H:%M')
       data = self.basicHTMLencode(self.hidden_line(row[3], 64))
       if row[2] in ('delete', 'overchan-delete-attachment', 'overchan-sticky', 'overchan-close'):
