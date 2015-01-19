@@ -16,6 +16,7 @@ from cgi import FieldStorage
 from datetime import datetime
 from hashlib import sha1, sha512
 from urllib import unquote
+from urlparse import urlparse, parse_qs
 
 import nacl.signing
 
@@ -134,7 +135,7 @@ class censor(BaseHTTPRequestHandler):
         if page == 0: page = 1
         self.send_log(page)
       elif path.startswith('/message_log'):
-        self.send_messagelog()
+        self.send_messagelog(parse_qs(urlparse(path).query))
       elif path.startswith('/stats'):
         self.send_stats()
       elif path.startswith('/settings'):
@@ -650,11 +651,28 @@ class censor(BaseHTTPRequestHandler):
     self.end_headers()
     self.wfile.write("\n".join(table))
     
-  def send_messagelog(self, page=0):
-    table = list()
+  def send_messagelog(self, query_data={}):
     message_log = dict()
+    query_str = unicode(''.join(query_data.get('q', '')), 'utf-8')
+    message_log['search_action'] = 'message_log'
+    message_log['search_target'] = query_str
     message_log['navigation'] = ''.join(self.__get_navigation('message_log'))
-    for row in self.origin.sqlite_overchan.execute('SELECT article_uid, parent, sender, subject, message, parent, public_key, sent, group_name FROM articles, groups WHERE groups.group_id = articles.group_id ORDER BY articles.sent DESC LIMIT ?,100', (0,)).fetchall():
+    if len(query_str) < 3:
+      data_row =  self.origin.sqlite_overchan.execute('SELECT article_uid, parent, sender, subject, message, parent, public_key, sent, group_name FROM articles, groups WHERE \
+        groups.group_id = articles.group_id ORDER BY articles.sent DESC LIMIT ?,100', (0,)).fetchall()
+    else:
+      data_row =  self.origin.sqlite_overchan.execute('SELECT article_uid, parent, sender, subject, message, parent, public_key, sent, group_name FROM articles, groups WHERE \
+        groups.group_id = articles.group_id AND message LIKE ? ORDER BY articles.sent DESC LIMIT ?,100', ('%'+query_str+'%', 0)).fetchall()
+    message_log['content'] = self.send_messagelog_construct(data_row)
+    message_log['target'] = self.root_path + 'message_log'
+    self.send_response(200)
+    self.send_header('Content-type', 'text/html')
+    self.end_headers()
+    self.wfile.write(self.origin.t_engine_message_log.substitute(message_log).encode('UTF-8'))
+
+  def send_messagelog_construct(self, data_row):
+    table = list()
+    for row in data_row:
       message_log_row = dict()
       articlehash_full = sha1(row[0]).hexdigest()
       if row[1] == '' or row[1] == row[0]:
@@ -678,12 +696,7 @@ class censor(BaseHTTPRequestHandler):
       message_log_row['articlehash_full'] = articlehash_full
       message_log_row['articlehash'] = articlehash_full[:10]
       table.append(self.origin.t_engine_message_log_row.substitute(message_log_row))
-    message_log['content'] = '\n'.join(table)
-    message_log['target'] = self.root_path + 'message_log'
-    self.send_response(200)
-    self.send_header('Content-type', 'text/html')
-    self.end_headers()
-    self.wfile.write(self.origin.t_engine_message_log.substitute(message_log).encode('UTF-8'))
+    return '\n'.join(table)
 
   def send_stats(self, page=0):
     stats_data = dict()
@@ -1315,10 +1328,14 @@ class censor_httpd(threading.Thread):
     f = open(os.path.join(template_directory, 'log_row.tmpl'), 'r')
     template_log_row = f.read()
     f.close()
+    f = open(os.path.join(template_directory, 'search_form.tmpl'), 'r')
+    template_search_form = f.read()
+    f.close()
     f = open(os.path.join(template_directory, 'message_log.tmpl'), 'r')
     self.httpd.t_engine_message_log = string.Template(
       string.Template(f.read()).safe_substitute(
-        evil_mod=template_evil_mod
+        evil_mod=template_evil_mod,
+        search_form=template_search_form
       )
     )
     f.close()
