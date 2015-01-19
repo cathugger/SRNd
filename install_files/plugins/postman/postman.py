@@ -764,6 +764,11 @@ class main(threading.Thread):
     # This prevent mass load\save db call?!
     self.httpd.db_busy = False
     self.httpd.cookie_db_last_update = 0
+    # if user send more 10 message in 5 minut - autodisallow user key
+    self.httpd.userkey_timelimit = 60 * 5
+    self.httpd.userkey_messagelimit = 10
+    self.httpd.userkey_list = dict()
+    self.httpd.userkey_timestamp = 0
     self.httpd.allow_this_cookie = self.allow_this_cookie
     self.httpd.update_this_cookie = self.update_this_cookie
 
@@ -1035,6 +1040,7 @@ class main(threading.Thread):
     self.httpd.cookie_cache[cookie][1] += 1
     self.httpd.cookie_cache[cookie][2] = message_time
     self.httpd.cookie_cache[cookie][3] = message_id
+    self.userkey_spamprotect(message_time, self.httpd.cookie_cache[cookie][0])
     # FIXME: BAD method.
     if not self.httpd.cookie_cache[cookie][1] % 5:
       self.save_cookie()
@@ -1046,6 +1052,23 @@ class main(threading.Thread):
       time.sleep(2)
       if self.httpd.db_busy: self.log(self.logger.WARNING, "DB busy more 2 second. This VERY bad result.")
     return self.httpd.db_busy
+
+  def userkey_spamprotect(self, message_time, pubkey):
+    if message_time - self.httpd.userkey_timestamp > self.httpd.userkey_timelimit:
+      self.httpd.userkey_timestamp = message_time
+      self.httpd.userkey_list = dict()
+    if pubkey in self.httpd.userkey_list:
+      self.httpd.userkey_list[pubkey] += 1
+    else:
+      self.httpd.userkey_list[pubkey] = 1
+    if self.httpd.userkey_list[pubkey] > self.httpd.userkey_messagelimit:
+      self.log(self.logger.WARNING, "Key %s send %s messages in %s seconds. Spamprotect auto disallow this key for stopping spam" % (pubkey, self.httpd.userkey_list[pubkey], self.httpd.userkey_timelimit))
+      self.wait_db_busy()
+      self.httpd.db_busy = True
+      del self.httpd.userkey_list[pubkey]
+      self.httpd.postmandb.execute('UPDATE userkey SET allow = 0 WHERE userkey = ?', (pubkey,))
+      self.httpd.postmandb_conn.commit()
+      self.httpd.db_busy = False
 
 class new_captcha:
   def __init__(self, diff=2, img_filter=None):
