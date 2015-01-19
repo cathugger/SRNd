@@ -170,6 +170,17 @@ class postman(BaseHTTPRequestHandler):
       return
     self.failCaptcha(post_vars)
   
+  def get_cookie(self, cookie_name):
+    cookie = self.headers.get('Cookie')
+    if cookie:
+      cookie = cookie.strip()
+      for item in cookie.split(';'):
+        if item.startswith('%s=' % cookie_name):
+          cookie = item
+          break
+      return cookie.strip().split('=', 1)[1]
+    return ''
+
   def send_captcha(self, message='', post_vars=None):
     failed = True
     if not post_vars:
@@ -196,6 +207,14 @@ class postman(BaseHTTPRequestHandler):
     #    self.origin.log(self.origin.logger.INFO, 'bypassing captcha for reply')
     #    self.handleNewArticle(post_vars) 
     #    return
+    if self.origin.receive_from_friends > 0:
+      user_cookie = self.get_cookie('ananas')
+      if self.origin.allow_this_cookie(user_cookie):
+        self.handleNewArticle(post_vars, user_cookie)
+        return
+      elif self.origin.receive_from_friends == 2:
+        self.die('This frontend not allow anonymity posting')
+        return
     board = post_vars.getvalue('board', '').replace('"', '&quot;')
     target = post_vars.getvalue('target', '').replace('"', '&quot;')
     name = post_vars.getvalue('name', '').replace('"', '&quot;')
@@ -270,7 +289,7 @@ class postman(BaseHTTPRequestHandler):
 
     return re.compile("(>>)([0-9a-f]{1,10})").sub(check_overchan_id, comment)
 
-  def handleNewArticle(self, post_vars=None):
+  def handleNewArticle(self, post_vars=None, user_cookie=None):
     if not post_vars:
       contentType = 'Content-Type' in self.headers and self.headers['Content-Type'] or 'text/plain'
       post_vars = FieldStorage(
@@ -509,6 +528,8 @@ class postman(BaseHTTPRequestHandler):
         self.exit_redirect(redirect_duration, redirect_target, add_spamheader=True)
       else:
         os.rename(link, os.path.join('incoming', boundary))
+        if user_cookie is not None:
+          self.origin.update_this_cookie(user_cookie, message_uid, uid_time)
         #os.rename(link, os.path.join('incoming', 'spam', message_uid))
         self.exit_redirect(redirect_duration, redirect_target)
     except socket.error as e:
@@ -612,6 +633,13 @@ class main(threading.Thread):
         except: pass
         if self.new_captcha is not None and (self.new_captcha < 0 or self.new_captcha > 100):
           self.new_captcha = 2
+
+    self.httpd.receive_from_friends = 0
+    if 'receive_from_friends' in args:
+      if args['receive_from_friends'].lower() in ('true', 'yes', '1'):
+        self.httpd.receive_from_friends = 1
+      elif args['receive_from_friends'].lower() in ('2', 'only'):
+        self.httpd.receive_from_friends = 2
 
     self.httpd.fast_uploads = False
     if 'fast_uploads' in args:
@@ -728,6 +756,17 @@ class main(threading.Thread):
       self.log(self.logger.WARNING, 'terminating..')
       self.should_terminate = True
       return
+
+    self.httpd.cookie_disallow = set()
+    self.httpd.cookie_disallow_len = 512
+    # 0 - userkey, 1 - current_postcount, 2 - last_message_time, 3 - last_message_id, 4 - expires
+    self.httpd.cookie_cache = dict()
+    # This prevent mass load\save db call?!
+    self.httpd.db_busy = False
+    self.httpd.cookie_db_last_update = 0
+    self.httpd.allow_this_cookie = self.allow_this_cookie
+    self.httpd.update_this_cookie = self.update_this_cookie
+
     self.httpd.spamprot_base64 = re.compile('^[a-zA-Z0-9]*$')
     self.httpd.spammers = list()
     self.httpd.fake_ok = False
@@ -813,6 +852,18 @@ class main(threading.Thread):
       self.httpd.postmandb.execute("CREATE INDEX IF NOT EXISTS userkey_cookie_idx ON userkey(cookie, allow, expires)")
       self.httpd.postmandb_conn.commit()
       current_version = 1
+    if current_version == 1:
+      self.log(self.logger.INFO, "updating db from version %i to version %i" % (current_version, 2))
+      self.httpd.postmandb.execute("CREATE TABLE modifications (table_name TEXT NOT NULL PRIMARY KEY ON CONFLICT REPLACE, action TEXT NOT NULL, changed_at TIMESTAMP DEFAULT (strftime('%s', 'now')))")
+      self.httpd.postmandb.execute('CREATE TRIGGER IF NOT EXISTS userkey_ondelete AFTER DELETE ON userkey BEGIN \
+        INSERT INTO modifications (table_name, action) VALUES ("userkey","DELETE"); END')
+      self.httpd.postmandb.execute('CREATE TRIGGER IF NOT EXISTS userkey_onupdate AFTER UPDATE ON userkey BEGIN \
+        INSERT INTO modifications (table_name, action) VALUES ("userkey","UPDATE"); END')
+      self.httpd.postmandb.execute('CREATE TRIGGER IF NOT EXISTS userkey_oninsert AFTER INSERT ON userkey BEGIN \
+        INSERT INTO modifications (table_name, action) VALUES ("userkey","INSERT"); END')
+      self.httpd.postmandb.execute('UPDATE config SET value = "2" WHERE key = "db_version"')
+      self.httpd.postmandb_conn.commit()
+      current_version = 2
 
   def run(self):
     if self.should_terminate:
@@ -820,7 +871,7 @@ class main(threading.Thread):
     # connect to hasher database
     # FIXME: add database_directory to postman?
     self.database_directory = ''
-    self.db_version = 0
+    self.db_version = 2
     self.httpd.sqlite_conn = sqlite3.connect(os.path.join(self.database_directory, 'hashes.db3'))
     self.httpd.sqlite = self.httpd.sqlite_conn.cursor()
     if self.httpd.overchan_fake_id:
@@ -830,14 +881,16 @@ class main(threading.Thread):
     self.httpd.postmandb = self.httpd.postmandb_conn.cursor()
     try:
       db_version = int(self.httpd.postmandb.execute("SELECT value FROM config WHERE key = ?", ("db_version",)).fetchone()[0])
-      if db_version < self.db_version:
-        self.update_db(db_version)
     except Exception as e:
       self.log(self.logger.DEBUG, "error while fetching db_version: %s. assuming new database" % e)
-      self.update_db(0)
+      db_version = 0
+    if db_version < self.db_version:
+      self.update_db(db_version)
     self.log(self.logger.INFO, 'start listening at http://%s:%i' % (self.ip, self.port))
     self.serving = True
     self.httpd.serve_forever()
+    if self.httpd.receive_from_friends > 0:
+      self.save_cookie()
     self.log(self.logger.INFO, 'bye')
 
   def captcha_generate(self, text, secret, expires=300):
@@ -917,6 +970,82 @@ class main(threading.Thread):
   def captcha_cache_bump(self):
     # TODO: create captcha before query
     return True
+
+  def allow_this_cookie(self, cookie):
+    if cookie == '' or cookie in self.httpd.cookie_disallow:
+      return False
+    if self.cookie_is_legal(cookie):
+      return True
+    self.log(self.logger.WARNING, "cookie %s not found - blocking" % cookie)
+    if len(self.httpd.cookie_disallow) > self.httpd.cookie_disallow_len:
+      self.httpd.cookie_disallow.pop()
+    self.httpd.cookie_disallow.add(cookie)
+    return False
+
+  def cookie_is_legal(self, cookie):
+    cookie_db_last_update = self.get_db_last_update()
+    if cookie_db_last_update > self.httpd.cookie_db_last_update:
+      if self.save_cookie():
+        self.httpd.cookie_db_last_update = self.get_db_last_update()
+      else:
+        self.httpd.cookie_db_last_update = cookie_db_last_update
+      self.load_cookie()
+    if cookie in self.httpd.cookie_cache and self.httpd.cookie_cache[cookie][4] > int(time.time()):
+      return True
+    return False
+
+  def load_cookie(self):
+    if self.wait_db_busy(): return
+    self.httpd.db_busy = True
+    self.log(self.logger.INFO, "Load cookies from db")
+    cookie_cache = dict()
+    for row in self.httpd.postmandb.execute('SELECT cookie, userkey, expires FROM userkey WHERE cookie !="" AND allow = 1 AND expires > ?', (int(time.time()),)).fetchall():
+      cookie_cache[row[0]] = [row[1], 0, '', '', int(row[2])]
+    self.httpd.cookie_cache = cookie_cache
+    self.httpd.db_busy = False
+
+  def save_cookie(self):
+    if len(self.httpd.cookie_cache) == 0 or self.wait_db_busy():
+      return
+    db_update = False
+    self.httpd.db_busy = True
+    for cookie in self.httpd.cookie_cache:
+      if self.httpd.cookie_cache[cookie][1] > 0:
+        db_update = True
+        self.httpd.postmandb.execute('UPDATE userkey SET postcount = postcount + ?, last_message = ?, last_message_id = ? WHERE userkey = ?',
+          (self.httpd.cookie_cache[cookie][1], self.httpd.cookie_cache[cookie][2], self.httpd.cookie_cache[cookie][3], self.httpd.cookie_cache[cookie][0]))
+    if db_update:
+      self.log(self.logger.INFO, "Save cookies to db")
+      self.httpd.cookie_cache = dict()
+      self.httpd.postmandb_conn.commit()
+    self.httpd.db_busy = False
+    return db_update
+
+  def get_db_last_update(self):
+    db_last_update = self.httpd.postmandb.execute("SELECT changed_at FROM modifications WHERE table_name = 'userkey'").fetchone()
+    if db_last_update:
+      return int(db_last_update[0])
+    return 0
+
+  def update_this_cookie(self, cookie, message_id, message_time):
+    if self.wait_db_busy(): return
+    if cookie not in self.httpd.cookie_cache:
+      self.log(self.logger.ERROR, "cookie %s allow and not found in cache. Fix me" % cookie)
+      return
+    self.httpd.cookie_cache[cookie][1] += 1
+    self.httpd.cookie_cache[cookie][2] = message_time
+    self.httpd.cookie_cache[cookie][3] = message_id
+    # FIXME: BAD method.
+    if not self.httpd.cookie_cache[cookie][1] % 5:
+      self.save_cookie()
+      self.httpd.cookie_db_last_update = self.get_db_last_update()
+      self.load_cookie()
+
+  def wait_db_busy(self):
+    if self.httpd.db_busy:
+      time.sleep(2)
+      if self.httpd.db_busy: self.log(self.logger.WARNING, "DB busy more 2 second. This VERY bad result.")
+    return self.httpd.db_busy
 
 class new_captcha:
   def __init__(self, diff=2, img_filter=None):
