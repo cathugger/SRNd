@@ -197,11 +197,11 @@ class main(threading.Thread):
     self.httpd.start()
     try:
       db_version = int(self.censordb.execute("SELECT value FROM config WHERE key = ?", ("db_version",)).fetchone()[0])
-      if db_version < self.db_version:
-        self.update_db(db_version)
     except Exception as e:
+      db_version = 0
       self.log(self.logger.DEBUG, "error while fetching db_version: %s. assuming new database" % e)
-      self.update_db(0)
+    if db_version < self.db_version:
+      self.update_db(db_version)
     if self.add_admin != "":
       try:
         self.censordb.execute("INSERT INTO keys VALUES (NULL,?,?,?)", (self.add_admin, "admin", self.all_flags))
@@ -540,20 +540,18 @@ class main(threading.Thread):
     except:
       self.log(self.logger.WARNING, 'get corrupt data for %s' % userkey)
       return (userkey, None)
-    local_name = self.basicHTMLencode(local_name)[:12]
+    local_name = self.basicHTMLencode(local_name[:20])
     try:
       allow = int(allow)
-      if allow not in (0, 1):
-        allow = 0
     except ValueError:
       allow = 0
+    if allow not in (0, 1): allow = 0
     current_time = int(time.time())
     try:
       expires = int(expires) * 24 * 3600 + current_time
-      if expires < current_time or expires - current_time > 3650 * 24 * 3600:
-        expires = current_time
     except ValueError:
       expires = current_time
+    if expires < current_time or expires - current_time > 3650 * 24 * 3600: expires = current_time
     if logout != '':
       logout = True
 
