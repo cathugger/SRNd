@@ -1411,15 +1411,15 @@ class main(threading.Thread):
   def generate_board(self, group_id):
     threads_per_page = self.threads_per_page
     pages_per_board = self.pages_per_board
-    boardlist, full_board_name_unquoted, board_name_unquoted, board_name, board_description = self.generate_board_list(group_id)
+    board_data = self.sqlite.execute('SELECT article_uid, sender, subject, sent, message, imagename, imagelink, thumblink, public_key, last_update, closed \
+      FROM articles WHERE group_id = ? AND (parent = "" OR parent = article_uid) ORDER BY last_update DESC LIMIT ?', (group_id, threads_per_page * pages_per_board)).fetchall()
+    threads = len(board_data)
+    if threads == 0: return
 
-    threads = int(self.sqlite.execute('SELECT count(group_id) FROM (SELECT group_id FROM articles WHERE group_id = ? AND (parent = "" OR parent = article_uid) LIMIT ?)', (group_id, threads_per_page * pages_per_board)).fetchone()[0])
-    if self.enable_archive and ((int(self.sqlite.execute("SELECT flags FROM groups WHERE group_id=?", (group_id,)).fetchone()[0]) & self.cache['flags']['no-archive']) == 0):
-      total_thread_count = int(self.sqlite.execute('SELECT count(group_id) FROM (SELECT group_id FROM articles WHERE group_id = ? AND (parent = "" OR parent = article_uid))', (group_id,)).fetchone()[0])
-      if total_thread_count > threads:
-        generate_archive = True
-      else:
-        generate_archive = False
+    boardlist, full_board_name_unquoted, board_name_unquoted, board_name, board_description = self.generate_board_list(group_id)
+    if self.enable_archive and ((int(self.sqlite.execute("SELECT flags FROM groups WHERE group_id=?", (group_id,)).fetchone()[0]) & self.cache['flags']['no-archive']) == 0) and \
+        int(self.sqlite.execute('SELECT count(group_id) FROM (SELECT group_id FROM articles WHERE group_id = ? AND (parent = "" OR parent = article_uid))', (group_id,)).fetchone()[0]) > threads:
+      generate_archive = True
     else:
       generate_archive = False
 
@@ -1431,9 +1431,7 @@ class main(threading.Thread):
       board_offset = threads_per_page * (board - 1)
       threads = list()
       self.log(self.logger.INFO, 'generating %s/%s-%s.html' % (self.output_directory, board_name_unquoted, board))
-      #TODO: OFFSET decrease performance? This is very bad? Maybe need create index for fix it. If this need fix
-      for root_row in self.sqlite.execute('SELECT article_uid, sender, subject, sent, message, imagename, imagelink, thumblink, public_key, last_update, closed \
-          FROM articles WHERE group_id = ? AND (parent = "" OR parent = article_uid) ORDER BY last_update DESC LIMIT ? OFFSET ?', (group_id, threads_per_page, board_offset)).fetchall():
+      for root_row in board_data[board_offset:board_offset+threads_per_page]:
         root_message_id_hash = sha1(root_row[0]).hexdigest()
         threads.append(
           self.t_engine_board_threads.substitute(
@@ -1453,7 +1451,9 @@ class main(threading.Thread):
       f = codecs.open(os.path.join(self.output_directory, '{0}-{1}.html'.format(board_name_unquoted, board)), 'w', 'UTF-8')
       f.write(self.t_engine_board.substitute(t_engine_mapper_board))
       f.close()
-    #Fix archive generation
+    del board_data
+    del t_engine_mapper_board
+    del threads
     if generate_archive and (not self.cache['last_thread'].has_key(group_id) or self.cache['last_thread'][group_id] != root_message_id_hash):
       self.cache['last_thread'][group_id] = root_message_id_hash
       self.generate_archive(group_id)
@@ -1614,23 +1614,25 @@ class main(threading.Thread):
     return parsed_data
 
   def generate_archive(self, group_id):
-    boardlist, full_board_name_unquoted, board_name_unquoted, board_name, board_description = self.generate_board_list(group_id, True)
     # Get threads count offsetting threads in main board pages
     offset = self.threads_per_page * self.pages_per_board
     # we want anoter threads_per_page setting for archive pages
     threads_per_page = self.archive_threads_per_page
     pages_per_board = self.archive_pages_per_board
-    threads = int(self.sqlite.execute('SELECT count(group_id) FROM (SELECT group_id FROM articles WHERE group_id = ? AND (parent = "" OR parent = article_uid) LIMIT ? OFFSET ?)', (group_id, threads_per_page * pages_per_board, offset)).fetchone()[0])
+    board_data = self.sqlite.execute('SELECT article_uid, sender, subject, sent, message, imagename, imagelink, thumblink, public_key, last_update, closed FROM \
+      articles WHERE group_id = ? AND (parent = "" OR parent = article_uid) ORDER BY last_update DESC LIMIT ? OFFSET ?', (group_id, threads_per_page * pages_per_board, offset)).fetchall()
+    threads = len(board_data)
+    if threads == 0: return
+
+    boardlist, full_board_name_unquoted, board_name_unquoted, board_name, board_description = self.generate_board_list(group_id, True)
     pages = int(threads / threads_per_page)
     if threads % threads_per_page != 0:
       pages += 1
-
     for board in xrange(1, pages + 1):
-      board_offset = threads_per_page * (board - 1) + offset
+      board_offset = threads_per_page * (board - 1)
       threads = list()
       self.log(self.logger.INFO, 'generating %s/%s-archive-%s.html' % (self.output_directory, board_name_unquoted, board))
-      for root_row in self.sqlite.execute('SELECT article_uid, sender, subject, sent, message, imagename, imagelink, thumblink, public_key, last_update, closed FROM \
-        articles WHERE group_id = ? AND (parent = "" OR parent = article_uid) ORDER BY last_update DESC LIMIT ? OFFSET ?', (group_id, threads_per_page, board_offset)).fetchall():
+      for root_row in board_data[board_offset:board_offset+threads_per_page]:
         threads.append(
           self.t_engine_archive_threads.substitute(
             self.get_base_thread(root_row, '', group_id, child_count=0)
