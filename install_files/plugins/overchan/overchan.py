@@ -252,27 +252,6 @@ class main(threading.Thread):
       )
     )
     f.close()
-    f = codecs.open(os.path.join(self.template_directory, 'board_archive.tmpl'), "r", "utf-8")
-    self.t_engine_board_archive = string.Template(
-      string.Template(f.read()).safe_substitute(
-        base_head=template_brick['base_head'],
-        base_pagelist=template_brick['base_pagelist'],
-        base_postform=template_brick['base_postform'],
-        base_help=template_brick['base_help'],
-        base_footer=template_brick['base_footer']
-      )
-    )
-    f.close()
-    f = codecs.open(os.path.join(self.template_directory, 'board_recent.tmpl'), "r", "utf-8")
-    self.t_engine_board_recent = string.Template(
-      string.Template(f.read()).safe_substitute(
-        base_head=template_brick['base_head'],
-        base_postform=template_brick['base_postform'],
-        base_help=template_brick['base_help'],
-        base_footer=template_brick['base_footer']
-      )
-    )
-    f.close()#string.Template(
     self.t_engine_thread_single = string.Template(
       template_brick['thread_single'].safe_substitute(
         single_postform=template_brick['single_postform']
@@ -1462,6 +1441,7 @@ class main(threading.Thread):
           )
         )
       t_engine_mapper_board = dict()
+      t_engine_mapper_board['board_subtype'] = ''
       t_engine_mapper_board['threads'] = ''.join(threads)
       t_engine_mapper_board['pagelist'] = self.generate_pagelist(pages, board, board_name_unquoted, generate_archive)
       t_engine_mapper_board['boardlist'] = boardlist
@@ -1657,6 +1637,7 @@ class main(threading.Thread):
           )
         )
       t_engine_mapper_board = dict()
+      t_engine_mapper_board['board_subtype'] = ' :: archive'
       t_engine_mapper_board['threads'] = ''.join(threads)
       t_engine_mapper_board['pagelist'] = self.generate_pagelist(pages, board, board_name_unquoted+'-archive')
       t_engine_mapper_board['boardlist'] = boardlist
@@ -1666,7 +1647,7 @@ class main(threading.Thread):
       t_engine_mapper_board['board_description'] = board_description
 
       f = codecs.open(os.path.join(self.output_directory, '{0}-archive-{1}.html'.format(board_name_unquoted, board)), 'w', 'UTF-8')
-      f.write(self.t_engine_board_archive.substitute(t_engine_mapper_board))
+      f.write(self.t_engine_board.substitute(t_engine_mapper_board))
       f.close()
 
   def generate_recent(self, group_id):
@@ -1690,9 +1671,11 @@ class main(threading.Thread):
       )
     t_engine_mapper_board_recent['threads'] = ''.join(threads)
     t_engine_mapper_board_recent['target'] = "{0}-recent.html".format(board_name_unquoted)
+    t_engine_mapper_board_recent['board_subtype'] = ' :: recent'
+    t_engine_mapper_board_recent['pagelist'] = ''
 
     f = codecs.open(os.path.join(self.output_directory, '{0}-recent.html'.format(board_name_unquoted)), 'w', 'UTF-8')
-    f.write(self.t_engine_board_recent.substitute(t_engine_mapper_board_recent))
+    f.write(self.t_engine_board.substitute(t_engine_mapper_board_recent))
     f.close()
     del threads
 

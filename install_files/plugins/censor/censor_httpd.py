@@ -170,7 +170,7 @@ class censor(BaseHTTPRequestHandler):
     flag_required = int(self.origin.sqlite_censor.execute('SELECT flag FROM commands WHERE command = ?', (flag_name,)).fetchone()[0])
     return (flags_available & flag_required) == flag_required
 
-  def handle_update_key(self, key):
+  def post_vars_init(self):
     post_vars = FieldStorage(
       fp=self.rfile,
       headers=self.headers,
@@ -179,6 +179,14 @@ class censor(BaseHTTPRequestHandler):
         'CONTENT_TYPE':self.headers['Content-Type'],
       }
     )
+    return post_vars
+
+  def console_headers_dump(self, message='unhandled warning'):
+    self.origin.log(self.origin.logger.WARNING, message)
+    self.origin.log(self.origin.logger.WARNING, self.headers)
+
+  def handle_update_key(self, key):
+    post_vars = self.post_vars_init()
     flags = post_vars.getlist("flags")
     if 'local_nick' in post_vars:
       local_nick = self.basicHTMLencode(post_vars['local_nick'].value.replace("#", ""))
@@ -198,14 +206,7 @@ class censor(BaseHTTPRequestHandler):
     self.origin.censor.add_article((self.origin.sessions[self.session][1], "srnd-acl-mod %s %i %s%s" % (key, result, local_nick, comment)), "httpd")
 
   def handle_update_board(self, board_id):
-    post_vars = FieldStorage(
-      fp=self.rfile,
-      headers=self.headers,
-      environ={
-        'REQUEST_METHOD':'POST',
-        'CONTENT_TYPE':self.headers['Content-Type'],
-      }
-    )
+    post_vars = self.post_vars_init()
     flags = post_vars.getlist("flags")
     comment = ''
     aliases = ('ph_name', 'ph_shortname', 'link', 'tag', 'description',)
@@ -233,14 +234,7 @@ class censor(BaseHTTPRequestHandler):
     self.origin.censor.add_article((self.origin.sessions[self.session][1], "overchan-board-mod {0} {1} {2}#{3}".format(board_name, result, aliases_blob, comment)), "httpd")
 
   def handle_update_postman(self, userkey_new=''):
-    post_vars = FieldStorage(
-      fp=self.rfile,
-      headers=self.headers,
-      environ={
-        'REQUEST_METHOD':'POST',
-        'CONTENT_TYPE':self.headers['Content-Type'],
-      }
-    )
+    post_vars = self.post_vars_init()
     userkey = post_vars.getvalue('userkey', userkey_new)
     try:
       vk = nacl.signing.VerifyKey(unhexlify(userkey))
@@ -267,8 +261,7 @@ class censor(BaseHTTPRequestHandler):
   def legal_session (self, session_id):
     if session_id in self.origin.sessions:
       if self.origin.sessions[session_id][2] != self.get_senderhash():
-        self.origin.log(self.origin.logger.WARNING, 'Destanation change! Maybe sessionkey leak. ')
-        self.origin.log(self.origin.logger.WARNING, self.headers)
+        self.console_headers_dump('Destanation change! Maybe sessionkey leak.')
       elif self.origin.sessions[session_id][0] > int(time.time()):
         return True
       del self.origin.sessions[session_id]
@@ -283,21 +276,12 @@ class censor(BaseHTTPRequestHandler):
     for key in todelete:
       del self.origin.sessions[key]
     del todelete
-    post_vars = FieldStorage(
-      fp=self.rfile,
-      headers=self.headers,
-      environ={
-        'REQUEST_METHOD':'POST',
-        'CONTENT_TYPE':self.headers['Content-Type'],
-      }
-    )
+    post_vars = self.post_vars_init()
     if not 'secret' in post_vars:
-      self.origin.log(self.origin.logger.WARNING, 'admin panel login: no secret key received')
-      self.origin.log(self.origin.logger.WARNING, self.headers)
+      self.console_headers_dump('admin panel login: no secret key received')
       return False
     if len(post_vars['secret'].value) != 64:
-      self.origin.log(self.origin.logger.WARNING, 'admin panel login: invalid secret key received, length != 64')
-      self.origin.log(self.origin.logger.WARNING, self.headers)
+      self.console_headers_dump('admin panel login: invalid secret key received, length != 64')
       return False
     try:
       public = hexlify(nacl.signing.SigningKey(unhexlify(post_vars['secret'].value)).verify_key.encode())
@@ -308,35 +292,24 @@ class censor(BaseHTTPRequestHandler):
       else:
         return False
     except Exception as e:
-      self.origin.log(self.origin.logger.WARNING, 'admin panel login: invalid secret key received: %s' % e)
-      self.origin.log(self.origin.logger.WARNING, self.headers)
+      self.console_headers_dump('admin panel login: invalid secret key received: %s' % e)
       return False
 
   def user_login(self, cookie_name='Error'):
     current_time = int(time.time())
-    post_vars = FieldStorage(
-      fp=self.rfile,
-      headers=self.headers,
-      environ={
-        'REQUEST_METHOD':'POST',
-        'CONTENT_TYPE':self.headers['Content-Type'],
-      }
-    )
+    post_vars = self.post_vars_init()
 
     if not 'secret' in post_vars:
-      self.origin.log(self.origin.logger.WARNING, 'user login: no secret key received')
-      self.origin.log(self.origin.logger.WARNING, self.headers)
+      self.console_headers_dump('user login: no secret key received')
       return False, None
     if len(post_vars['secret'].value) != 64:
-      self.origin.log(self.origin.logger.WARNING, 'user login: invalid secret key received, length != 64')
-      self.origin.log(self.origin.logger.WARNING, self.headers)
+      self.console_headers_dump('user login: invalid secret key received, length != 64')
       return False, None
     try:
       public = hexlify(nacl.signing.SigningKey(unhexlify(post_vars['secret'].value)).verify_key.encode())
       expires = self.origin.postmandb.execute('SELECT expires FROM userkey WHERE userkey = ? AND allow = 1 AND expires > ?', (public, current_time)).fetchone()
     except Exception as e:
-      self.origin.log(self.origin.logger.WARNING, 'user login: invalid secret key received: %s' % e)
-      self.origin.log(self.origin.logger.WARNING, self.headers)
+      self.console_headers_dump('user login: invalid secret key received: %s' % e)
       return False, None
     if expires:
       new_cookie = hexlify(self.origin.rnd.read(24))
@@ -349,7 +322,7 @@ class censor(BaseHTTPRequestHandler):
         return False, set_cookie
       return True, set_cookie
     else:
-      self.origin.log(self.origin.logger.WARNING, 'user login: disallow user key %s' % public)
+      self.console_headers_dump('user login: disallow user key %s' % public)
       return False, None
 
   def send_redirect(self, target, message, wait=0, set_cookie=''):
@@ -386,14 +359,7 @@ class censor(BaseHTTPRequestHandler):
 
   def send_modify_key(self, key, create_key=False):    
     if create_key:
-      post_vars = FieldStorage(
-        fp=self.rfile,
-        headers=self.headers,
-        environ={
-          'REQUEST_METHOD':'POST',
-          'CONTENT_TYPE':self.headers['Content-Type'],
-        }
-      )
+      post_vars = self.post_vars_init()
       key = post_vars.getvalue('new_key', '')
       try:
         vk = nacl.signing.VerifyKey(unhexlify(key))
@@ -410,26 +376,8 @@ class censor(BaseHTTPRequestHandler):
       row = (key, '', 0, 0)
 
     flags = self.origin.sqlite_censor.execute("SELECT command, flag FROM commands").fetchall()
-    flagset_template = self.origin.template_modify_key_flagset
     out = self.origin.template_modify_key.replace("%%key%%", row[0]).replace("%%nick%%", row[1])
-    flaglist = list()
-    counter = 0
-    for flag in flags:
-      counter += 1
-      if (int(row[2]) & int(flag[1])) == int(flag[1]):
-        checked = 'checked="checked"'  
-      else:
-        checked = ''
-      cur_template = flagset_template.replace("%%flag%%", flag[1])
-      cur_template = cur_template.replace("%%flag_name%%", flag[0])
-      cur_template = cur_template.replace("%%checked%%", checked)
-      if counter == 5:
-        cur_template += "<br />"
-      else:
-        cur_template += "&nbsp;"
-      flaglist.append(cur_template)
-    out = out.replace("%%modify_key_flagset%%", "".join(flaglist))
-    del flaglist[:]
+    out = out.replace("%%modify_key_flagset%%", self.modify_key_flagset_construct(row[2], flags))
     self.send_response(200)
     self.send_header('Content-type', 'text/html')
     self.end_headers()
@@ -450,13 +398,25 @@ class censor(BaseHTTPRequestHandler):
       return 'Board not found'
 
     flags = self.origin.sqlite_overchan.execute("SELECT flag_name, flag FROM flags").fetchall()
-    flagset_template = self.origin.template_modify_key_flagset
     form_data = dict()
+    form_data['modify_key_flagset'] = self.modify_key_flagset_construct(row[2], flags)
+    form_data['board_id'] = str(row[0])
+    form_data['board'] = row[1]
+    form_data['ph_name'] = row[3]
+    form_data['ph_shortname'] = row[4]
+    form_data['link'] = row[5]
+    form_data['tag'] = row[6]
+    form_data['description'] = row[7]
+    return self.origin.t_engine_modify_board.substitute(form_data)
+
+  def modify_key_flagset_construct(self, target, flags):
+    flagset_template = self.origin.template_modify_key_flagset
+    target = int(target)
     flaglist = list()
     counter = 0
     for flag in flags:
       counter += 1
-      if (int(row[2]) & int(flag[1])) == int(flag[1]):
+      if (target & int(flag[1])) == int(flag[1]):
         checked = 'checked="checked"'
       else:
         checked = ''
@@ -468,16 +428,18 @@ class censor(BaseHTTPRequestHandler):
       else:
         cur_template += "&nbsp;"
       flaglist.append(cur_template)
-    form_data['board_id'] = str(row[0])
-    form_data['board'] = row[1]
-    form_data['modify_key_flagset'] = ''.join(flaglist)
-    form_data['ph_name'] = row[3]
-    form_data['ph_shortname'] = row[4]
-    form_data['link'] = row[5]
-    form_data['tag'] = row[6]
-    form_data['description'] = row[7]
-    del flaglist[:]
-    return self.origin.t_engine_modify_board.substitute(form_data)
+    return ''.join(flaglist)
+
+  def flaglist_construct(self, target, flags):
+    flagset_template = self.origin.template_log_flagset
+    flaglist = list()
+    target = int(target)
+    for flag in flags:
+      if (target & int(flag[1])) == int(flag[1]):
+        flaglist.append(flagset_template.replace("%%flag%%", '<b style="color: #00E000;">y</b>'))
+      else:
+        flaglist.append(flagset_template.replace("%%flag%%", "n"))
+    return "\n".join(flaglist)
 
   def send_keys(self):
     out = self.origin.template_keys
@@ -493,22 +455,11 @@ class censor(BaseHTTPRequestHandler):
       table.append(cur_template.replace("%%flag%%", current_flag))
     out = out.replace("%%flag_names%%", "\n".join(table))
     del table[:]
-    flagset_template = self.origin.template_log_flagset
-    flaglist = list()
-    #for row in self.origin.sqlite_censor.execute('SELECT key, local_name, flags, count(key_id) as counter FROM keys, log WHERE (flags != 0 OR local_name != "") AND keys.id = log.key_id GROUP BY key_id ORDER by counter DESC').fetchall():
     for row in self.origin.sqlite_censor.execute('SELECT key, local_name, flags FROM keys WHERE flags != 0 OR local_name != "" ORDER BY abs(flags) DESC, local_name ASC').fetchall():
       cur_template = self.origin.template_log_whitelist
       cur_template = cur_template.replace("%%key%%", row[0])
       cur_template = cur_template.replace("%%nick%%", self.hidden_line(row[1], 30))
-      #table.append(self.origin.template_log_flagset)
-      for flag in flags:
-        if (int(row[2]) & int(flag[1])) == int(flag[1]):
-          flaglist.append(flagset_template.replace("%%flag%%", '<b style="color: #00E000;">y</b>'))
-        else:
-          flaglist.append(flagset_template.replace("%%flag%%", "n"))
-      cur_template = cur_template.replace("%%flagset%%", "\n".join(flaglist))
-      del flaglist[:]
-      #cur_template = cur_template.replace("%%count%%", str(row[3]))
+      cur_template = cur_template.replace("%%flagset%%", self.flaglist_construct(row[2], flags))
       table.append(cur_template)
     out = out.replace("%%mod_whitelist%%", "\n".join(table))
     del table[:]
@@ -746,20 +697,12 @@ class censor(BaseHTTPRequestHandler):
       table.append(cur_template.replace("%%flag%%", flag[0]))
     out = out.replace("%%flag_names%%", "\n".join(table))
     del table[:]
-    flagset_template = self.origin.template_log_flagset
-    flaglist = list()
     for row in self.origin.sqlite_overchan.execute('SELECT group_name, article_count, group_id, flags FROM groups WHERE group_name != "" ORDER BY abs(article_count) DESC, group_name ASC').fetchall():
       cur_template = self.origin.template_settings_lst
       cur_template = cur_template.replace("%%board%%",    str(row[0]))
       cur_template = cur_template.replace("%%posts%%",    str(row[1]))
       cur_template = cur_template.replace("%%board_id%%", str(row[2]))
-      for flag in flags:
-        if (int(row[3]) & int(flag[1])) == int(flag[1]):
-          flaglist.append(flagset_template.replace("%%flag%%", '<b style="color: #00E000;">y</b>'))
-        else:
-          flaglist.append(flagset_template.replace("%%flag%%", "n"))
-      cur_template = cur_template.replace("%%flagset%%", "\n".join(flaglist))
-      del flaglist[:]
+      cur_template = cur_template.replace("%%flagset%%", self.flaglist_construct(row[3], flags))
       table.append(cur_template)
     out = out.replace("%%board_list%%", "\n".join(table))
     del table[:]
@@ -1043,8 +986,7 @@ class censor(BaseHTTPRequestHandler):
     return out
 
   def die(self, message=''):
-    self.origin.log(self.origin.logger.WARNING, "%s:%i wants to fuck around, %s" % (self.client_address[0], self.client_address[1], message))
-    self.origin.log(self.origin.logger.WARNING, self.headers)
+    self.console_headers_dump("%s:%i wants to fuck around, %s" % (self.client_address[0], self.client_address[1], message))
     if self.origin.reject_debug:
       self.send_error('don\'t fuck around here mkay\n%s' % message)
     else:
@@ -1074,14 +1016,7 @@ class censor(BaseHTTPRequestHandler):
     now = datetime.utcnow().strftime('%a, %d %b %Y %H:%M:%S +0000')
     lines = list()
     
-    post_vars = FieldStorage(
-      fp=self.rfile,
-      headers=self.headers,
-      environ={
-        'REQUEST_METHOD':'POST',
-        'CONTENT_TYPE':self.headers['Content-Type'],
-      }
-    )
+    post_vars = self.post_vars_init()
 
     if 'target' in post_vars:
       target = post_vars['target'].value
@@ -1105,53 +1040,39 @@ class censor(BaseHTTPRequestHandler):
       self.die('local moderation request: public key rejected, no flags required')
       return
     local_cmd = False
-    for key in ('purge', 'purge_root'):
+    # TODO: Add command to db? Change send and accepting mode: local\remote and only local\local and remote?
+    cmd_list = (#request, command, mode (0 - http, 1 - article), comment
+      ('sticky',     'overchan-sticky', 0, 'sticky\unsticky thread request'),
+      ('close',      'overchan-close',  0, 'closing\opening thread request'),
+      ('purge',      'delete', 1, ''),
+      ('purge_root', 'delete', 1, ''),
+      ('delete_a',   'overchan-delete-attachment', 1, '')
+    )
+    for key, key_command, key_mode, key_comment in cmd_list:
       if key in post_vars:
-        purges = post_vars.getlist(key)
-        for item in purges:
+        items = post_vars.getlist(key)
+        if key_comment != '': key_comment = '#' + key_comment
+        for item in items:
           try:
-            lines.append("delete %s" % self.__get_message_id_by_hash(item))
+            message_send = '{0} {1}{2}'.format(key_command, self.__get_message_id_by_hash(item), key_comment)
           except Exception as e:
-            self.origin.log(self.origin.logger.WARNING, "local moderation request: could not find message_id for hash %s: %s" % (item, e))
-            self.origin.log(self.origin.logger.WARNING, self.headers)
+            self.console_headers_dump("local moderation request: could not find message_id for hash %s: %s" % (item, e))
+          else:
+            if key_mode == 1:
+              lines.append(message_send)
+            elif key_mode == 0:
+              self.origin.censor.add_article((pubkey, message_send), "httpd")
+              local_cmd = True
     if 'purge_desthash' in post_vars:
       delete_by_desthash = post_vars.getlist('purge_desthash')
       for item in delete_by_desthash:
         try:
           i2p_dest_hash = self.__get_dest_hash_by_hash(item)
         except Exception as e:
-          self.origin.log(self.origin.logger.WARNING, "local moderation request: could not find X-I2P-DestHash for hash %s: %s" % (item, e))
-          self.origin.log(self.origin.logger.WARNING, self.headers)
+          self.console_headers_dump("local moderation request: could not find X-I2P-DestHash for hash %s: %s" % (item, e))
         else:
           if len(i2p_dest_hash) == 44:
             lines.extend("delete %s" % message_id for message_id in self.__get_messages_id_by_dest_hash(i2p_dest_hash))
-    if 'delete_a' in post_vars:
-      delete_attachments = post_vars.getlist('delete_a')
-      for item in delete_attachments:
-        try:
-          lines.append("overchan-delete-attachment %s" % self.__get_message_id_by_hash(item))
-        except Exception as e:
-          self.origin.log(self.origin.logger.WARNING, "local moderation request: could not find message_id for hash %s: %s" % (item, e))
-          self.origin.log(self.origin.logger.WARNING, self.headers)
-    if 'sticky' in post_vars:
-      sticky_thread = post_vars.getlist('sticky')
-      for item in sticky_thread:
-        try:
-          #lines.append("overchan-sticky %s" % self.__get_message_id_by_hash(item)) #only local
-          self.origin.censor.add_article((pubkey, "overchan-sticky {0}#sticky\unsticky thread request".format(self.__get_message_id_by_hash(item))), "httpd")
-          local_cmd = True
-        except Exception as e:
-          self.origin.log(self.origin.logger.WARNING, "local moderation request: could not find message_id for hash %s: %s" % (item, e))
-          self.origin.log(self.origin.logger.WARNING, self.headers)
-    if 'close' in post_vars:
-      close_thread = post_vars.getlist('close')
-      for item in close_thread:
-        try:
-          self.origin.censor.add_article((pubkey, "overchan-close {0}#closing\opening thread request".format(self.__get_message_id_by_hash(item))), "httpd")
-          local_cmd = True
-        except Exception as e:
-          self.origin.log(self.origin.logger.WARNING, "local moderation request: could not find message_id for hash %s: %s" % (item, e))
-          self.origin.log(self.origin.logger.WARNING, self.headers)
     if len(lines) == 0:
       if local_cmd:
         self.send_redirect(target, 'moderation request received. will redirect you in a moment.', 2)
