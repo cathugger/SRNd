@@ -1463,8 +1463,8 @@ class main(threading.Thread):
         )
       t_engine_mapper_board = dict()
       t_engine_mapper_board['threads'] = ''.join(threads)
-      t_engine_mapper_board['pagelist'] = ''.join(self.generate_pagelist(pages, board, board_name_unquoted, generate_archive))
-      t_engine_mapper_board['boardlist'] = ''.join(boardlist)
+      t_engine_mapper_board['pagelist'] = self.generate_pagelist(pages, board, board_name_unquoted, generate_archive)
+      t_engine_mapper_board['boardlist'] = boardlist
       t_engine_mapper_board['full_board'] = full_board_name_unquoted
       t_engine_mapper_board['board'] = board_name
       t_engine_mapper_board['target'] = "{0}-1.html".format(board_name_unquoted)
@@ -1535,7 +1535,7 @@ class main(threading.Thread):
       else:
         pagelist.append('[{0}] '.format(page))
     if archive_link: pagelist.append('<a href="{0}-archive-1.html">[Archive]</a> '.format(board_name_unquoted))
-    return pagelist
+    return ''.join(pagelist)
 
   def get_preparse_post(self, data, message_id_hash, group_id, max_row, max_chars, child_view, father='', father_pubkey='', single=False):
     #father initiate parsing child post and contain root_post_hash_id
@@ -1658,8 +1658,8 @@ class main(threading.Thread):
         )
       t_engine_mapper_board = dict()
       t_engine_mapper_board['threads'] = ''.join(threads)
-      t_engine_mapper_board['pagelist'] = ''.join(self.generate_pagelist(pages, board, board_name_unquoted+'-archive'))
-      t_engine_mapper_board['boardlist'] = ''.join(boardlist)
+      t_engine_mapper_board['pagelist'] = self.generate_pagelist(pages, board, board_name_unquoted+'-archive')
+      t_engine_mapper_board['boardlist'] = boardlist
       t_engine_mapper_board['full_board'] = full_board_name_unquoted
       t_engine_mapper_board['board'] = board_name
       t_engine_mapper_board['target'] = "{0}-archive-1.html".format(board_name_unquoted)
@@ -1670,10 +1670,15 @@ class main(threading.Thread):
       f.close()
 
   def generate_recent(self, group_id):
-    boardlist, full_board_name_unquoted, board_name_unquoted, board_name, board_description = self.generate_board_list(group_id, True)
     # get only freshly updated threads
     timestamp = int(time.time()) - 3600*24
     threads = list()
+    t_engine_mapper_board_recent = dict()
+    t_engine_mapper_board_recent['boardlist'], \
+    t_engine_mapper_board_recent['full_board'], \
+    board_name_unquoted, \
+    t_engine_mapper_board_recent['board'], \
+    t_engine_mapper_board_recent['board_description'] = self.generate_board_list(group_id, True)
     self.log(self.logger.INFO, 'generating %s/%s-recent.html' % (self.output_directory, board_name_unquoted))
     for root_row in self.sqlite.execute('SELECT article_uid, sender, subject, sent, message, imagename, imagelink, thumblink, public_key, last_update, closed \
         FROM articles WHERE group_id = ? AND (parent = "" OR parent = article_uid) AND last_update > ? ORDER BY last_update DESC', (group_id, timestamp)).fetchall():
@@ -1683,18 +1688,12 @@ class main(threading.Thread):
           self.get_base_thread(root_row, root_message_id_hash, group_id, 4)
         )
       )
-    t_engine_mapper_board_recent = dict()
     t_engine_mapper_board_recent['threads'] = ''.join(threads)
-    t_engine_mapper_board_recent['boardlist'] = ''.join(boardlist)
-    t_engine_mapper_board_recent['full_board'] = full_board_name_unquoted
-    t_engine_mapper_board_recent['board'] = board_name
     t_engine_mapper_board_recent['target'] = "{0}-recent.html".format(board_name_unquoted)
-    t_engine_mapper_board_recent['board_description'] = board_description
 
     f = codecs.open(os.path.join(self.output_directory, '{0}-recent.html'.format(board_name_unquoted)), 'w', 'UTF-8')
     f.write(self.t_engine_board_recent.substitute(t_engine_mapper_board_recent))
     f.close()
-    del boardlist
     del threads
 
   def frontend(self, uid):
@@ -1741,23 +1740,16 @@ class main(threading.Thread):
 
   def create_thread_page(self, root_row, thread_path, max_child_view, root_message_id_hash, group_id):
     self.log(self.logger.INFO, 'generating %s' % (thread_path,))
-    boardlist, full_board_name_unquoted, board_name_unquoted, board_name, board_description = self.generate_board_list(group_id, True)
-
-    threads = list()
-    threads.append(
-      self.t_engine_board_threads.substitute(
-        self.get_base_thread(root_row, root_message_id_hash, group_id, max_child_view, True)
-      )
-    )
     t_engine_mappings_thread_single = dict()
-    t_engine_mappings_thread_single['boardlist'] = ''.join(boardlist)
+    t_engine_mappings_thread_single['thread_single'] = self.t_engine_board_threads.substitute(self.get_base_thread(root_row, root_message_id_hash, group_id, max_child_view, True))
+    t_engine_mappings_thread_single['boardlist'], \
+    t_engine_mappings_thread_single['full_board'], \
+    board_name_unquoted, \
+    t_engine_mappings_thread_single['board'], \
+    t_engine_mappings_thread_single['board_description'] = self.generate_board_list(group_id, True)
     t_engine_mappings_thread_single['thread_id'] = root_message_id_hash
-    t_engine_mappings_thread_single['board'] = board_name
-    t_engine_mappings_thread_single['full_board'] = full_board_name_unquoted
     t_engine_mappings_thread_single['target'] = "{0}-1.html".format(board_name_unquoted)
     t_engine_mappings_thread_single['subject'] = root_row[2][:60]
-    t_engine_mappings_thread_single['thread_single'] = ''.join(threads)
-    t_engine_mappings_thread_single['board_description'] = board_description
 
     f = codecs.open(thread_path, 'w', 'UTF-8')
     if root_row[10] == 0:
@@ -1863,14 +1855,14 @@ class main(threading.Thread):
       board_description = self.markup_parser(self.basicHTMLencode(board_description))
     if boardlist: boardlist[-1] = boardlist[-1][:-1]
     if group_id != '':
-      return boardlist, full_board_name_unquoted, board_name_unquoted, board_name, board_description
+      return ''.join(boardlist), full_board_name_unquoted, board_name_unquoted, board_name, board_description
     else:
-      return boardlist
+      return ''.join(boardlist)
 
   def generate_overview(self):
     self.log(self.logger.INFO, 'generating %s/overview.html' % self.output_directory)
     t_engine_mappings_overview = dict()
-    t_engine_mappings_overview['boardlist'] = ''.join(self.generate_board_list())
+    t_engine_mappings_overview['boardlist'] = self.generate_board_list()
     news_board_link = 'overview.html'
     news_board = self.sqlite.execute('SELECT group_id, group_name FROM groups WHERE \
         (cast(flags as integer) & ?) != 0 AND (cast(flags as integer) & ?) = 0', (self.cache['flags']['news'], self.cache['flags']['blocked'])).fetchone()
