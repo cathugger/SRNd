@@ -67,7 +67,7 @@ class main(threading.Thread):
     self.log(self.logger.DEBUG, 'initializing censor_httpd..')
     args['censor'] = self
     self.httpd = censor_httpd.censor_httpd("censor_httpd", self.logger, args)
-    self.db_version = 9
+    self.db_version = 10
     self.all_flags = "4095"
     self.queue = Queue.Queue()
     self.command_mapper = dict()
@@ -190,6 +190,12 @@ class main(threading.Thread):
       self.censordb.execute('UPDATE config SET value = "9" WHERE key = "db_version"')
       self.sqlite_censor_conn.commit()
       current_version = 9
+    if current_version == 9:
+      self.log(self.logger.INFO, "updating db from version %i to version %i" % (current_version, 10))
+      self.censordb.execute("INSERT INTO reasons VALUES (NULL,?)", ("disable",))
+      self.censordb.execute('UPDATE cmd_map SET command = "overchan-delete-attachment" WHERE command = "overchan-delete-attach"')
+      self.censordb.execute('UPDATE config SET value = "10" WHERE key = "db_version"')
+      self.sqlite_censor_conn.commit()
 
   def run(self):
     #if self.should_terminate:
@@ -248,7 +254,12 @@ class main(threading.Thread):
       inputString = inputString.replace(x[0], x[1])
     return inputString.strip(' \t\n\r')
     
-  def allowed(self, key_id, command="all", board=None):
+  def allowed(self, key_id, command, is_replay, is_local):
+    if not self.allowed_key(key_id, command):
+      return 0, 1
+    return self.command_reason(command, is_replay, is_local)
+
+  def allowed_key(self, key_id, command):
     if key_id in self.allowed_cache:
       if command in self.allowed_cache[key_id]:
         return self.allowed_cache[key_id][command]
@@ -258,17 +269,39 @@ class main(threading.Thread):
       self.allowed_cache[key_id] = dict()
     try:
       flags_available = int(self.censordb.execute("SELECT flags FROM keys WHERE id=?", (key_id,)).fetchone()[0])
-      if command == "all":
-        flag_required = self.all_flags
-      else:
-        flag_required = int(self.censordb.execute("SELECT flag FROM commands WHERE command=?", (command,)).fetchone()[0])
-        self.allowed_cache[key_id][command] = (flags_available & flag_required) == flag_required
-      return (flags_available & flag_required) == flag_required
+      flag_required = int(self.censordb.execute("SELECT flag FROM commands WHERE command=?", (command,)).fetchone()[0])
+      self.allowed_cache[key_id][command] = (flags_available & flag_required) == flag_required
+      return self.allowed_cache[key_id][command]
     except Exception as e:
       self.log(self.logger.ERROR, 'unknown exception in allowed(): %s' % e)
       self.log(self.logger.ERROR, traceback.format_exc())
       return False
-    
+
+  def command_reason(self, command, is_replay, is_local):
+    if command not in self.command_cache:
+      try:
+        row = self.censordb.execute("SELECT commands.id, received, replayable FROM commands, cmd_map \
+          WHERE commands.command = ? AND commands.command = cmd_map.command", (command,)).fetchone()
+        if not row:
+          cmd_id = int(self.censordb.execute("SELECT id FROM commands WHERE command = ?", (command,)).fetchone()[0])
+          cmd_list = (cmd_id, -1, -1)
+        else:
+          cmd_list = (int(row[0]), int(row[1]), int(row[2]))
+      except Exception as e:
+        cmd_list = (-1, -1, -1)
+        self.log(self.logger.ERROR, 'Command %s not load from db. Disallow: %s' % (command, e))
+      self.command_cache[command] = cmd_list
+    if self.command_cache[command][1] not in (0, 1):
+      return 0, 8
+    if not is_local and self.command_cache[command][1] != 1:
+      return 0, 6
+    if is_replay and self.command_cache[command][2] != 1:
+      return 0, 7
+    if is_local:
+      return 1, 5
+    else:
+      return 1, 6
+
   def process_article(self, message_id):
     self.log(self.logger.DEBUG, "processing %s.." % message_id)
     current_time = int(time.time())
@@ -433,25 +466,23 @@ class main(threading.Thread):
     if not command in self.command_mapper:
       self.log(self.logger.INFO, "got unknown command: %s" % line)
       return
-    if self.allowed(key_id, command):
+    accepted, reason_id = self.allowed(key_id, command, is_replay, is_local)
+    if command in self.command_cache and self.command_cache[command][0] != -1:
+      command_id = self.command_cache[command][0]
+    else:
+      self.log(self.logger.ERROR, "command %s not found in command_cache. FIXME!" % command)
+      return
+    if accepted == 1:
       data, groups = self.command_mapper[command](line)
-      accepted = 1
-      reason_id = 2
       if groups:
         for group in groups:
           self.redistribute_command(group, line, comment, timestamp)
     else:
       data = line.lower().split(" ", 1)[1]
-      accepted = 0
-      reason_id = 1
       self.log(self.logger.DEBUG, "not authorized for '%s': %i" % (command, key_id))
-    if command in self.command_cache:
-      command_id = self.command_cache[command]
-    else: 
-      command_id = int(self.censordb.execute("SELECT id FROM commands WHERE command = ?", (command,)).fetchone()[0])
-      self.command_cache[command] = command_id
     try:
-      self.censordb.execute('INSERT INTO log (accepted, command_id, data, key_id, reason_id, comment, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)', (accepted, command_id, data, key_id, reason_id, self.basicHTMLencode(comment), int(time.time())))
+      self.censordb.execute('INSERT INTO log (accepted, command_id, data, key_id, reason_id, comment, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)', \
+        (accepted, command_id, data, key_id, reason_id, self.basicHTMLencode(comment), int(time.time())))
       self.sqlite_censor_conn.commit()
     except Exception as e:
       pass
