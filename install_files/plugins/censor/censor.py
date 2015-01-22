@@ -231,7 +231,7 @@ class main(threading.Thread):
           key_id = self.get_key_id(public_key)
           timestamp = int(time.time())
           for line in data.split("\n"):
-            self.handle_line(line, key_id, timestamp)
+            self.handle_line(line, key_id, timestamp, False, True)
         else:
           self.log(self.logger.WARNING, 'unknown source: %s' % source)
         if self.queue.qsize() > self.sleep_threshold:
@@ -257,7 +257,6 @@ class main(threading.Thread):
         self.allowed_cache = dict()
       self.allowed_cache[key_id] = dict()
     try:
-      #self.log("should check flags for key_id %i" % key_id, 1)
       flags_available = int(self.censordb.execute("SELECT flags FROM keys WHERE id=?", (key_id,)).fetchone()[0])
       if command == "all":
         flag_required = self.all_flags
@@ -286,7 +285,7 @@ class main(threading.Thread):
             f.close()
             return True
           else:
-            self.parse_article(f, message_id)
+            self.parse_article(f, message_id, None, False)
         else:
           self.parse_article(f, message_id, None, True)
       except Exception as e:
@@ -330,7 +329,7 @@ class main(threading.Thread):
       self.censordb.execute('INSERT INTO signature_cache (message_uid, valid, received) VALUES (?, ?, ?)', (message_id, 0, current_time))
       self.sqlite_censor_conn.commit()
       return False
-    self.parse_article(f, message_id, self.get_key_id(public_key))
+    self.parse_article(f, message_id, self.get_key_id(public_key), False)
     return True
 
   def get_key_id(self, public_key):
@@ -348,28 +347,19 @@ class main(threading.Thread):
     self.key_cache[public_key] = key_id
     return key_id
 
-  def parse_article(self, article_fd, message_id, key_id=None, fix_received=False):
-    #counter = 0
-    #time_key_cache = float(0)
-    #time_allowed_cache = float(0)
-    #time_command_cache = float(0)
-    #time_fs = float(0)
-    #time_sql = float(0)
-    #time_mapper = float(0)
-    #time_mapper_sql = float(0)
-    #time_total = time.time()
+  def parse_article(self, article_fd, message_id, key_id, fix_received):
     self.log(self.logger.DEBUG, "parsing %s.." % message_id)
+    is_replay = False
     if key_id == None:
+      is_replay = True
       public_key = ''
       for line in article_fd:
         if len(line) == 1:
           break
         elif line.lower().startswith('x-pubkey-ed25519:'):
           public_key = line.lower()[:-1].split(' ', 1)[1]
-      #timestamp_start = time.time()
       if public_key != '':
         key_id = self.get_key_id(public_key)
-      #time_key_cache += time.time() - timestamp_start
     sent = None
     for line in article_fd:
       if len(line) == 1:
@@ -392,71 +382,14 @@ class main(threading.Thread):
         self.sqlite_censor_conn.commit()
       except:
         pass
-    #self.handle_line(line[:-1], key_id, sent)
-    #self.log("parsing %s, starting to parse commands" % message_id, 4)
-    redistributors = dict()
 
     for line in article_fd:
       if len(line) == 1:
         continue
       line = line.split('\n')[0]
-      command = line.lower().split(" ", 1)[0]
-      if not command in self.command_mapper:
-        self.log(self.logger.DEBUG, 'got unknown command: %s' % line)
-        continue
-      #counter += 1
-      if '#' in line:
-        line, comment = line.split("#", 1)
-        line = line.rstrip(" ")
-      else:
-        comment = ''
-      #timestamp_start = time.time()
-      if self.allowed(key_id, command):
-        #time_allowed_cache += time.time() - timestamp_start
-        #timestamp_start = time.time()
-        #data, groups, time_fs_tmp, time_mapper_sql_tmp = self.command_mapper[command](line, debug=True)
-        data, groups = self.command_mapper[command](line)
-        #time_fs += time_fs_tmp
-        #time_mapper_sql += time_mapper_sql_tmp
-        #time_mapper += time.time() - timestamp_start
-        accepted = 1
-        reason_id = 2
-        if groups:
-          for group in groups:
-            if group in redistributors:
-              redistributors[group].append(line)
-              continue
-            redistributors[group] = list()
-            redistributors[group].append(line)
-      else:
-        #time_allowed_cache += time.time() - timestamp_start
-        data = line.lower().split(" ", 1)[1]
-        accepted = 0
-        reason_id = 1
-        self.log(self.logger.DEBUG, "not authorized for '%s': %i" % (command, key_id))
-      #timestamp_start = time.time()  
-      if command in self.command_cache:
-        #time_command_cache += time.time() - timestamp_start
-        command_id = self.command_cache[command]
-      else: 
-        #time_command_cache += time.time() - timestamp_start
-        command_id = int(self.censordb.execute("SELECT id FROM commands WHERE command = ?", (command,)).fetchone()[0])
-        self.command_cache[command] = command_id
-      try:
-        #timestamp_start = time.time()
-        self.censordb.execute('INSERT INTO log (accepted, command_id, data, key_id, reason_id, comment, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)', (accepted, command_id, data, key_id, reason_id, self.basicHTMLencode(comment), int(time.time())))
-        self.sqlite_censor_conn.commit()
-        #time_sql += time.time() - timestamp_start
-      except Exception as e:
-        #time_sql += time.time() - timestamp_start
-        #self.log('inserting failed as expected: %s' % e, 4)
-        pass
+      self.handle_line(line, key_id, sent, is_replay, False)
+
     article_fd.close()
-    for group in redistributors:
-      self.redistribute_command(group, '\n'.join(redistributors[group]), None, sent)
-    #time_total = time.time() - time_total
-    #if counter > 50:
-    #  self.log("done parsing, commands: %i. mapper: %f, mapper_fs: %f, mapper_sql: %f, key_cache: %f, allowed_cache: %f, command_cache: %f, sql: %f, other: %f" % (counter, time_mapper, time_fs, time_mapper_sql, time_key_cache, time_allowed_cache, time_command_cache, time_sql, time_total - time_fs - time_mapper_sql - time_key_cache - time_allowed_cache - time_command_cache - time_sql), 1)
 
   def redistribute_command(self, group, line, comment, timestamp):
     # FIXME needs a hooks cache dict with key group => list hooks
@@ -490,8 +423,7 @@ class main(threading.Thread):
       else:
         self.log(self.logger.ERROR, "unknown hook detected. wtf? %s" % hook)
         
-  def handle_line(self, line, key_id, timestamp):
-    #print "should handle line for key_id %i: %s" % (key_id, line)
+  def handle_line(self, line, key_id, timestamp, is_replay, is_local):
     command = line.lower().split(" ", 1)[0]
     if '#' in line:
       line, comment = line.split("#", 1)
