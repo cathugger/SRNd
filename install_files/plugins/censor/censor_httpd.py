@@ -203,7 +203,8 @@ class censor(BaseHTTPRequestHandler):
     else:
       comment += 'add new key %s, flags %s' % (local_nick, result)
     if comment == '#': comment = ''
-    self.origin.censor.add_article((self.origin.sessions[self.session][1], "srnd-acl-mod %s %i %s%s" % (key, result, local_nick, comment)), "httpd")
+    cmd_line = {'srnd-acl-mod': ('{0} {1} {2}{3}'.format(key, result, local_nick, comment),)}
+    self.handle_commands(cmd_line, self.origin.sessions[self.session][1], None)
 
   def handle_update_board(self, board_id):
     post_vars = self.post_vars_init()
@@ -220,7 +221,8 @@ class censor(BaseHTTPRequestHandler):
     aliases_blob = ':'.join([base64.urlsafe_b64encode(post_vars.getvalue(x, '').strip()) for x in aliases])
     result = sum([int(flag) for flag in flags])
     if new_board != '' and board_id == 'new':
-      self.origin.censor.add_article((self.origin.sessions[self.session][1], "overchan-board-add {0} {1} {2}#request for create {0}, flags {1}".format(new_board, result, aliases_blob)), "httpd")
+      cmd_line = {'overchan-board-add': ('{0} {1} {2}#request for create {0}, flags {1}'.format(new_board, result, aliases_blob),)}
+      self.handle_commands(cmd_line, self.origin.sessions[self.session][1], None)
       return
     row = self.origin.sqlite_overchan.execute('SELECT group_name, flags, ph_name, ph_shortname, link, tag, description FROM groups WHERE group_id = ?', (board_id,)).fetchone()
     (board_name, old_flags), aliases_old = row[:2], row[2:]
@@ -231,7 +233,8 @@ class censor(BaseHTTPRequestHandler):
     else:
       aliases_blob = ''
     if comment == '': return
-    self.origin.censor.add_article((self.origin.sessions[self.session][1], "overchan-board-mod {0} {1} {2}#{3}".format(board_name, result, aliases_blob, comment)), "httpd")
+    cmd_line = {'overchan-board-mod': ('{0} {1} {2}#{3}'.format(board_name, result, aliases_blob, comment),)}
+    self.handle_commands(cmd_line, self.origin.sessions[self.session][1], None)
 
   def handle_update_postman(self, userkey_new=''):
     post_vars = self.post_vars_init()
@@ -248,8 +251,8 @@ class censor(BaseHTTPRequestHandler):
       comment = 'add new key'
     else:
       comment = 'modify key, sign: %s' % sha1(data_blob).hexdigest()[:6]
-
-    self.origin.censor.add_article((self.origin.sessions[self.session][1], "handle-postman-mod {0} {1}#{2}".format(userkey, data_blob, comment)), "httpd")
+    cmd_line = {'handle-postman-mod': ('{0} {1}#{2}'.format(userkey, data_blob, comment),)}
+    self.handle_commands(cmd_line, self.origin.sessions[self.session][1], None)
 
   def get_senderhash(self):
     if 'X-I2P-DestHash' in self.headers:
@@ -1005,17 +1008,6 @@ class censor(BaseHTTPRequestHandler):
     return '%s ' % rematch.group(0)
 
   def handle_moderation_request(self):
-    author = 'Anonymous'
-    email = 'an@onymo.us'
-    sender = '%s <%s>' % (author, email)
-    now = int(time.time())
-    subject = 'no subject'
-    newsgroups = 'ctl'
-    uid_rnd = ''.join(random.choice(string.ascii_lowercase) for x in range(10))
-    uid_message_id = '<%s%i@%s>' % (uid_rnd, now, self.origin.uid_host)
-    now = datetime.utcnow().strftime('%a, %d %b %Y %H:%M:%S +0000')
-    lines = list()
-    
     post_vars = self.post_vars_init()
 
     if 'target' in post_vars:
@@ -1036,52 +1028,81 @@ class censor(BaseHTTPRequestHandler):
     except Exception as e:
       self.die('local moderation request: invalid secret key received: %s' % e)
       return
+    else:
+      del keypair
     if flags_available == 0:
       self.die('local moderation request: public key rejected, no flags required')
       return
-    local_cmd = False
-    # TODO: Add command to db? Change send and accepting mode: local\remote and only local\local and remote?
-    cmd_list = (#request, command, mode (0 - http, 1 - article), comment
-      ('sticky',     'overchan-sticky', 0, 'sticky\unsticky thread request'),
-      ('close',      'overchan-close',  0, 'closing\opening thread request'),
-      ('purge',      'delete', 1, ''),
-      ('purge_root', 'delete', 1, ''),
-      ('delete_a',   'overchan-delete-attachment', 1, '')
-    )
-    for key, key_command, key_mode, key_comment in cmd_list:
-      if key in post_vars:
-        items = post_vars.getlist(key)
-        if key_comment != '': key_comment = '#' + key_comment
-        for item in items:
-          try:
-            message_send = '{0} {1}{2}'.format(key_command, self.__get_message_id_by_hash(item), key_comment)
-          except Exception as e:
-            self.console_headers_dump("local moderation request: could not find message_id for hash %s: %s" % (item, e))
-          else:
-            if key_mode == 1:
-              lines.append(message_send)
-            elif key_mode == 0:
-              self.origin.censor.add_article((pubkey, message_send), "httpd")
-              local_cmd = True
-    if 'purge_desthash' in post_vars:
-      delete_by_desthash = post_vars.getlist('purge_desthash')
-      for item in delete_by_desthash:
-        try:
-          i2p_dest_hash = self.__get_dest_hash_by_hash(item)
-        except Exception as e:
-          self.console_headers_dump("local moderation request: could not find X-I2P-DestHash for hash %s: %s" % (item, e))
+
+    commands = dict()
+    for evil, srnd, comment in self.origin.sqlite_censor.execute('SELECT evil, srnd, comment FROM evil_to_srnd WHERE evil != "" AND srnd != ""').fetchall():
+      if evil in post_vars:
+        if srnd not in commands:
+          commands[srnd] = list()
+        if comment:
+          add_comment = '#' + comment
         else:
-          if len(i2p_dest_hash) == 44:
-            lines.extend("delete %s" % message_id for message_id in self.__get_messages_id_by_dest_hash(i2p_dest_hash))
-    if len(lines) == 0:
-      if local_cmd:
-        self.send_redirect(target, 'moderation request received. will redirect you in a moment.', 2)
-      else:
-        self.die('local moderation request: nothing to do')
-      return
-    #remove duplicates
-    lines = list(set(lines))
-    #lines.append("")
+          add_comment = ''
+        for item in post_vars.getlist(evil):
+          if evil == 'purge_desthash':
+            try:
+              i2p_dest_hash = self.__get_dest_hash_by_hash(item)
+            except Exception as e:
+              self.console_headers_dump("local moderation request: could not find X-I2P-DestHash for hash %s: %s" % (item, e))
+            else:
+              if len(i2p_dest_hash) == 44:
+                commands[srnd].extend(['{0}{1}'.format(message_id[0], add_comment) for message_id in self.__get_messages_id_by_dest_hash(i2p_dest_hash)])
+          else:
+            try:
+              commands[srnd].append('{0}{1}'.format(self.__get_message_id_by_hash(item), add_comment))
+            except Exception as e:
+              self.console_headers_dump("local moderation request: could not find message_id for hash %s: %s" % (item, e))
+        if len(commands[srnd]) == 0: del commands[srnd]
+    if len(commands) > 0 and self.handle_commands(commands, pubkey, secret):
+      self.send_redirect(target, 'moderation request received. will redirect you in a moment.', 2)
+    else:
+      self.die('local moderation request: nothing to do')
+
+  def handle_commands(self, commands, pubkey, secret=None):
+    local_cmd = list()
+    remote_cmd = list()
+    for command, send in self.origin.sqlite_censor.execute('SELECT command, send FROM cmd_map WHERE send != -1').fetchall():
+      if command in commands:
+        if type(commands[command]) not in (list, tuple, set):
+          self.origin.log(self.origin.logger.ERROR, 'INTERNAL ERROR: command %s is not "array". FIXME!' % command)
+          return False
+        cmd_list = ['{0} {1}'.format(command, cmd) for cmd in commands[command]]
+        if send == 1 and secret is not None:
+          remote_cmd.extend(cmd_list)
+        elif send in (0, 1):
+          local_cmd.extend(cmd_list)
+
+    status = False
+    local_cmd  = list(set(local_cmd))
+    remote_cmd = list(set(remote_cmd))
+    if len(local_cmd) > 0:
+      self.send_local_cmd(pubkey, local_cmd)
+      status = True
+    if len(remote_cmd) > 0:
+      self.send_remote_cmd(secret, pubkey, remote_cmd)
+      status = True
+    return status
+
+  def send_local_cmd(self, pubkey, lines):
+    for cmd in lines:
+      self.origin.censor.add_article((pubkey, cmd), "httpd")
+
+  def send_remote_cmd(self, secret, pubkey, lines):
+    author = 'Anonymous'
+    email = 'an@onymo.us'
+    sender = '%s <%s>' % (author, email)
+    now = int(time.time())
+    subject = 'no subject'
+    newsgroups = 'ctl'
+    uid_rnd = ''.join(random.choice(string.ascii_lowercase) for x in range(10))
+    uid_message_id = '<%s%i@%s>' % (uid_rnd, now, self.origin.uid_host)
+    now = datetime.utcnow().strftime('%a, %d %b %Y %H:%M:%S +0000')
+
     article = self.origin.template_message_control_inner.format(sender, now, newsgroups, subject, uid_message_id, self.origin.uid_host, "\n".join(lines))
     #print "'%s'" % article
     hasher = sha512()
@@ -1091,7 +1112,7 @@ class censor(BaseHTTPRequestHandler):
         hasher.update(old_line)
       old_line = '%s\r\n' % line
     hasher.update(old_line.replace("\r\n", ""))
-    #keypair = nacl.signing.SigningKey(unhexlify(secret))
+    keypair = nacl.signing.SigningKey(unhexlify(secret))
     signature = hexlify(keypair.sign(hasher.digest()).signature)
     signed = self.origin.template_message_control_outer.format(sender, now, newsgroups, subject, uid_message_id, self.origin.uid_host, pubkey, signature, article)
     del keypair
@@ -1104,7 +1125,6 @@ class censor(BaseHTTPRequestHandler):
     del article
     del signed
     os.rename(os.path.join('incoming', 'tmp', uid_message_id), os.path.join('incoming', uid_message_id))
-    self.send_redirect(target, 'moderation request received. will redirect you in a moment.', 2)
 
   def log_request(self, code):
     return

@@ -67,8 +67,8 @@ class main(threading.Thread):
     self.log(self.logger.DEBUG, 'initializing censor_httpd..')
     args['censor'] = self
     self.httpd = censor_httpd.censor_httpd("censor_httpd", self.logger, args)
-    self.db_version = 8
-    self.all_flags = "1023"
+    self.db_version = 9
+    self.all_flags = "4095"
     self.queue = Queue.Queue()
     self.command_mapper = dict()
     self.command_mapper['delete'] = self.handle_delete
@@ -114,11 +114,6 @@ class main(threading.Thread):
       
       # create users
       self.censordb.execute("CREATE TABLE keys (id INTEGER PRIMARY KEY, key text UNIQUE, local_name text, flags text)")
-      #self.censordb.execute("INSERT INTO keys VALUES (NULL,?,?,?)", ("a5bf837638d054ee15192a9886d107d326c8f84db8a1946db0635a98e446caf0", "talamon1", "1"))
-      #self.censordb.execute("INSERT INTO keys VALUES (NULL,?,?,?)", ("909eee4034aa461819b72f97b0d84f95bab8a68547770119eef77b6b0c0cab9e", "talamon2", "1"))
-      #self.censordb.execute("INSERT INTO keys VALUES (NULL,?,?,?)", ("dd10b55cff986c61d915a148011395dd7a52092d7e25f3c14f8856986c07cce5", "talamon3", "1"))
-      
-      
       
       # create reasons
       self.censordb.execute("CREATE TABLE reasons (id INTEGER PRIMARY KEY, reason text UNIQUE)")
@@ -132,8 +127,6 @@ class main(threading.Thread):
       
       self.sqlite_censor_conn.commit()
       current_version = 1
-      #self.sqlite.execute('INSERT INTO groups(group_name, article_count, last_update) VALUES (?,?,?)', (group, 1, int(time.time())))
-      #self.censordb.execute("CREATE TABLE IF NOT EXISTS config (key text PRIMARY KEY, value text)")
     if current_version == 1:
       self.log(self.logger.INFO, "updating db from version %i to version %i" % (current_version, 2))
       self.censordb.execute("CREATE TABLE signature_cache (message_uid text PRIMARY KEY, valid INTEGER)")
@@ -178,6 +171,25 @@ class main(threading.Thread):
       self.censordb.execute('UPDATE config SET value = "8" WHERE key = "db_version"')
       self.sqlite_censor_conn.commit()
       current_version = 8
+    if current_version == 8:
+      self.log(self.logger.INFO, "updating db from version %i to version %i" % (current_version, 9))
+      self.censordb.execute("INSERT INTO reasons VALUES (NULL,?)", ("local",))
+      self.censordb.execute("INSERT INTO reasons VALUES (NULL,?)", ("remote",))
+      self.censordb.execute("INSERT INTO reasons VALUES (NULL,?)", ("replay",))
+      self.censordb.execute('INSERT INTO commands (command, flag) VALUES (?,?)', ("handle-srnd-cmd", str(2048)))
+      # evil cmd replace srnd cmd.
+      self.censordb.execute('CREATE TABLE evil_to_srnd (evil text PRIMARY KEY, srnd text, comment DEFAULT "")')
+      for evil, srnd, comm in (('purge',      'delete', ''), ('purge_desthash', 'delete',                     ''), ('sticky', 'overchan-sticky', 'sticky\unsticky thread request'), \
+                               ('purge_root', 'delete', ''), ('delete_a',       'overchan-delete-attachment', ''), ('close',  'overchan-close',  'closing\opening thread request')):
+        self.censordb.execute("INSERT INTO evil_to_srnd VALUES (?, ?, ?)", (evil, srnd, comm))
+      # received 0 - local, 1 - local and remote. send - 0 local, 1 - remote if secret key present else local. replayable (work from articles)- 0 not replay cmd , 1 - replay cmd
+      self.censordb.execute("CREATE TABLE cmd_map (id INTEGER PRIMARY KEY, command text, received INTEGER DEFAULT -1, send INTEGER DEFAULT -1, replayable INTEGER DEFAULT -1)")
+      for command, unikey in (('delete',       1), ('overchan-delete-attach', 1), ('handle-postman-mod', 0), ('overchan-sticky', 0), ('overchan-board-add', 0), \
+                              ('srnd-acl-mod', 0), ('overchan-board-del',     0), ('overchan-board-mod', 0), ('handle-srnd-cmd', 0), ('overchan-close',     0)):
+        self.censordb.execute("INSERT INTO cmd_map VALUES (NULL, ?, ?, ?, ?)", (command, unikey, unikey, unikey))
+      self.censordb.execute('UPDATE config SET value = "9" WHERE key = "db_version"')
+      self.sqlite_censor_conn.commit()
+      current_version = 9
 
   def run(self):
     #if self.should_terminate:
