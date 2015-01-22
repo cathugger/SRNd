@@ -1,0 +1,53 @@
+<html>
+  <head>
+    <title>C&C</title>
+    <link type="text/css" href="/styles.css" rel="stylesheet">
+    <style type="text/css">
+      .key {
+        text-align: right;
+      }
+      .date {
+        padding-right: 10px;
+      }
+      .action {
+        padding-left: 10px;
+        text-align: center;
+      }
+      .postid {
+        padding-left: 10px;
+      }
+      .reason {
+        text-align: right;
+        padding-left: 10px;
+      }
+      .actions {
+        padding-left: 10px;
+      }
+      .data_center {
+        text-align: center;
+        padding-left: 10px;
+      }
+      .box {
+        border: 1px dotted #AFAFAF;
+      }
+      .good {
+        color: #00E000;
+        text-align: center;
+      }
+      .bad {
+        color: #C92D4E;
+        text-align: center;
+      }
+    </style>
+  </head>
+  <body class="mod">
+    ${navigation}
+${modify_command}    <div class="box">
+      <b>commands control</b>
+      <table border="0px" class="datatable">
+        <tr><th>&nbsp;command name&nbsp;</th><th>&nbsp;sending&nbsp;</th><th>&nbsp;receiving&nbsp;</th><th>&nbsp;replay?&nbsp;</th><th>&nbsp;</th></tr>
+${commands_list}
+      </table>
+    </div>
+  </body>
+</html>

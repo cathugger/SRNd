@@ -80,6 +80,7 @@ class main(threading.Thread):
     self.command_mapper['overchan-board-del'] = self.handle_board_del
     self.command_mapper['overchan-board-mod'] = self.handle_overchan_board_mod
     self.command_mapper['handle-postman-mod'] = self.handle_postman_mod
+    self.command_mapper['handle-srnd-cmd'] = self.handle_srnd_cmd
 
   def shutdown(self):
     self.httpd.shutdown()
@@ -542,6 +543,33 @@ class main(threading.Thread):
     except Exception as e:
       self.log(self.logger.WARNING, "could not handle postman-mod: %s, line = '%s'" % (e, line))
     return (userkey, None)
+
+  def handle_srnd_cmd(self, line):
+    self.log(self.logger.DEBUG, "handle srnd-cmd: %s" % line)
+    command, base64_blob = line.split(" ", 2)[1:]
+    try:
+      send, received, replayable  = [base64.urlsafe_b64decode(x) for x in base64_blob.split(':')]
+      send, received, replayable = int(send), int(received), int(replayable)
+    except:
+      self.log(self.logger.WARNING, 'handle srnd-cmd: get corrupt data for %s' % command)
+      return (command, None)
+    if send not in (-1, 0, 1) or received not in (-1, 0, 1) or replayable not in (0, 1):
+      self.log(self.logger.WARNING, 'handle srnd-cmd: get invalid value for %s, send=%s, received=%s, replayable=%s' % (command, send, received, replayable))
+      return (command, None)
+    if command == 'handle-srnd-cmd':
+      self.log(self.logger.WARNING, 'handle srnd-cmd: not allow modify self. This maybe suicide!')
+      return (command, None)
+
+    try:
+      if int(self.censordb.execute('SELECT count(command) FROM cmd_map WHERE command = ?', (command,)).fetchone()[0]) == 1:
+         self.censordb.execute('UPDATE cmd_map SET send = ?, received = ?, replayable = ? WHERE command = ?', (send, received, replayable, command))
+         self.sqlite_censor_conn.commit()
+         self.command_cache = dict()
+      else:
+        self.log(self.logger.WARNING, "handle srnd-cmd: command %s not found or duplicated" % (command,))
+    except Exception as e:
+      self.log(self.logger.WARNING, "handle srnd-cmd: db not upgrade: %s, line = '%s'" % (e, line))
+    return (command, None)
 
   def handle_delete(self, line, debug=False):
     command, message_id = line.split(" ", 1)

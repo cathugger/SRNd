@@ -78,6 +78,8 @@ class censor(BaseHTTPRequestHandler):
         self.post_page_handler('settings', path[10:], 'overchan-board-mod', self.handle_update_board)
       elif path.startswith('/postman?'):
         self.post_page_handler('postman', path[9:], 'handle-postman-mod', self.handle_update_postman)
+      elif path.startswith('/commands?'):
+        self.post_page_handler('commands', path[10:], 'handle-srnd-cmd', self.handle_update_commands)
       else:
         self.send_keys()
       return
@@ -124,6 +126,8 @@ class censor(BaseHTTPRequestHandler):
         self.send_stats()
       elif path.startswith('/settings'):
         self.send_settings(path[10:])
+      elif path.startswith('/commands'):
+        self.send_commands(path[10:])
       elif path.startswith('/postman'):
         self.send_postman_settings(path[9:])
       elif path.startswith('/showmessage?'):
@@ -148,7 +152,6 @@ class censor(BaseHTTPRequestHandler):
       self.send_redirect(self.root_path + target, "not authorized, flag %s missing.<br />redirecting you in a moment." % command, 7)
       return
     try:
-      self.handle_update_postman(key)
       handler(key)
       self.send_redirect(self.root_path + target, "update ok<br />redirecting you in a moment.", 4)
     except Exception as e:
@@ -255,6 +258,18 @@ class censor(BaseHTTPRequestHandler):
     else:
       comment = 'modify key, sign: %s' % sha1(data_blob).hexdigest()[:6]
     cmd_line = {'handle-postman-mod': ('{0} {1}#{2}'.format(userkey, data_blob, comment),)}
+    self.handle_commands(cmd_line, self.origin.sessions[self.session][1], None)
+
+  def handle_update_commands(self, command=''):
+    post_vars = self.post_vars_init()
+    command = post_vars.getvalue('command', command)
+    if len(command) < 3:
+      raise Exception("invalid command name")
+
+    data_row = ('send', 'received', 'replayable',)
+    data_blob = ':'.join([base64.urlsafe_b64encode(post_vars.getvalue(x, '').strip()) for x in data_row])
+    comment = 'modify command, sign: %s' % sha1(data_blob).hexdigest()[:6]
+    cmd_line = {'handle-srnd-cmd': ('{0} {1}#{2}'.format(command, data_blob, comment),)}
     self.handle_commands(cmd_line, self.origin.sessions[self.session][1], None)
 
   def get_senderhash(self):
@@ -788,7 +803,56 @@ class censor(BaseHTTPRequestHandler):
       form_data['allow'] = ''
 
     return self.origin.t_engine_modify_postman.substitute(form_data)
-    
+
+  def send_commands(self, modify_cmd=''):
+    data = dict()
+    data['navigation'] = self.__get_navigation('commands')
+    data_list = list()
+    modify_data = list()
+    data_selector = dict()
+    data_selector[1] = {0: 'local', 1: 'remote', -1: 'disable'}
+    data_selector[2] = {0: 'local', 1: 'both',   -1: 'disable'}
+    data_selector[3] = {0: 'No', 1: 'Yes'}
+    for row in self.origin.sqlite_censor.execute('SELECT cmd_map.command, send, received, replayable FROM cmd_map, commands WHERE cmd_map.command = commands.command ORDER BY commands.id').fetchall():
+      if modify_cmd == row[0]: modify_data = row
+      data_row = dict()
+      data_row['command'] = row[0]
+      data_row['send'] = data_selector[1].get(row[1], 'error')
+      data_row['received'] = data_selector[2].get(row[2], 'error')
+      data_row['replayable'] = data_selector[3].get(row[3], 'ERR')
+      data_list.append(self.origin.t_engine_commands_row.substitute(data_row))
+
+    data['commands_list'] = '\n'.join(data_list)
+    if len(modify_data) > 0:
+      data['modify_command'] = self.commands_modify(modify_data, data_selector)
+    else:
+      data['modify_command'] = ''
+
+    self.send_response(200)
+    self.send_header('Content-type', 'text/html')
+    self.end_headers()
+    self.wfile.write(self.origin.t_engine_commands.substitute(data).encode('UTF-8'))
+
+  def commands_modify(self, modify_data, data_selector):
+    command_data = dict()
+    command_data['command'] = modify_data[0]
+    selectors = ['', '', '', '']
+    for x in range(1, 4):
+      if modify_data[x] not in data_selector[x]:
+        data_selected = 0
+      else:
+        data_selected = modify_data[x]
+      for col in data_selector[x]:
+        if col == data_selected:
+          checked = ' selected'
+        else:
+          checked = ''
+        selectors[x] += '<OPTION value="{0}"{1}>{2}</OPTION>'.format(col, checked, data_selector[x][col])
+    command_data['send'] = selectors[1]
+    command_data['received'] = selectors[2]
+    command_data['replayable'] = selectors[3]
+    return self.origin.t_engine_modify_commands.substitute(command_data)
+
   def handle_delete(self, message_id):
     path = os.path.join('articles', 'censored', message_id)
     try:
@@ -975,7 +1039,7 @@ class censor(BaseHTTPRequestHandler):
   def __get_navigation(self, current, add_after=None):
     out = list()
     #out.append('<div class="navigation">')
-    for item in (('key_stats', 'key stats'), ('moderation_log', 'moderation log'), ('pic_log', 'pic log'),
+    for item in (('key_stats', 'key stats'), ('commands', 'c&c'),('moderation_log', 'moderation log'), ('pic_log', 'pic log'),
         ('message_log', 'message log'),('stats', 'stats'), ('settings', 'settings'), ( 'postman', 'postman')):
       if item[0] == current:
         out.append(item[1])
@@ -1310,6 +1374,15 @@ class censor_httpd(threading.Thread):
         log_type=f.read().rstrip()
       )
     )
+    f.close()
+    f = open(os.path.join(template_directory, 'commands.tmpl'), 'r')
+    self.httpd.t_engine_commands = string.Template(f.read())
+    f.close()
+    f = open(os.path.join(template_directory, 'commands_row.tmpl'), 'r')
+    self.httpd.t_engine_commands_row = string.Template(f.read())
+    f.close()
+    f = open(os.path.join(template_directory, 'modify_commands.tmpl'), 'r')
+    self.httpd.t_engine_modify_commands = string.Template(f.read())
     f.close()
     #f = open(os.path.join(template_directory, 'message_pic.template'), 'r')
     #self.httpd.template_message_pic = f.read()

@@ -1,0 +1,27 @@
+    <div class="box">
+      <form action="commands?${command}" enctype="multipart/form-data" method="POST" style="text-align: center;">
+        <table class="datatable">
+          <tr>
+            <th align="right">command</th>
+            <td>${command}</td>
+          </tr>
+          <tr>
+            <th align="right">sending</th>
+            <td><select name="send" class="posttext">${send}</select></td>
+          </tr>
+          <tr>
+            <th align="right">receiving</th>
+            <td><select name="received" class="posttext">${received}</select></td>
+          </tr>
+          <tr>
+            <th align="right">replay?</th>
+            <td><select name="replayable" class="posttext">${replayable}</select></td>
+          </tr>
+          <tr>
+            <td>&nbsp;</td>
+            <td align="right"><input type="submit" value="modify" class="postbutton" /></td>
+          </tr>
+        </table>
+      </form>
+    </div>
+    <br />
