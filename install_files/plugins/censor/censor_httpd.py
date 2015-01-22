@@ -75,25 +75,9 @@ class censor(BaseHTTPRequestHandler):
         except Exception as e:
           self.send_redirect(self.root_path, "update failed: %s<br />redirecting you in a moment." % e, 9)
       elif path.startswith('/settings?'):
-        key = path[10:]
-        if not self.__check_legal_access('overchan-board-mod'):
-          self.send_redirect(self.root_path + 'settings', "not authorized, flag overchan-board-mod missing.<br />redirecting you in a moment.", 7)
-          return
-        try:
-          self.handle_update_board(key)
-          self.send_redirect(self.root_path + 'settings', "update ok<br />redirecting you in a moment.", 4)
-        except Exception as e:
-          self.send_redirect(self.root_path + 'settings', "update board failed: %s<br />redirecting you in a moment." % e, 9)
+        self.post_page_handler('settings', path[10:], 'overchan-board-mod', self.handle_update_board)
       elif path.startswith('/postman?'):
-        key = path[9:]
-        if not self.__check_legal_access('handle-postman-mod'):
-          self.send_redirect(self.root_path + 'postman', "not authorized, flag handle-postman-mod missing.<br />redirecting you in a moment.", 7)
-          return
-        try:
-          self.handle_update_postman(key)
-          self.send_redirect(self.root_path + 'postman', "update ok<br />redirecting you in a moment.", 4)
-        except Exception as e:
-          self.send_redirect(self.root_path + 'postman', "update postman db failed: %s<br />redirecting you in a moment." % e, 9)
+        self.post_page_handler('postman', path[9:], 'handle-postman-mod', self.handle_update_postman)
       else:
         self.send_keys()
       return
@@ -158,6 +142,25 @@ class censor(BaseHTTPRequestHandler):
     self.send_header('Content-type', 'text/plain')
     self.end_headers()
     self.wfile.write('nope')
+
+  def post_page_handler(self, target, key, command, handler):
+    if not self.__check_legal_access(command):
+      self.send_redirect(self.root_path + target, "not authorized, flag %s missing.<br />redirecting you in a moment." % command, 7)
+      return
+    try:
+      self.handle_update_postman(key)
+      handler(key)
+      self.send_redirect(self.root_path + target, "update ok<br />redirecting you in a moment.", 4)
+    except Exception as e:
+      self.send_redirect(self.root_path + target, "processing %s failed: %s<br />redirecting you in a moment." % (target, e), 9)
+
+  def key_from_secret(self, secret):
+    try:
+      public = hexlify(nacl.signing.SigningKey(unhexlify(secret)).verify_key.encode())
+    except:
+      return None
+    else:
+      return public
 
   def basicHTMLencode(self, inputString):
     html_escape_table = (("&", "&amp;"), ('"', "&quot;"), ("'", "&apos;"), (">", "&gt;"), ("<", "&lt;"),)
@@ -283,11 +286,11 @@ class censor(BaseHTTPRequestHandler):
     if not 'secret' in post_vars:
       self.console_headers_dump('admin panel login: no secret key received')
       return False
-    if len(post_vars['secret'].value) != 64:
-      self.console_headers_dump('admin panel login: invalid secret key received, length != 64')
+    public = self.key_from_secret(post_vars['secret'].value)
+    if public is None:
+      self.console_headers_dump('admin panel login: invalid secret key received')
       return False
     try:
-      public = hexlify(nacl.signing.SigningKey(unhexlify(post_vars['secret'].value)).verify_key.encode())
       flags_available = int(self.origin.sqlite_censor.execute("SELECT flags FROM keys WHERE key=?", (public,)).fetchone()[0])
       flag_required = int(self.origin.sqlite_censor.execute('SELECT flag FROM commands WHERE command="srnd-acl-view"').fetchone()[0])
       if (flags_available & flag_required) == flag_required:
@@ -295,7 +298,7 @@ class censor(BaseHTTPRequestHandler):
       else:
         return False
     except Exception as e:
-      self.console_headers_dump('admin panel login: invalid secret key received: %s' % e)
+      self.console_headers_dump('admin panel login: key not present in db: %s' % e)
       return False
 
   def user_login(self, cookie_name='Error'):
@@ -305,15 +308,11 @@ class censor(BaseHTTPRequestHandler):
     if not 'secret' in post_vars:
       self.console_headers_dump('user login: no secret key received')
       return False, None
-    if len(post_vars['secret'].value) != 64:
-      self.console_headers_dump('user login: invalid secret key received, length != 64')
+    public = self.key_from_secret(post_vars['secret'].value)
+    if public is None:
+      self.console_headers_dump('user login: invalid secret key received')
       return False, None
-    try:
-      public = hexlify(nacl.signing.SigningKey(unhexlify(post_vars['secret'].value)).verify_key.encode())
-      expires = self.origin.postmandb.execute('SELECT expires FROM userkey WHERE userkey = ? AND allow = 1 AND expires > ?', (public, current_time)).fetchone()
-    except Exception as e:
-      self.console_headers_dump('user login: invalid secret key received: %s' % e)
-      return False, None
+    expires = self.origin.postmandb.execute('SELECT expires FROM userkey WHERE userkey = ? AND allow = 1 AND expires > ?', (public, current_time)).fetchone()
     if expires:
       new_cookie = hexlify(self.origin.rnd.read(24))
       set_cookie = '{0}={1}; expires={2}; path=/;'.format(cookie_name, new_cookie, datetime.utcfromtimestamp(expires[0]).strftime('%a, %d-%b-%Y %T GMT'))
@@ -447,7 +446,7 @@ class censor(BaseHTTPRequestHandler):
   def send_keys(self):
     out = self.origin.template_keys
     create_key = '<div style="float:right;"><form action="modify?create" enctype="multipart/form-data" method="POST"><input name="new_key" type="text" class="posttext"><input type="submit" class="postbutton" value="add key"></form></div>'
-    out = out.replace("%%navigation%%", ''.join(self.__get_navigation('key_stats', add_after=create_key)))
+    out = out.replace("%%navigation%%", self.__get_navigation('key_stats', add_after=create_key))
     table = list()    
     flags = self.origin.sqlite_censor.execute("SELECT command, flag FROM commands").fetchall()
     cur_template = self.origin.template_log_flagnames
@@ -510,7 +509,7 @@ class censor(BaseHTTPRequestHandler):
     else:
       log_body['pagination'] += 'previous'
     log_body['pagination'] += '&nbsp;<a href="moderation_log?%i">next</a></div>' % ((page+1)*page_corrector)
-    log_body['navigation'] = ''.join(self.__get_navigation('moderation_log', add_after=log_body['pagination']))
+    log_body['navigation'] = self.__get_navigation('moderation_log', add_after=log_body['pagination'])
     table = list()
     for row in self.origin.sqlite_censor.execute("SELECT key, local_name, command, data, reason, comment, timestamp FROM log, commands, keys, reasons WHERE\
         log.accepted = ? AND keys.id = log.key_id AND commands.id = log.command_id AND reasons.id = log.reason_id ORDER BY log.id DESC LIMIT ?, ?",
@@ -585,7 +584,7 @@ class censor(BaseHTTPRequestHandler):
     else:
       pagination += 'previous'
     pagination += '&nbsp;<a href="pic_log?%i">next</a></div>' % (page+1)
-    out = out.replace("%%navigation%%", ''.join(self.__get_navigation('pic_log', add_after=pagination)))
+    out = out.replace("%%navigation%%", self.__get_navigation('pic_log', add_after=pagination))
     table = list()
     table.append(out.replace("%%pagination%%", pagination))
     #self.wfile.write(out)
@@ -610,7 +609,7 @@ class censor(BaseHTTPRequestHandler):
     query_str = unicode(''.join(query_data.get('q', '')), 'utf-8')
     message_log['search_action'] = 'message_log'
     message_log['search_target'] = query_str
-    message_log['navigation'] = ''.join(self.__get_navigation('message_log'))
+    message_log['navigation'] = self.__get_navigation('message_log')
     if len(query_str) < 3:
       data_row =  self.origin.sqlite_overchan.execute('SELECT article_uid, parent, sender, subject, message, parent, public_key, sent, group_name FROM articles, groups WHERE \
         groups.group_id = articles.group_id ORDER BY articles.sent DESC LIMIT ?,100', (0,)).fetchall()
@@ -658,7 +657,7 @@ class censor(BaseHTTPRequestHandler):
     t_3_rows = '<tr><td>%s</td><td class="right">%s</td><td>%s</td></tr>'
     t_g_stat = '<tr><td class="right">%s</td><td>%s</td><td class="right">%s</td></tr>'
 
-    stats_data['navigation']             = ''.join(self.__get_navigation('stats'))
+    stats_data['navigation']             = self.__get_navigation('stats')
     stats_data['stats_usage']            = ''.join( t_3_rows % x for x in self.__stats_usage(31, 30)    )
     stats_data['stats_fronteds']         = ''.join( t_2_rows % x for x in self.__stats_frontends()      )
     stats_data['stats_groups']           = ''.join( t_g_stat % x for x in self.__stats_groups()         )
@@ -677,7 +676,7 @@ class censor(BaseHTTPRequestHandler):
     self.end_headers()
     #out = '<html><head><link type="text/css" href="/styles.css" rel="stylesheet"><style type="text/css">body { margin: 10px; margin-top: 20px; font-family: monospace; font-size: 9pt; } .navigation { background: #101010; padding-top: 19px; position: fixed; top: 0; width: 100%; }</style></head><body>%%navigation%%<pre>'
     out = '<html><head><title>view message</title><link type="text/css" href="/styles.css" rel="stylesheet"></head><body class="mod">%%navigation%%<pre>'
-    out = out.replace("%%navigation%%", ''.join(self.__get_navigation('')))
+    out = out.replace("%%navigation%%", self.__get_navigation(''))
     self.wfile.write(out.encode('UTF-8'))
 
     if os.path.isfile(os.path.join('articles', 'censored', message_id)):
@@ -692,7 +691,7 @@ class censor(BaseHTTPRequestHandler):
 
   def send_settings(self, board_id =''):
     out = self.origin.template_settings
-    out = out.replace("%%navigation%%", ''.join(self.__get_navigation('settings')))
+    out = out.replace("%%navigation%%", self.__get_navigation('settings'))
     table = list()
     flags = self.origin.sqlite_overchan.execute("SELECT flag_name, flag FROM flags").fetchall()
     cur_template = self.origin.template_log_flagnames
@@ -720,7 +719,7 @@ class censor(BaseHTTPRequestHandler):
 
   def send_postman_settings(self, userkey=''):
     data = dict()
-    data['navigation'] = ''.join(self.__get_navigation('postman'))
+    data['navigation'] = self.__get_navigation('postman')
     allow_table = list()
     disallow_table = list()
     current_time = int(time.time())
@@ -979,13 +978,13 @@ class censor(BaseHTTPRequestHandler):
     for item in (('key_stats', 'key stats'), ('moderation_log', 'moderation log'), ('pic_log', 'pic log'),
         ('message_log', 'message log'),('stats', 'stats'), ('settings', 'settings'), ( 'postman', 'postman')):
       if item[0] == current:
-        out.append(item[1] + '&nbsp;')
+        out.append(item[1])
       else:
-        out.append('<a href="%s">%s</a>&nbsp;' % item)
+        out.append('<a href="%s">%s</a>' % item)
+    out = '[&nbsp;%s&nbsp;]' % '&nbsp;|&nbsp;'.join(out)
     if add_after != None:
-      out.append(add_after)
-    #out.append('<br /><br /></div><br /><br />')
-    out.append('<br /><br />')
+      out += add_after
+    out += '<br /><br />'
     return out
 
   def die(self, message=''):
