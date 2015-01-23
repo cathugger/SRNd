@@ -459,8 +459,9 @@ class main(threading.Thread):
     )
     self.gen_template_thumbs(self.invalid_file, self.document_file, self.audio_file, self.webm_file, self.no_file, self.censored_file, self.torrent_file, self.archive_file)
 
-    self.regenerate_boards = list()
-    self.regenerate_threads = list()
+    self.regenerate_boards = set()
+    self.regenerate_threads = set()
+    self.delete_messages = set()
     self.missing_parents = dict()
     self.cache = dict()
     self.cache['last_thread'] = dict()
@@ -532,11 +533,9 @@ class main(threading.Thread):
 
   def regenerate_all_html(self):
     for group_row in self.sqlite.execute('SELECT group_id FROM groups WHERE (cast(groups.flags as integer) & ?) = 0', (self.cache['flags']['blocked'],)).fetchall():
-      if group_row[0] not in self.regenerate_boards:
-        self.regenerate_boards.append(group_row[0])
+      self.regenerate_boards.add(group_row[0])
     for thread_row in self.sqlite.execute('SELECT article_uid FROM articles WHERE parent = "" OR parent = article_uid ORDER BY last_update DESC').fetchall():
-      if thread_row[0] not in self.regenerate_threads:
-        self.regenerate_threads.append(thread_row[0])
+      self.regenerate_threads.add(thread_row[0])
 
     # index generation happens only at startup
     self.generate_index()
@@ -562,10 +561,8 @@ class main(threading.Thread):
       self.sqlite_conn.commit()
     except:
       return 'Fail time update'
-    if group_id not in self.regenerate_boards:
-      self.regenerate_boards.append(group_id)
-    if not message_id in self.regenerate_threads:
-      self.regenerate_threads.append(message_id)
+    self.regenerate_boards.add(group_id)
+    self.regenerate_threads.add(message_id)
     return sticky_action
 
   def close_processing(self, message_id):
@@ -582,11 +579,63 @@ class main(threading.Thread):
       self.sqlite_conn.commit()
     except:
       return 'Fail db update'
-    if group_id not in self.regenerate_boards:
-      self.regenerate_boards.append(group_id)
-    if not message_id in self.regenerate_threads:
-      self.regenerate_threads.append(message_id)
+    self.regenerate_boards.add(group_id)
+    self.regenerate_threads.add(message_id)
     return close_action
+
+  def handle_overchan_massdelete(self):
+    orphan_attach = set()
+    for message_id in self.delete_messages:
+      if os.path.exists(os.path.join("articles", "restored", message_id)):
+        self.log(self.logger.DEBUG, 'message has been restored: %s. ignoring delete' % message_id)
+        continue
+      row = self.sqlite.execute("SELECT imagelink, thumblink, parent, group_id, received FROM articles WHERE article_uid = ?", (message_id,)).fetchone()
+      if not row:
+        self.log(self.logger.DEBUG, 'should delete message_id %s but there is no article matching this message_id' % message_id)
+        continue
+      self.log(self.logger.INFO, 'deleting message_id %s' % message_id)
+      if row[2] == '' or row[2] == message_id:
+        # root post
+        child_files = self.sqlite.execute("SELECT imagelink, thumblink FROM articles WHERE parent = ? AND article_uid != parent", (message_id,)).fetchall()
+        if child_files and len(child_files[0]) > 0:
+          orphan_attach.update(child_files)
+          # root posts with child posts
+          self.log(self.logger.DEBUG, 'deleting message_id %s, got a root post with attached child posts' % message_id)
+          # delete child posts
+          self.sqlite.execute('DELETE FROM articles WHERE parent = ?', (message_id,))
+        else:
+          # root posts without child posts
+          self.log(self.logger.DEBUG, 'deleting message_id %s, got a root post without any child posts' % message_id)
+        self.sqlite.execute('DELETE FROM articles WHERE article_uid = ?', (message_id,))
+        try:
+          os.unlink(os.path.join(self.output_directory, "thread-%s.html" % sha1(message_id).hexdigest()[:10]))
+        except Exception as e:
+          self.log(self.logger.WARNING, 'could not delete thread for message_id %s: %s' % (message_id, e))
+      else:
+        self.regenerate_threads.add(row[2])
+        # child post
+        # correct root post last_update
+        all_child_time = self.sqlite.execute('SELECT article_uid, last_update FROM articles WHERE parent = ? AND last_update >= sent ORDER BY sent DESC', (row[2],)).fetchall()
+        childs_count = len(all_child_time)
+        if childs_count > 0 and all_child_time[0][0] == message_id:
+          parent_row = self.sqlite.execute('SELECT last_update, sent FROM articles WHERE article_uid = ?', (row[2],)).fetchone()
+          if parent_row:
+            if childs_count == 1:
+              new_last_update = parent_row[1]
+            else:
+              new_last_update = all_child_time[1][1]
+            # sticky or abnormal last_update
+            if parent_row[0] < time.time() and parent_row[0] > new_last_update:
+              self.sqlite.execute('UPDATE articles SET last_update = ? WHERE article_uid = ?', (new_last_update, row[2]))
+        self.log(self.logger.DEBUG, 'deleting message_id %s, got a child post' % message_id)
+        self.sqlite.execute('DELETE FROM articles WHERE article_uid = ?', (message_id,))
+        # FIXME: add detection for parent == deleted message (not just censored) and if true, add to root_posts
+      self.sqlite_conn.commit()
+      orphan_attach.add((row[0], row[1]))
+      self.regenerate_boards.add(row[3])
+    self.delete_messages.clear()
+    for child_image, child_thumb in orphan_attach:
+      self.delete_orphan_attach(child_image, child_thumb)
 
   def delete_orphan_attach(self, image, thumb):
     image_link = os.path.join(self.output_directory, 'img', image)
@@ -679,8 +728,7 @@ class main(threading.Thread):
           if len(get_data) > 2:
             self.overchan_aliases_update(get_data[2], group_name)
           self.sqlite_conn.commit()
-          if group_id not in self.regenerate_boards:
-            self.regenerate_boards.append(group_id)
+          self.regenerate_boards.add(group_id)
       elif line.lower().startswith('overchan-board-add'):
         self.overchan_board_add(line.split(" ")[1:])
       elif line.lower().startswith("overchan-board-del"):
@@ -705,76 +753,13 @@ class main(threading.Thread):
           continue
         self.log(self.logger.INFO, 'deleting attachments for message_id %s' % message_id)
         self.censored_attach_processing(row[0], row[1])
-        if row[3] not in self.regenerate_boards:
-          self.regenerate_boards.append(row[3])
+        self.regenerate_boards.add(row[3])
         if row[2] == '':
-          if not message_id in self.regenerate_threads:
-            self.regenerate_threads.append(message_id)
-        elif not row[2] in self.regenerate_threads:
-          self.regenerate_threads.append(row[2])
-      elif line.lower().startswith("delete "):
-        message_id = line.split(" ")[1]
-        if os.path.exists(os.path.join("articles", "restored", message_id)):
-          self.log(self.logger.DEBUG, 'message has been restored: %s. ignoring delete' % message_id)
-          continue
-        row = self.sqlite.execute("SELECT imagelink, thumblink, parent, group_id, received FROM articles WHERE article_uid = ?", (message_id,)).fetchone()
-        if not row:
-          self.log(self.logger.DEBUG, 'should delete message_id %s but there is no article matching this message_id' % message_id)
-          continue
-        #if row[4] > timestamp:
-        #  self.log("post more recent than control message. ignoring delete for %s" % message_id, 2)
-        #  continue
-        # FIXME: allow deletion of earlier delete-attachment'ed messages
-        #if row[0] == 'invalid':
-        #  self.log("message already deleted/censored. ignoring delete for %s" % message_id, 4)
-        #  continue
-        self.log(self.logger.INFO, 'deleting message_id %s' % message_id)
-        with_child = False
-        if row[2] == '':
-          # root post
-          child_files = self.sqlite.execute("SELECT imagelink, thumblink FROM articles WHERE parent = ? AND article_uid != parent", (message_id,)).fetchall()
-          if child_files and len(child_files[0]) > 0:
-            # root posts with child posts
-            self.log(self.logger.DEBUG, 'deleting message_id %s, got a root post with attached child posts' % message_id)
-            # delete child posts
-            self.sqlite.execute('DELETE FROM articles WHERE parent = ?', (message_id,))
-            with_child = True
-          else:
-            # root posts without child posts
-            self.log(self.logger.DEBUG, 'deleting message_id %s, got a root post without any child posts' % message_id)
-          self.sqlite.execute('DELETE FROM articles WHERE article_uid = ?', (message_id,))
-          try:
-            os.unlink(os.path.join(self.output_directory, "thread-%s.html" % sha1(message_id).hexdigest()[:10]))
-          except Exception as e:
-            self.log(self.logger.WARNING, 'could not delete thread for message_id %s: %s' % (message_id, e))
+          self.regenerate_threads.add(message_id)
         else:
-          # child post
-          # correct root post last_update
-          all_child_time = self.sqlite.execute('SELECT article_uid, last_update FROM articles WHERE parent = ? AND last_update >= sent ORDER BY sent DESC', (row[2],)).fetchall()
-          childs_count = len(all_child_time)
-          if childs_count > 0 and all_child_time[0][0] == message_id:
-            parent_row = self.sqlite.execute('SELECT last_update, sent FROM articles WHERE article_uid = ?', (row[2],)).fetchone()
-            if parent_row:
-              if childs_count == 1:
-                new_last_update = parent_row[1]
-              else:
-                new_last_update = all_child_time[1][1]
-              # sticky or abnormal last_update
-              if parent_row[0] < time.time() and parent_row[0] > new_last_update:
-                self.sqlite.execute('UPDATE articles SET last_update = ? WHERE article_uid = ?', (new_last_update, row[2]))
-          self.log(self.logger.DEBUG, 'deleting message_id %s, got a child post' % message_id)
-          self.sqlite.execute('DELETE FROM articles WHERE article_uid = ?', (message_id,))
-          # FIXME: add detection for parent == deleted message (not just censored) and if true, add to root_posts
-        self.sqlite_conn.commit()
-        self.delete_orphan_attach(row[0], row[1])
-        # delete child images and thumbs
-        if with_child:
-          for child_image, child_thumb in child_files:
-            self.delete_orphan_attach(child_image, child_thumb)
-        if row[2] != '' and row[2] not in self.regenerate_threads:
-          self.regenerate_threads.append(row[2])
-        if row[3] not in self.regenerate_boards:
-          self.regenerate_boards.append(row[3])
+          self.regenerate_threads.add(row[2])
+      elif line.lower().startswith("delete "):
+        self.delete_messages.add(line.split(" ")[1])
       elif line.lower().startswith("overchan-sticky "):
         message_id = line.split(" ")[1]
         self.log(self.logger.INFO, 'sticky processing message_id %s, %s' % (message_id, self.sticky_processing(message_id)))
@@ -795,11 +780,11 @@ class main(threading.Thread):
     if len(self.regenerate_boards) > 0:
       for board in self.regenerate_boards:
         self.generate_board(board)
-      del self.regenerate_boards[:]
+      self.regenerate_boards.clear()
     if len(self.regenerate_threads) > 0:
       for thread in self.regenerate_threads:
         self.generate_thread(thread)
-      del self.regenerate_threads[:]
+      self.regenerate_threads.clear()
 
   def run(self):
     if self.should_terminate:
@@ -843,6 +828,8 @@ class main(threading.Thread):
         if self.queue.qsize() > self.sleep_threshold:
           time.sleep(self.sleep_time)
       except Queue.Empty:
+        if len(self.delete_messages) > 0:
+          self.handle_overchan_massdelete()
         if len(self.regenerate_boards) > 0:
           do_sleep = len(self.regenerate_boards) > self.sleep_threshold
           if do_sleep:
@@ -850,7 +837,7 @@ class main(threading.Thread):
           for board in self.regenerate_boards:
             self.generate_board(board)
             if do_sleep: time.sleep(self.sleep_time)
-          self.regenerate_boards = list()
+          self.regenerate_boards.clear()
           regen_overview = True
         if len(self.regenerate_threads) > 0:
           do_sleep = len(self.regenerate_threads) > self.sleep_threshold
@@ -859,7 +846,7 @@ class main(threading.Thread):
           for thread in self.regenerate_threads:
             self.generate_thread(thread)
             if do_sleep: time.sleep(self.sleep_time)
-          self.regenerate_threads = list()
+          self.regenerate_threads.clear()
           regen_overview = True
         if regen_overview:
           self.generate_overview()
@@ -1328,13 +1315,11 @@ class main(threading.Thread):
       self.log(self.logger.DEBUG, 'no groups left which are not blocked. ignoring %s' % message_id)
       return False
     for group_id in group_ids:
-      if group_id not in self.regenerate_boards:
-        self.regenerate_boards.append(group_id)
+      self.regenerate_boards.add(group_id)
 
     if parent != '' and parent != message_id:
       last_update = sent
-      if parent not in self.regenerate_threads:
-        self.regenerate_threads.append(parent)
+      self.regenerate_threads.add(parent)
       if sage:
         # sage mark
         last_update = sent - 10
@@ -1372,8 +1357,7 @@ class main(threading.Thread):
         self.log(self.logger.INFO, 'found a missing parent: %s' % message_id)
         if len(self.missing_parents) > 0:
           self.log(self.logger.INFO, 'still missing %i parents' % len(self.missing_parents))
-      if message_id not in self.regenerate_threads:
-        self.regenerate_threads.append(message_id)
+      self.regenerate_threads.add(message_id)
 
     if self.sqlite.execute('SELECT article_uid FROM articles WHERE article_uid=?', (message_id,)).fetchone():
       # post has been censored and is now being restored. just delete post for all groups so it can be reinserted
