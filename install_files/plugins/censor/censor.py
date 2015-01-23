@@ -73,12 +73,12 @@ class main(threading.Thread):
     self.command_mapper = dict()
     self.command_mapper['delete'] = self.handle_delete
     self.command_mapper['overchan-delete-attachment'] = self.handle_delete
-    self.command_mapper['overchan-sticky'] = self.handle_sticky
-    self.command_mapper['overchan-close'] = self.handle_close
+    self.command_mapper['overchan-sticky'] = \
+    self.command_mapper['overchan-close'] = self.handle_sticky_close
     self.command_mapper['srnd-acl-mod'] = self.handle_srnd_acl_mod
-    self.command_mapper['overchan-board-add'] = self.handle_board_add
-    self.command_mapper['overchan-board-del'] = self.handle_board_del
-    self.command_mapper['overchan-board-mod'] = self.handle_overchan_board_mod
+    self.command_mapper['overchan-board-add'] = \
+    self.command_mapper['overchan-board-del'] = \
+    self.command_mapper['overchan-board-mod'] = self.handle_overchan_dummy_mod
     self.command_mapper['handle-postman-mod'] = self.handle_postman_mod
     self.command_mapper['handle-srnd-cmd'] = self.handle_srnd_cmd
 
@@ -94,11 +94,11 @@ class main(threading.Thread):
   def update_db(self, current_version):
     self.log(self.logger.INFO, "should update db from version %i" % current_version)
     if current_version == 0:
-      self.log(self.logger.INFO, "updating db from version %i to version %i" % (current_version, 1))  
+      self.log(self.logger.INFO, "updating db from version %i to version %i" % (current_version, 1))
       # create configuration
       self.censordb.execute("CREATE TABLE config (key text PRIMARY KEY, value text)")
       self.censordb.execute('INSERT INTO config VALUES ("db_version","1")')
-      
+
       # create flags
       self.censordb.execute("CREATE TABLE commands (id INTEGER PRIMARY KEY, command TEXT, flag text)")
       self.censordb.execute('INSERT INTO commands (command, flag) VALUES (?,?)', ("delete",                     str(0b1)))
@@ -112,20 +112,20 @@ class main(threading.Thread):
       self.censordb.execute('INSERT INTO commands (command, flag) VALUES (?,?)', ("srnd-acl-mod",               str(0b100000000)))
       #self.censordb.execute('INSERT INTO commands (command, flag) VALUES (?,?)', ("srnd-acl-del",      str(0b1000000000)))
       #self.censordb.execute('INSERT INTO commands (command, flag) VALUES (?,?)', ("testing",           str(0b1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000)))
-      
+
       # create users
       self.censordb.execute("CREATE TABLE keys (id INTEGER PRIMARY KEY, key text UNIQUE, local_name text, flags text)")
-      
+
       # create reasons
       self.censordb.execute("CREATE TABLE reasons (id INTEGER PRIMARY KEY, reason text UNIQUE)")
       self.censordb.execute("INSERT INTO reasons VALUES (NULL,?)", ("unknown",))
       self.censordb.execute("INSERT INTO reasons VALUES (NULL,?)", ("whitelist",))
       self.censordb.execute("INSERT INTO reasons VALUES (NULL,?)", ("own message",))
       self.censordb.execute("INSERT INTO reasons VALUES (NULL,?)", ("manually",))
-      
+
       # create log
       self.censordb.execute("CREATE TABLE log (id INTEGER PRIMARY KEY, command_id INTEGER, accepted INTEGER, data TEXT, key_id INTEGER, reason_id INTEGER, comment TEXT, timestamp INTEGER, UNIQUE(key_id, command_id, data))")
-      
+
       self.sqlite_censor_conn.commit()
       current_version = 1
     if current_version == 1:
@@ -254,7 +254,7 @@ class main(threading.Thread):
     for x in html_escape_table:
       inputString = inputString.replace(x[0], x[1])
     return inputString.strip(' \t\n\r')
-    
+
   def allowed(self, key_id, command, is_replay, is_local):
     if not self.allowed_key(key_id, command):
       return 0, 1
@@ -427,7 +427,7 @@ class main(threading.Thread):
 
   def redistribute_command(self, group, line, comment, timestamp):
     # FIXME needs a hooks cache dict with key group => list hooks
-    
+
     hooks = dict()
     # whitelist
     for group_item in self.SRNd.hooks:
@@ -444,7 +444,7 @@ class main(threading.Thread):
     # FIXME 1) crossposting may match multiple times and thus deliver same hook multiple times
     # FIXME 2) if doing this block after group loop blacklist may filter valid hook from another group
     # FIXME currently doing the second variant
-    
+
     for hook in hooks:
       if hook.startswith('plugins-'):
         name = 'plugin-' + hook[8:]
@@ -456,7 +456,7 @@ class main(threading.Thread):
         continue
       else:
         self.log(self.logger.ERROR, "unknown hook detected. wtf? %s" % hook)
-        
+
   def handle_line(self, line, key_id, timestamp, is_replay, is_local):
     command = line.lower().split(" ", 1)[0]
     if '#' in line:
@@ -500,7 +500,7 @@ class main(threading.Thread):
       if int(self.censordb.execute('SELECT count(key) FROM keys WHERE key = ?', (key,)).fetchone()[0]) == 0:
         self.log(self.logger.DEBUG, "handle acl_mod: new key")
         self.censordb.execute("INSERT INTO keys (key, local_name, flags) VALUES (?, ?, ?)", (key, local_nick, flags))
-      else:  
+      else:
         self.censordb.execute("UPDATE keys SET local_name = ?, flags = ? WHERE key = ?", (local_nick, flags, key))
       self.sqlite_censor_conn.commit()
       self.allowed_cache = dict()
@@ -512,7 +512,7 @@ class main(threading.Thread):
     self.log(self.logger.DEBUG, "handle postman-mod: %s" % line)
     userkey, base64_blob = line.split(" ", 2)[1:]
     try:
-      local_name, allow, expires, logout  = [base64.urlsafe_b64decode(x) for x in base64_blob.split(':')]
+      local_name, allow, expires, logout = [base64.urlsafe_b64decode(x) for x in base64_blob.split(':')]
     except:
       self.log(self.logger.WARNING, 'get corrupt data for %s' % userkey)
       return (userkey, None)
@@ -548,7 +548,7 @@ class main(threading.Thread):
     self.log(self.logger.DEBUG, "handle srnd-cmd: %s" % line)
     command, base64_blob = line.split(" ", 2)[1:]
     try:
-      send, received, replayable  = [base64.urlsafe_b64decode(x) for x in base64_blob.split(':')]
+      send, received, replayable = [base64.urlsafe_b64decode(x) for x in base64_blob.split(':')]
       send, received, replayable = int(send), int(received), int(replayable)
     except:
       self.log(self.logger.WARNING, 'handle srnd-cmd: get corrupt data for %s' % command)
@@ -574,7 +574,7 @@ class main(threading.Thread):
   def handle_delete(self, line, debug=False):
     command, message_id = line.split(" ", 1)
     self.log(self.logger.DEBUG, "should delete %s" % message_id)
-    
+
     if os.path.exists(os.path.join("articles", "restored", message_id)):
       self.log(self.logger.DEBUG, "%s has been restored, ignoring delete" % message_id)
       return (message_id, None)
@@ -619,29 +619,12 @@ class main(threading.Thread):
       f.close()
     return (message_id, groups)
 
-  def handle_board_add(self, line):
+  def handle_overchan_dummy_mod(self, line):
     # overchan specific, gets handled at overchan plugin via redistribute_command()
     group_name = line.lower().split(' ')[1]
     return (group_name, (group_name,))
 
-  def handle_board_del(self, line):
-    # overchan specific, gets handled at overchan plugin via redistribute_command()
-    group_name = line.lower().split(' ')[1]
-    return (group_name, (group_name,))
-
-  def handle_overchan_board_mod(self, line):
-    # overchan specific, gets handled at overchan plugin via redistribute_command()
-    group_name = line.lower().split(' ')[1]
-    return (group_name, (group_name,))
-
-  def handle_sticky(self, line):
-    message_id = line.split(' ')[1]
-    groups = list()
-    for row in self.overchandb.execute('SELECT groups.group_name from articles, groups WHERE articles.article_uid = ? and groups.group_id = articles.group_id', (message_id,)).fetchall():
-      groups.append(row[0])
-    return (message_id, groups)
-
-  def handle_close(self, line):
+  def handle_sticky_close(self, line):
     message_id = line.split(' ')[1]
     groups = list()
     for row in self.overchandb.execute('SELECT groups.group_name from articles, groups WHERE articles.article_uid = ? and groups.group_id = articles.group_id', (message_id,)).fetchall():
