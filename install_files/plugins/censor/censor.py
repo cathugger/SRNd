@@ -595,7 +595,7 @@ class main(threading.Thread):
     for row in self.dropperdb.execute('SELECT group_name, article_id from articles, groups WHERE message_id=? and groups.group_id = articles.group_id', (message_id,)).fetchall():
       group_rows.append((row[0], row[1]))
       groups.append(row[0])
-    if os.path.exists(censore_path):
+    if os.path.exists(censore_path) and command == 'overchan-delete-attachment':
       self.log(self.logger.DEBUG, "already deleted, still handing over to redistribute further")
     elif os.path.exists(article_path):
       if command == 'overchan-delete-attachment':
