@@ -586,9 +586,6 @@ class main(threading.Thread):
   def handle_overchan_massdelete(self):
     orphan_attach = set()
     for message_id in self.delete_messages:
-      if os.path.exists(os.path.join("articles", "restored", message_id)):
-        self.log(self.logger.DEBUG, 'message has been restored: %s. ignoring delete' % message_id)
-        continue
       row = self.sqlite.execute("SELECT imagelink, thumblink, parent, group_id, received FROM articles WHERE article_uid = ?", (message_id,)).fetchone()
       if not row:
         self.log(self.logger.DEBUG, 'should delete message_id %s but there is no article matching this message_id' % message_id)
@@ -612,21 +609,19 @@ class main(threading.Thread):
         except Exception as e:
           self.log(self.logger.WARNING, 'could not delete thread for message_id %s: %s' % (message_id, e))
       else:
-        self.regenerate_threads.add(row[2])
-        # child post
-        # correct root post last_update
-        all_child_time = self.sqlite.execute('SELECT article_uid, last_update FROM articles WHERE parent = ? AND last_update >= sent ORDER BY sent DESC', (row[2],)).fetchall()
-        childs_count = len(all_child_time)
-        if childs_count > 0 and all_child_time[0][0] == message_id:
-          parent_row = self.sqlite.execute('SELECT last_update, sent FROM articles WHERE article_uid = ?', (row[2],)).fetchone()
-          if parent_row:
-            if childs_count == 1:
-              new_last_update = parent_row[1]
-            else:
-              new_last_update = all_child_time[1][1]
-            # sticky or abnormal last_update
-            if parent_row[0] < time.time() and parent_row[0] > new_last_update:
-              self.sqlite.execute('UPDATE articles SET last_update = ? WHERE article_uid = ?', (new_last_update, row[2]))
+        # child post and root not deleting
+        if row[2] not in self.delete_messages:
+          self.regenerate_threads.add(row[2])
+          # correct root post last_update
+          all_child_time = self.sqlite.execute('SELECT article_uid, last_update FROM articles WHERE parent = ? AND last_update >= sent ORDER BY sent DESC', (row[2],)).fetchall()
+          childs_count = len(all_child_time)
+          if childs_count > 0 and all_child_time[0][0] == message_id:
+            parent_row = self.sqlite.execute('SELECT last_update, sent FROM articles WHERE article_uid = ?', (row[2],)).fetchone()
+            if parent_row:
+              new_last_update = parent_row[1] if childs_count == 1 else all_child_time[1][1]
+              # sticky or abnormal last_update
+              if parent_row[0] < time.time() and parent_row[0] > new_last_update:
+                self.sqlite.execute('UPDATE articles SET last_update = ? WHERE article_uid = ?', (new_last_update, row[2]))
         self.log(self.logger.DEBUG, 'deleting message_id %s, got a child post' % message_id)
         self.sqlite.execute('DELETE FROM articles WHERE article_uid = ?', (message_id,))
         # FIXME: add detection for parent == deleted message (not just censored) and if true, add to root_posts
@@ -759,7 +754,11 @@ class main(threading.Thread):
         else:
           self.regenerate_threads.add(row[2])
       elif line.lower().startswith("delete "):
-        self.delete_messages.add(line.split(" ")[1])
+        message_id = line.split(" ")[1]
+        if os.path.exists(os.path.join("articles", "restored", message_id)):
+          self.log(self.logger.DEBUG, 'message has been restored: %s. ignoring delete' % message_id)
+        else:
+          self.delete_messages.add(message_id)
       elif line.lower().startswith("overchan-sticky "):
         message_id = line.split(" ")[1]
         self.log(self.logger.INFO, 'sticky processing message_id %s, %s' % (message_id, self.sticky_processing(message_id)))
