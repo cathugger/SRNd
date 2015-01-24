@@ -256,9 +256,10 @@ class main(threading.Thread):
     return inputString.strip(' \t\n\r')
 
   def allowed(self, key_id, command, is_replay, is_local):
+    accepted, reason_id = self.command_reason(command, is_replay, is_local)
     if not self.allowed_key(key_id, command):
       return 0, 1
-    return self.command_reason(command, is_replay, is_local)
+    return accepted, reason_id
 
   def allowed_key(self, key_id, command):
     if key_id in self.allowed_cache:
@@ -468,7 +469,7 @@ class main(threading.Thread):
       self.log(self.logger.INFO, "got unknown command: %s" % line)
       return
     accepted, reason_id = self.allowed(key_id, command, is_replay, is_local)
-    if command in self.command_cache and self.command_cache[command][0] != -1:
+    if self.command_cache[command][0] != -1:
       command_id = self.command_cache[command][0]
     else:
       self.log(self.logger.ERROR, "command %s not found in command_cache. FIXME!" % command)
