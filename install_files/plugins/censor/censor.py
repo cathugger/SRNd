@@ -472,7 +472,7 @@ class main(threading.Thread):
         for group in groups:
           self.redistribute_command(group, line, comment, timestamp)
     else:
-      data = line.lower().split(" ", 1)[1]
+      data = line.lower().split(" ", 1)[-1].split(" ", 1)[0]
       self.log(self.logger.DEBUG, "not authorized for '%s': %i" % (command, key_id))
     try:
       self.censordb.execute('INSERT INTO log (accepted, command_id, data, key_id, reason_id, comment, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)', \
