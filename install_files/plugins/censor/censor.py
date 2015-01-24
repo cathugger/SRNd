@@ -232,7 +232,8 @@ class main(threading.Thread):
       try:
         source, data = self.queue.get(block=True, timeout=1)
         if source == "article":
-          self.process_article(data)
+          if self.process_article(data) and self.queue.qsize() > self.sleep_threshold:
+            time.sleep(self.sleep_time)
         elif source == "httpd":
           public_key, data = data
           key_id = self.get_key_id(public_key)
@@ -241,8 +242,6 @@ class main(threading.Thread):
             self.handle_line(line, key_id, timestamp, False, True)
         else:
           self.log(self.logger.WARNING, 'unknown source: %s' % source)
-        if self.queue.qsize() > self.sleep_threshold:
-          time.sleep(self.sleep_time)
       except Queue.Empty as e:
         pass
     self.sqlite_censor_conn.close()
@@ -310,25 +309,24 @@ class main(threading.Thread):
     try:
       signature_row = self.censordb.execute("SELECT valid, received FROM signature_cache WHERE message_uid = ?", (message_id,)).fetchone()
       valid, received = int(signature_row[0]), int(signature_row[1])
+    except:
+      pass
+    else:
       if not valid:
         return False
-      f = open(os.path.join("articles", message_id), 'r')
+      if received:
+        if self.ignore_old > 0 and current_time - received > self.ignore_old:
+          return False
+      else:
+        self.censordb.execute('UPDATE signature_cache SET received = ? WHERE message_uid = ?', (current_time, message_id))
+        self.sqlite_censor_conn.commit()
       try:
-        if received != 0:
-          if self.ignore_old > 0 and current_time - received > self.ignore_old:
-            # ignore old article
-            f.close()
-            return True
-          else:
-            self.parse_article(f, message_id, None, False)
-        else:
-          self.parse_article(f, message_id, None, True)
+        f = open(os.path.join("articles", message_id), 'r')
+        self.parse_article(f, message_id)
       except Exception as e:
         self.log(self.logger.WARNING, 'something went wrong while parsing %s: %s' % (message_id, e))
         f.close()
       return True
-    except Exception as e:
-      pass
     public_key = None
     f = open(os.path.join("articles", message_id), 'r')
     line = f.readline()
@@ -363,8 +361,8 @@ class main(threading.Thread):
       f.close()
       self.censordb.execute('INSERT INTO signature_cache (message_uid, valid, received) VALUES (?, ?, ?)', (message_id, 0, current_time))
       self.sqlite_censor_conn.commit()
-      return False
-    self.parse_article(f, message_id, self.get_key_id(public_key), False)
+      return True
+    self.parse_article(f, message_id, self.get_key_id(public_key))
     return True
 
   def get_key_id(self, public_key):
@@ -382,7 +380,7 @@ class main(threading.Thread):
     self.key_cache[public_key] = key_id
     return key_id
 
-  def parse_article(self, article_fd, message_id, key_id, fix_received):
+  def parse_article(self, article_fd, message_id, key_id=None):
     self.log(self.logger.DEBUG, "parsing %s.." % message_id)
     is_replay = False
     if key_id == None:
@@ -411,12 +409,6 @@ class main(threading.Thread):
     if not sent:
       self.log(self.logger.INFO, "received article does not contain a date: header. using current timestamp instead")
       sent = int(time.time())
-    if fix_received:
-      try:
-        self.censordb.execute('UPDATE signature_cache SET received = ? WHERE message_uid = ?', (sent, message_id))
-        self.sqlite_censor_conn.commit()
-      except:
-        pass
 
     for line in article_fd:
       if len(line) == 1:
