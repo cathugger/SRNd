@@ -148,8 +148,18 @@ class censor(BaseHTTPRequestHandler):
       self.send_redirect(self.root_path + target, "not authorized, flag %s missing.<br />redirecting you in a moment." % command, 7)
       return
     post_vars = self.post_vars_init()
-    public = self.origin.sessions[self.session][1]
-    secret = None
+    if 'secret' in post_vars and len(post_vars['secret'].value) > 5:
+      secret = post_vars['secret'].value
+      public = self.key_from_secret(secret)
+      if public is None:
+        self.send_redirect(self.root_path + target, "processing %s failed: invalid secret key<br />redirecting you in a moment." % (target,), 9)
+        return
+      elif public != self.origin.sessions[self.session][1]:
+        self.send_redirect(self.root_path + target, "processing %s failed: you logged using another secret key. Reject.<br />redirecting you in a moment." % (target,), 9)
+        return
+    else:
+      public = self.origin.sessions[self.session][1]
+      secret = None
     try:
       handler(post_vars, public, secret, key)
       self.send_redirect(self.root_path + target, "update ok<br />redirecting you in a moment.", 4)
@@ -368,6 +378,11 @@ class censor(BaseHTTPRequestHandler):
       return 'What you want?'
     return 'Hello $username'
 
+  def __remote_sending_str(self, command):
+    if self.origin.sqlite_censor.execute('SELECT count(command) from cmd_map WHERE command = ? AND send = 1', (command,)).fetchone()[0] == 1:
+      return self.origin.template_send_remote
+    else:
+      return ''
 
   def send_modify_key(self, key, create_key=False):
     if create_key:
@@ -389,6 +404,7 @@ class censor(BaseHTTPRequestHandler):
 
     flags = self.origin.sqlite_censor.execute("SELECT command, flag FROM commands").fetchall()
     out = self.origin.template_modify_key.replace("%%key%%", row[0]).replace("%%nick%%", row[1])
+    out = out.replace("%%send_remote%%", self.__remote_sending_str('srnd-acl-mod'))
     out = out.replace("%%modify_key_flagset%%", self.modify_key_flagset_construct(row[2], flags))
     self.send_response(200)
     self.send_header('Content-type', 'text/html')
@@ -402,8 +418,8 @@ class censor(BaseHTTPRequestHandler):
     elif board_id.startswith('name='):
       row = self.origin.sqlite_overchan.execute("SELECT group_id, group_name, flags, ph_name, ph_shortname, link, tag, description \
         FROM groups WHERE group_name = ?", (board_id[5:],)).fetchone()
-    elif board_id.startswith('new'):
-      row = ('new', 'overchan.<input type="text" name="board_name" value="" class="posttext"/>', '0', '', '', '', '', '')
+    elif board_id == 'new':
+      row = ('new', 'overchan.<input type="text" name="board_name" value=""/>', '0', '', '', '', '', '')
     else:
       return ''
     if not row:
@@ -411,6 +427,7 @@ class censor(BaseHTTPRequestHandler):
 
     flags = self.origin.sqlite_overchan.execute("SELECT flag_name, flag FROM flags").fetchall()
     form_data = dict()
+    form_data['send_remote'] = self.__remote_sending_str('overchan-board-add') if board_id == 'new' else self.__remote_sending_str('overchan-board-mod')
     form_data['modify_key_flagset'] = self.modify_key_flagset_construct(row[2], flags)
     form_data['board_id'] = str(row[0])
     form_data['board'] = row[1]
@@ -769,6 +786,7 @@ class censor(BaseHTTPRequestHandler):
   def postman_modify_user(self, user_data):
     current_time = int(time.time())
     form_data = dict()
+    form_data['send_remote'] = self.__remote_sending_str('handle-postman-mod')
     form_data['userkey'] = user_data[0]
     if user_data[0] == 'new':
       form_data['action'] = 'add'
@@ -825,6 +843,7 @@ class censor(BaseHTTPRequestHandler):
 
   def commands_modify(self, modify_data, data_selector):
     command_data = dict()
+    command_data['send_remote'] = self.__remote_sending_str('handle-srnd-cmd')
     command_data['command'] = modify_data[0]
     command_data['send'] = self.__selector_construct(data_selector[1], modify_data[1])
     command_data['received'] = self.__selector_construct(data_selector[2], modify_data[2])
@@ -1279,6 +1298,9 @@ class censor_httpd(threading.Thread):
     template_directory = args['template_directory']
     f = open(os.path.join(template_directory, 'keys.tmpl'), 'r')
     self.httpd.template_keys = f.read()
+    f.close()
+    f = open(os.path.join(template_directory, 'send_remote.tmpl'), 'r')
+    self.httpd.template_send_remote = f.read()
     f.close()
     f = open(os.path.join(template_directory, 'log_flagnames.tmpl'), 'r')
     self.httpd.template_log_flagnames = f.read()
