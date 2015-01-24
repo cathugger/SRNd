@@ -167,6 +167,10 @@ class main(threading.Thread):
     if 'torrent_file' in args:
       self.torrent_file = args['torrent_file']
 
+    self.censor_css = 'censor.css'
+    if 'censor_css' in args:
+      self.censor_css = args['censor_css']
+
     self.use_unsecure_aliases = False
     if 'use_unsecure_aliases' in args:
       if args['use_unsecure_aliases'].lower() == 'true':
@@ -454,7 +458,7 @@ class main(threading.Thread):
     # ^ hardlinks not gonna work because of remote filesystems
     # ^ softlinks not gonna work because of nginx chroot
     # ^ => cp
-    self.copy_out((self.css_file, 'styles.css'), ('user.css', 'user.css'), (self.no_file, os.path.join('img', self.no_file)),
+    self.copy_out((self.css_file, 'styles.css'), (self.censor_css, 'censor.css'), ('user.css', 'user.css'), (self.no_file, os.path.join('img', self.no_file)),
         ('suicide.txt', os.path.join('img', 'suicide.txt')), ('playbutton.png', os.path.join('img', 'playbutton.png')),
     )
     self.gen_template_thumbs(self.invalid_file, self.document_file, self.audio_file, self.webm_file, self.no_file, self.censored_file, self.torrent_file, self.archive_file)

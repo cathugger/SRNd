@@ -1,0 +1,59 @@
+  td, th {
+    padding: 0px;
+  }
+  .mod_log tr:nth-child(2n+2) {
+    background: none repeat scroll 0 0 #151515;
+  }
+  .float {
+    float: left;
+    margin-right: 10px;
+    margin-bottom: 10px;
+  }
+  .top2 {
+    float: left;
+  }
+  .box {
+    border: 1px dotted #AFAFAF;
+  }
+  .data_center {
+    text-align: center;
+    padding-left: 10px;
+  }
+  .reason {
+    text-align: right;
+    padding-left: 10px;
+  }
+    .actions {
+    padding-left: 10px;
+  }
+  .action {
+    padding-left: 10px;
+    text-align: center;
+  }
+  .key {
+    text-align: right;
+  }
+  .date {
+    padding-right: 10px;
+  }
+  .postid {
+    padding-left: 10px;
+  }
+  .good {
+    color: #00E000;
+    text-align: center;
+  }
+  .bad {
+    color: #C92D4E;
+    text-align: center;
+  }
+  .evilstuff {
+    top: 0.5em !important;
+    right: 16em !important;
+  }
+  .stillevil {
+    white-space: nowrap !important;
+  }
+  .evilmod:checked ~ form .stillevil {
+    display: table-cell !important;
+  }
