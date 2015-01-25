@@ -1143,7 +1143,7 @@ class censor(BaseHTTPRequestHandler):
         if type(commands[command]) not in (list, tuple, set):
           self.origin.log(self.origin.logger.ERROR, 'INTERNAL ERROR: command %s is not "array". FIXME!' % command)
           return False
-        cmd_list = ['{0} {1}'.format(command, cmd) for cmd in commands[command]]
+        cmd_list = ['{0} {1}'.format(command, self.__remove_cmd__escape(cmd)) for cmd in commands[command]]
         if send == 1 and secret is not None:
           remote_cmd.extend(cmd_list)
         elif send in (0, 1):
@@ -1163,6 +1163,9 @@ class censor(BaseHTTPRequestHandler):
   def send_local_cmd(self, pubkey, lines):
     for cmd in lines:
       self.origin.censor.add_article((pubkey, cmd), "httpd")
+
+  def __remove_cmd__escape(self, line):
+    return line.replace('\n', '').replace('\t', '').replace('\r', '')
 
   def send_remote_cmd(self, secret, pubkey, lines):
     author = 'Anonymous'
