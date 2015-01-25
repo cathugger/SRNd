@@ -1161,8 +1161,7 @@ class censor(BaseHTTPRequestHandler):
     return status
 
   def send_local_cmd(self, pubkey, lines):
-    for cmd in lines:
-      self.origin.censor.add_article((pubkey, cmd), "httpd")
+    self.origin.censor.add_article((pubkey, '\n'.join(lines)), "httpd")
 
   def __remove_cmd__escape(self, line):
     return line.replace('\n', '').replace('\t', '').replace('\r', '')
