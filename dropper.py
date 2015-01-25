@@ -12,7 +12,7 @@ class dropper(threading.Thread):
   def __init__(self, listener, master, debug=3):
     self.SRNd = master
     self.socket = listener
-    self.db_version = 1
+    self.db_version = 2
     self.watching = os.path.join(os.getcwd(), "incoming")
     self.sqlite_conn = sqlite3.connect('dropper.db3')
     self.sqlite = self.sqlite_conn.cursor()
@@ -34,11 +34,11 @@ class dropper(threading.Thread):
     self.debug = debug
     try:
       db_version = int(self.sqlite.execute("SELECT value FROM config WHERE key = ?", ("db_version",)).fetchone()[0])
-      if db_version < self.db_version:
-        self.update_db(db_version)
     except Exception as e:
+      db_version = 0
       if self.debug > 3: print "[dropper] error while fetching db_version: %s" % e
-      self.update_db(0)
+    if db_version < self.db_version:
+      self.update_db(db_version)
     self.running = False
 
   def update_db(self, current_version):
@@ -55,6 +55,12 @@ class dropper(threading.Thread):
       self.sqlite.execute('CREATE INDEX IF NOT EXISTS article_idx ON articles(message_id);')
       self.sqlite_conn.commit()
       current_version = 1
+    if current_version == 1:
+      self.sqlite.execute('CREATE TABLE article_path (id INTEGER PRIMARY KEY, src TEXT, dst TEXT, count INTEGER DEFAULT 0, UNIQUE(src, dst))')
+      self.sqlite.execute('CREATE INDEX article_path_ab_idx ON article_path(src, dst)')
+      self.sqlite.execute('UPDATE config SET value = "2" WHERE key = "db_version"')
+      self.sqlite_conn.commit()
+      current_version = 2
     
   def handler_progress_incoming(self, signum, frame):
     if not self.running: return
@@ -73,7 +79,7 @@ class dropper(threading.Thread):
         f.close()
         try:
           self.validate(article)
-          desthash, message_id, groups, additional_headers = self.sanitize(article)
+          desthash, message_id, groups, additional_headers, article_path = self.sanitize(article)
         except Exception as e:
           if self.debug > -1: print '[dropper] article is invalid. %s: %s' % (item, e)
           os.rename(link, os.path.join('articles', 'invalid', item))
@@ -89,7 +95,7 @@ class dropper(threading.Thread):
         elif self.debug > 1:
           if int(self.sqlite.execute('SELECT count(message_id) FROM articles WHERE message_id = ?', (message_id,)).fetchone()[0]) != 0:
             print '[dropper] article \'%s\' was blacklisted and is moved back into incoming/. processing again' % message_id
-        self.write(desthash, message_id, groups, additional_headers, article)
+        self.write(desthash, message_id, groups, additional_headers, article, article_path)
         os.remove(link)
     self.busy = False
     if self.retry:
@@ -125,6 +131,7 @@ class dropper(threading.Thread):
     found = dict()
     vals = dict()
     desthash = ''
+    article_path = ''
     for req in self.reqs:
       found[req] = False
     done = False
@@ -135,6 +142,7 @@ class dropper(threading.Thread):
       for key in self.reqs:
         if article[index].lower().startswith(key + ':'):
           if key == 'path':
+            article_path = self.SRNd.instance_name + '!' + article[index].split(' ', 1)[1].strip()
             article[index] = 'Path: ' + self.SRNd.instance_name + '!' + article[index].split(' ', 1)[1]
           elif key == 'from':
             # FIXME parse and validate from
@@ -176,9 +184,9 @@ class dropper(threading.Thread):
           vals[req] = vals[req].split(',')
     if len(vals['newsgroups']) == 0:
       raise Exception('Newsgroup is missing or empty')
-    return (desthash, vals['message-id'], vals['newsgroups'], additional_headers)
+    return (desthash, vals['message-id'], vals['newsgroups'], additional_headers, article_path)
 
-  def write(self, desthash, message_id, groups, additional_headers, article):
+  def write(self, desthash, message_id, groups, additional_headers, article, article_path):
     if self.debug > 3: print "[dropper] writing article.."
     link = os.path.join('articles', message_id)
     if os.path.exists(link):
@@ -197,6 +205,7 @@ class dropper(threading.Thread):
       self.sqlite_hasher_conn.commit()
     except:
       pass
+    self.__article_path_up(article_path)
     hooks = dict()
     for group in groups:
       if self.debug > 3: print "[dropper] creating link for", group
@@ -275,6 +284,16 @@ class dropper(threading.Thread):
           print "[dropper] unknown plugin detected. wtf? {0}".format(name)
       else:
         print "[dropper] unknown hook detected. wtf? {0}".format(hook)
+
+  def __article_path_up(self, article_path):
+    article_path = article_path.split('!')
+    if len(article_path) < 2: return
+    for src in range(len(article_path)-1 , 0, -1):
+      dst = src - 1
+      if len(article_path[src]) > 2 and len(article_path[dst]) > 2:
+        self.sqlite.execute('INSERT OR IGNORE INTO article_path (src, dst) VALUES (?, ?)', (article_path[src], article_path[dst]))
+        self.sqlite.execute('UPDATE article_path SET count = count + 1 WHERE src = ? AND dst = ?', (article_path[src], article_path[dst]))
+    self.sqlite_conn.commit()
 
   def run(self):
     # only called from the outside via handler_progress_incoming()
