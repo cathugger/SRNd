@@ -1833,7 +1833,7 @@ class main(threading.Thread):
 
   def generate_overview(self):
     self.log(self.logger.INFO, 'generating %s/overview.html' % self.output_directory)
-    t_engine_mappings_overview = dict()
+    t_engine_mappings_overview = {'subject': '', 'sent': '', 'author': '', 'pubkey_short': '', 'pubkey': '', 'comment_count': ''}
     t_engine_mappings_overview['boardlist'] = self.generate_board_list()
     news_board_link = 'overview.html'
     news_board = self.sqlite.execute('SELECT group_id, group_name FROM groups WHERE \
@@ -1843,17 +1843,10 @@ class main(threading.Thread):
       row = self.sqlite.execute('SELECT subject, message, sent, public_key, article_uid, sender FROM articles \
           WHERE group_id = ? AND (parent = "" OR parent = article_uid) ORDER BY last_update DESC LIMIT 1', (news_board[0], )).fetchone()
     if not (news_board and row):
-      t_engine_mappings_overview['subject'] = ''
-      t_engine_mappings_overview['sent'] = ''
-      t_engine_mappings_overview['author'] = ''
-      t_engine_mappings_overview['pubkey_short'] = ''
-      t_engine_mappings_overview['pubkey'] = ''
       t_engine_mappings_overview['parent'] = 'does_not_exist_yet'
       t_engine_mappings_overview['message'] = 'once upon a time there was a news post'
       t_engine_mappings_overview['allnews_link'] = news_board_link
-      t_engine_mappings_overview['comment_count'] = ''
     else:
-      moder_name = ''
       news_board_link = '{0}-1.html'.format(news_board[1].replace('"', '').replace('/', '').split('.', 1)[1])
       parent = sha1(row[4]).hexdigest()[:10]
       if len(row[1].split('\n')) > 5:
@@ -1863,18 +1856,14 @@ class main(threading.Thread):
       else:
         message = row[1]
       message = self.markup_parser(message)
-      if row[0] == 'None' or row[0] == '':
-        t_engine_mappings_overview['subject'] = 'Breaking news'
-      else:
-        t_engine_mappings_overview['subject'] = row[0]
+      t_engine_mappings_overview['subject'] = 'Breaking news' if row[0] == 'None' or row[0] == '' else row[0]
       t_engine_mappings_overview['sent'] = datetime.utcfromtimestamp(row[2] + self.utc_time_offset).strftime(self.datetime_format)
-      if not row[3] == '':
+      if row[3] != '':
           t_engine_mappings_overview['pubkey_short'] = self.generate_pubkey_short_utf_8(row[3])
           moder_name = self.pubkey_to_name(row[3])
       else:
-          t_engine_mappings_overview['pubkey_short'] = ''
-      if moder_name: t_engine_mappings_overview['author'] = moder_name
-      else: t_engine_mappings_overview['author'] = row[5]
+          moder_name = ''
+      t_engine_mappings_overview['author'] = moder_name if moder_name else row[5]
       t_engine_mappings_overview['pubkey'] = row[3]
       t_engine_mappings_overview['parent'] = parent
       t_engine_mappings_overview['message'] = message
@@ -1910,10 +1899,7 @@ class main(threading.Thread):
       (articles.parent = "" OR articles.parent = articles.article_uid OR articles.parent IN (SELECT article_uid FROM articles)) \
       ORDER BY sent DESC LIMIT ?', (exclude_flags, str(postcount))).fetchall():
       sent = datetime.utcfromtimestamp(row[0] + self.utc_time_offset).strftime(self.datetime_format)
-      if row[6] != '':
-        board = row[6]
-      else:
-        board = self.basicHTMLencode(row[1].replace('"', '')).split('.', 1)[1]
+      board = row[6] if row[6] != '' else self.basicHTMLencode(row[1].replace('"', '')).split('.', 1)[1]
       author = row[2][:12]
       articlehash = sha1(row[4]).hexdigest()[:10]
       if row[5] in ('', row[4]):
