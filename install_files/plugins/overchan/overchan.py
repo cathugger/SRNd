@@ -471,6 +471,7 @@ class main(threading.Thread):
     self.cache['last_thread'] = dict()
     self.cache['flags'] = dict()
     self.cache['moder_flags'] = dict()
+    self.board_cache = dict()
 
     self.sqlite_dropper_conn = sqlite3.connect('dropper.db3')
     self.dropperdb = self.sqlite_dropper_conn.cursor()
@@ -684,6 +685,7 @@ class main(threading.Thread):
     if len(args) > 2:
       self.overchan_aliases_update(args[2], group_name)
     self.sqlite_conn.commit()
+    self.board_cache = dict()
     self.regenerate_all_html()
 
   def overchan_board_del(self, group_name, flags=0):
@@ -693,6 +695,7 @@ class main(threading.Thread):
       self.sqlite.execute('UPDATE groups SET flags = ? WHERE group_name = ?', (str(flags), group_name))
       self.log(self.logger.INFO, 'blocked board: \'%s\'' % group_name)
       self.sqlite_conn.commit()
+      self.board_cache = dict()
       self.regenerate_all_html()
     except:
       self.log(self.logger.WARNING, 'should delete board %s but there is no board with that name' % group_name)
@@ -727,6 +730,7 @@ class main(threading.Thread):
           if len(get_data) > 2:
             self.overchan_aliases_update(get_data[2], group_name)
           self.sqlite_conn.commit()
+          self.board_cache = dict()
           self.regenerate_boards.add(group_id)
       elif line.lower().startswith('overchan-board-add'):
         self.overchan_board_add(line.split(" ")[1:])
@@ -1306,6 +1310,7 @@ class main(threading.Thread):
       if not result:
         try:
           self.sqlite.execute('INSERT INTO groups(group_name, article_count, last_update) VALUES (?,?,?)', (group, 1, int(time.time())))
+          self.board_cache = dict()
           self.sqlite_conn.commit()
         except:
           self.log(self.logger.INFO, 'ignoring message for blocked group %s' % group)
@@ -1402,7 +1407,6 @@ class main(threading.Thread):
       FROM articles WHERE group_id = ? AND (parent = "" OR parent = article_uid) ORDER BY last_update DESC LIMIT ?', (group_id, threads_per_page * pages_per_board)).fetchall()
     threads = len(board_data)
     if threads == 0: return
-
     boardlist, full_board_name_unquoted, board_name_unquoted, board_name, board_description = self.generate_board_list(group_id)
     if self.enable_archive and ((int(self.sqlite.execute("SELECT flags FROM groups WHERE group_id=?", (group_id,)).fetchone()[0]) & self.cache['flags']['no-archive']) == 0) and \
         int(self.sqlite.execute('SELECT count(group_id) FROM (SELECT group_id FROM articles WHERE group_id = ? AND (parent = "" OR parent = article_uid))', (group_id,)).fetchone()[0]) > threads:
@@ -1794,7 +1798,19 @@ class main(threading.Thread):
     for row in self.censordb.execute('SELECT command, cast(flag as integer) FROM commands WHERE command != ""').fetchall():
       self.cache['moder_flags'][row[0]] = row[1]
 
-  def generate_board_list(self, group_id='', selflink=False):
+  def __board_list_cache_up(self, group_id):
+    if 'selflink' not in self.board_cache:
+      self.board_cache['selflink'] = self.__generate_board_list()
+    if group_id != 'selflink':
+      self.board_cache[group_id] = (self.__generate_board_list(group_id))
+
+  def generate_board_list(self, group_id='selflink', selflink=False):
+    if group_id not in self.board_cache:
+      self.__board_list_cache_up(group_id)
+    boardlist = self.board_cache['selflink'] if selflink or group_id == 'selflink' else self.board_cache[group_id][0]
+    return boardlist if group_id == 'selflink' else (boardlist,) + self.board_cache[group_id][1:]
+
+  def __generate_board_list(self, group_id='', selflink=False):
     full_board_name_unquoted = board_name_unquoted = board_name = board_description = ''
     boardlist = list()
     # FIXME: cache this shit somewhere
