@@ -205,12 +205,12 @@ class main(threading.Thread):
         self.die('{0} file not found in {1}'.format(x, cheking_file))
 
     # statics
-    for x in ('stats_usage', 'stats_usage_row', 'latest_posts', 'latest_posts_row', 'stats_boards', 'stats_boards_row'):
+    self.t_engine = dict()
+    for x in ('stats_usage_row', 'latest_posts_row', 'stats_boards_row'):
       template_file = os.path.join(self.template_directory, '%s.tmpl' % x)
-      template_var = 'template_%s' % x
       try:
         f = codecs.open(template_file, "r", "utf-8")
-        self.__dict__.setdefault(template_var, f.read())
+        self.t_engine[x] = string.Template(f.read())
         f.close()
       except Exception as e:
         self.die('Error loading template {0}: {1}'.format(template_file, e))
@@ -218,7 +218,7 @@ class main(threading.Thread):
     # temporary templates
     template_brick = dict()
     for x in ('help', 'base_pagelist', 'base_postform', 'base_footer', 'single_postform', 'dummy_postform', 'message_child_pic', 'message_child_nopic',
-        'message_root', 'message_child_quickreply', 'message_root_quickreply'):
+        'message_root', 'message_child_quickreply', 'message_root_quickreply', 'stats_usage', 'latest_posts', 'stats_boards'):
       template_file = os.path.join(self.template_directory, '%s.tmpl' % x)
       try:
         f = codecs.open(template_file, "r", "utf-8")
@@ -289,6 +289,9 @@ class main(threading.Thread):
     self.t_engine_overview = string.Template(
       string.Template(f.read()).safe_substitute(
         help=template_brick['help'],
+        stats_usage=template_brick['stats_usage'],
+        latest_posts=template_brick['latest_posts'],
+        stats_boards=template_brick['stats_boards'],
         title=self.html_title
       )
     )
@@ -1851,19 +1854,18 @@ class main(threading.Thread):
     self.log(self.logger.INFO, 'generating %s/overview.html' % self.output_directory)
     t_engine_mappings_overview = {'subject': '', 'sent': '', 'author': '', 'pubkey_short': '', 'pubkey': '', 'comment_count': ''}
     t_engine_mappings_overview['boardlist'] = self.generate_board_list()
-    news_board_link = 'overview.html'
     news_board = self.sqlite.execute('SELECT group_id, group_name FROM groups WHERE \
         (cast(flags as integer) & ?) != 0 AND (cast(flags as integer) & ?) = 0', (self.cache['flags']['news'], self.cache['flags']['blocked'])).fetchone()
     if news_board:
-      news_board_link = '{0}-1.html'.format(news_board[1].replace('"', '').replace('/', '').split('.', 1)[1])
+      t_engine_mappings_overview['allnews_link'] = '{0}-1.html'.format(news_board[1].replace('"', '').replace('/', '').split('.', 1)[1])
       row = self.sqlite.execute('SELECT subject, message, sent, public_key, article_uid, sender FROM articles \
-          WHERE group_id = ? AND (parent = "" OR parent = article_uid) ORDER BY last_update DESC LIMIT 1', (news_board[0], )).fetchone()
+          WHERE (parent = "" OR parent = article_uid) AND group_id = ? ORDER BY last_update DESC', (news_board[0],)).fetchone()
+    else:
+      t_engine_mappings_overview['allnews_link'] = 'overview.html'
     if not (news_board and row):
       t_engine_mappings_overview['parent'] = 'does_not_exist_yet'
       t_engine_mappings_overview['message'] = 'once upon a time there was a news post'
-      t_engine_mappings_overview['allnews_link'] = news_board_link
     else:
-      news_board_link = '{0}-1.html'.format(news_board[1].replace('"', '').replace('/', '').split('.', 1)[1])
       parent = sha1(row[4]).hexdigest()[:10]
       if len(row[1].split('\n')) > 5:
         message = '\n'.join(row[1].split('\n')[:5]) + '\n[..] <a href="thread-%s.html"><i>message too large</i></a>' % parent
@@ -1883,9 +1885,9 @@ class main(threading.Thread):
       t_engine_mappings_overview['pubkey'] = row[3]
       t_engine_mappings_overview['parent'] = parent
       t_engine_mappings_overview['message'] = message
-      t_engine_mappings_overview['allnews_link'] = news_board_link
       t_engine_mappings_overview['comment_count'] = self.sqlite.execute('SELECT count(article_uid) FROM articles WHERE \
           parent = ? AND parent != article_uid AND group_id = ?', (row[4], news_board[0])).fetchone()[0]
+
     weekdays = ('Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday')
     max_post = 0
     stats = list()
@@ -1893,63 +1895,54 @@ class main(threading.Thread):
     days = 30
     utc_offset = str(self.utc_time_offset) + ' seconds'
     totals = int(self.sqlite.execute('SELECT count(1) FROM articles WHERE sent > strftime("%s", "now", "-' + str(days) + ' days")').fetchone()[0])
-    stats.append(self.template_stats_usage_row.replace('%%postcount%%', str(totals)).replace('%%date%%', 'all posts').replace('%%weekday%%', '').replace('%%bar%%', 'since %s days' % days))
+    stats.append(self.t_engine['stats_usage_row'].substitute({'postcount': totals, 'date': 'all posts', 'weekday': '', 'bar': 'since %s days' % days}))
+    datarow = list()
     for row in self.sqlite.execute('SELECT count(1) as counter, strftime("%Y-%m-%d", sent, "unixepoch", "' + utc_offset + '") as day, strftime("%w", sent, "unixepoch", "' + utc_offset + '") as weekday FROM articles WHERE sent > strftime("%s", "now", "-' + str(days) + ' days") GROUP BY day ORDER BY day DESC').fetchall():
       if row[0] > max_post:
         max_post = row[0]
-      stats.append((row[0], row[1], weekdays[int(row[2])]))
-    for index in range(1, len(stats)):
-      graph = '=' * int(float(stats[index][0])/max_post*bar_length)
+      datarow.append((row[0], row[1], weekdays[int(row[2])]))
+    for row in datarow:
+      graph = '=' * int(float(row[0])/max_post*bar_length)
       if len(graph) == 0:
         graph = '&nbsp;'
-      stats[index] = self.template_stats_usage_row.replace('%%postcount%%', str(stats[index][0])).replace('%%date%%', stats[index][1]).replace('%%weekday%%', stats[index][2]).replace('%%bar%%', graph)
-    overview_stats_usage = self.template_stats_usage
-    overview_stats_usage = overview_stats_usage.replace('%%stats_usage_rows%%', ''.join(stats))
-    t_engine_mappings_overview['stats_usage'] = overview_stats_usage
-    del stats[:]
+      stats.append(self.t_engine['stats_usage_row'].substitute({'postcount': row[0], 'date': row[1], 'weekday': row[2], 'bar': graph}))
+    t_engine_mappings_overview['stats_usage_rows'] = '\n'.join(stats)
 
     postcount = 50
+    stats = list()
     exclude_flags = self.cache['flags']['hidden'] | self.cache['flags']['no-overview'] | self.cache['flags']['blocked']
-    for row in self.sqlite.execute('SELECT sent, group_name, sender, subject, article_uid, parent, ph_name FROM articles, groups WHERE \
-      (cast(groups.flags as integer) & ?) = 0 AND articles.group_id = groups.group_id AND articles.last_update >= articles.sent AND \
+    for row in self.sqlite.execute('SELECT sent, group_name, sender, subject, article_uid, parent, ph_name FROM groups, articles WHERE \
+      groups.group_id = articles.group_id AND articles.last_update >= articles.sent AND (cast(groups.flags as integer) & ?) = 0 AND \
       (articles.parent = "" OR articles.parent = articles.article_uid OR articles.parent IN (SELECT article_uid FROM articles)) \
       ORDER BY sent DESC LIMIT ?', (exclude_flags, str(postcount))).fetchall():
-      sent = datetime.utcfromtimestamp(row[0] + self.utc_time_offset).strftime(self.datetime_format)
-      board = row[6] if row[6] != '' else self.basicHTMLencode(row[1].replace('"', '')).split('.', 1)[1]
-      author = row[2][:12]
-      articlehash = sha1(row[4]).hexdigest()[:10]
+      latest_posts_row = dict()
+      latest_posts_row['sent'] = datetime.utcfromtimestamp(row[0] + self.utc_time_offset).strftime(self.datetime_format)
+      latest_posts_row['board'] = row[6] if row[6] != '' else self.basicHTMLencode(row[1].replace('"', '')).split('.', 1)[1]
+      latest_posts_row['author'] = row[2][:12]
+      latest_posts_row['articlehash'] = sha1(row[4]).hexdigest()[:10]
       if row[5] in ('', row[4]):
         # root post
-        parent = articlehash
-        subject = row[3][:60]
-        if subject in ('', 'None'):
-          subject = self.sqlite.execute('SELECT message FROM articles WHERE article_uid = ?', (row[4],)).fetchone()[0][:60]
+        latest_posts_row['parent'] = latest_posts_row['articlehash']
+        latest_posts_row['subject'] = row[3][:60]
+        if latest_posts_row['subject'] in ('', 'None'):
+          latest_posts_row['subject'] = self.sqlite.execute('SELECT message FROM articles WHERE article_uid = ?', (row[4],)).fetchone()[0][:60]
       else:
-        parent = sha1(row[5]).hexdigest()[:10]
-        subject = self.sqlite.execute('SELECT subject FROM articles WHERE article_uid = ?', (row[5],)).fetchone()[0][:60]
-        if subject in ('', 'None'):
-          subject = self.sqlite.execute('SELECT message FROM articles WHERE article_uid = ?', (row[5],)).fetchone()[0][:60]
-      if subject == '':
-        subject = 'None'
-      stats.append(self.template_latest_posts_row.replace('%%sent%%', sent).replace('%%board%%', board).replace('%%parent%%', parent).replace('%%articlehash%%', articlehash).replace('%%author%%', author).replace('%%subject%%', subject))
-    overview_latest_posts = self.template_latest_posts
-    overview_latest_posts = overview_latest_posts.replace('%%latest_posts_rows%%', ''.join(stats))
-    t_engine_mappings_overview['latest_posts'] = overview_latest_posts
-    del stats[:]
+        latest_posts_row['parent'] = sha1(row[5]).hexdigest()[:10]
+        latest_posts_row['subject'] = self.sqlite.execute('SELECT subject FROM articles WHERE article_uid = ?', (row[5],)).fetchone()[0][:60]
+        if latest_posts_row['subject'] in ('', 'None'):
+          latest_posts_row['subject'] = self.sqlite.execute('SELECT message FROM articles WHERE article_uid = ?', (row[5],)).fetchone()[0][:60]
+      latest_posts_row['subject'] = 'None' if latest_posts_row['subject'] == '' else latest_posts_row['subject'].replace('\n', ' ')
+      stats.append(self.t_engine['latest_posts_row'].substitute(latest_posts_row))
+    t_engine_mappings_overview['latest_posts_rows'] = '\n'.join(stats)
 
+    stats = list()
     exclude_flags = self.cache['flags']['hidden'] | self.cache['flags']['blocked']
-    for row in self.sqlite.execute('SELECT count(1) as counter, group_name, ph_name FROM articles, groups WHERE \
-      (cast(groups.flags as integer) & ?) = 0 AND articles.group_id = groups.group_id GROUP BY \
-      articles.group_id ORDER BY counter DESC', (exclude_flags,)).fetchall():
-      if row[2] != '':
-        board = row[2]
-      else:
-        board = self.basicHTMLencode(row[1].replace('"', ''))
-      stats.append(self.template_stats_boards_row.replace('%%postcount%%', str(row[0])).replace('%%board%%', board))
-    overview_stats_boards = self.template_stats_boards
-    overview_stats_boards = overview_stats_boards.replace('%%stats_boards_rows%%', ''.join(stats))
-    t_engine_mappings_overview['stats_boards'] = overview_stats_boards
-
+    for row in self.sqlite.execute('SELECT count(1) as counter, group_name, ph_name FROM groups, articles WHERE \
+      groups.group_id = articles.group_id AND (cast(groups.flags as integer) & ?) = 0 GROUP BY \
+      groups.group_id ORDER BY counter DESC', (exclude_flags,)).fetchall():
+      board = row[2] if row[2] != '' else self.basicHTMLencode(row[1].replace('"', ''))
+      stats.append(self.t_engine['stats_boards_row'].substitute({'postcount': row[0], 'board': board}))
+    t_engine_mappings_overview['stats_boards_rows'] = '\n'.join(stats)
     f = codecs.open(os.path.join(self.output_directory, 'overview.html'), 'w', 'UTF-8')
     f.write(self.t_engine_overview.substitute(t_engine_mappings_overview))
     f.close()
