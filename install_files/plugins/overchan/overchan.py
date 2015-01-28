@@ -598,19 +598,18 @@ class main(threading.Thread):
       if not row:
         self.log(self.logger.DEBUG, 'should delete message_id %s but there is no article matching this message_id' % message_id)
         continue
-      self.log(self.logger.INFO, 'deleting message_id %s' % message_id)
       if row[2] == '' or row[2] == message_id:
         # root post
         child_files = self.sqlite.execute("SELECT imagelink, thumblink FROM articles WHERE parent = ? AND article_uid != parent", (message_id,)).fetchall()
         if child_files and len(child_files[0]) > 0:
           orphan_attach.update(child_files)
           # root posts with child posts
-          self.log(self.logger.DEBUG, 'deleting message_id %s, got a root post with attached child posts' % message_id)
+          self.log(self.logger.INFO, 'deleting root message_id %s and %s childs' % (message_id, len(child_files[0])))
           # delete child posts
           self.sqlite.execute('DELETE FROM articles WHERE parent = ?', (message_id,))
         else:
           # root posts without child posts
-          self.log(self.logger.DEBUG, 'deleting message_id %s, got a root post without any child posts' % message_id)
+          self.log(self.logger.INFO, 'deleting root message_id %s' % message_id)
         self.sqlite.execute('DELETE FROM articles WHERE article_uid = ?', (message_id,))
         try:
           os.unlink(os.path.join(self.output_directory, "thread-%s.html" % sha1(message_id).hexdigest()[:10]))
@@ -621,7 +620,7 @@ class main(threading.Thread):
         if row[2] not in self.delete_messages:
           self.regenerate_threads.add(row[2])
           # correct root post last_update
-          all_child_time = self.sqlite.execute('SELECT article_uid, last_update FROM articles WHERE parent = ? AND last_update >= sent ORDER BY sent DESC', (row[2],)).fetchall()
+          all_child_time = self.sqlite.execute('SELECT article_uid, last_update FROM articles WHERE parent = ? AND last_update >= sent ORDER BY sent DESC LIMIT 2', (row[2],)).fetchall()
           childs_count = len(all_child_time)
           if childs_count > 0 and all_child_time[0][0] == message_id:
             parent_row = self.sqlite.execute('SELECT last_update, sent FROM articles WHERE article_uid = ?', (row[2],)).fetchone()
@@ -630,7 +629,7 @@ class main(threading.Thread):
               # sticky or abnormal last_update
               if parent_row[0] < time.time() and parent_row[0] > new_last_update:
                 self.sqlite.execute('UPDATE articles SET last_update = ? WHERE article_uid = ?', (new_last_update, row[2]))
-        self.log(self.logger.DEBUG, 'deleting message_id %s, got a child post' % message_id)
+        self.log(self.logger.INFO, 'deleting child message_id %s' % message_id)
         self.sqlite.execute('DELETE FROM articles WHERE article_uid = ?', (message_id,))
         # FIXME: add detection for parent == deleted message (not just censored) and if true, add to root_posts
       self.sqlite_conn.commit()
@@ -645,9 +644,9 @@ class main(threading.Thread):
     thumb_link = os.path.join(self.output_directory, 'thumbs', thumb)
     for imagename, imagepath, imagetype in ((image, image_link, 'imagelink'), (thumb, thumb_link, 'thumblink'),):
       if len(imagename) > 40 and os.path.exists(imagepath):
-        caringbears = int(self.sqlite.execute('SELECT count(article_uid) FROM articles WHERE %s = ?' % imagetype, (imagename,)).fetchone()[0])
-        if caringbears > 0:
-          self.log(self.logger.INFO, 'not deleting %s, %s posts using it' % (imagename, caringbears))
+        caringbear = self.sqlite.execute('SELECT article_uid FROM articles WHERE %s = ?' % imagetype, (imagename,)).fetchone()
+        if caringbear is not None:
+          self.log(self.logger.INFO, 'not deleting %s, %s using it' % (imagename, caringbear[0]))
         else:
           self.log(self.logger.DEBUG, 'nobody not use %s, delete it' % (imagename,))
           try:
@@ -723,7 +722,8 @@ class main(threading.Thread):
         get_data = line.split(" ")[1:]
         group_name, flags = get_data[:2]
         flags = int(flags)
-        group_id = self.sqlite.execute("SELECT group_id FROM groups WHERE group_name=?", (group_name,)).fetchone()[0]
+        group_id = self.sqlite.execute("SELECT group_id FROM groups WHERE group_name=?", (group_name,)).fetchone()
+        group_id = group_id[0] if group_id else ''
         if group_id == '' or ((flags & self.cache['flags']['blocked']) == 0 and self.check_board_flags(group_id, 'blocked')):
           self.overchan_board_add((group_name, flags,))
         elif (flags & self.cache['flags']['blocked']) != 0 and not self.check_board_flags(group_id, 'blocked'):
