@@ -1036,7 +1036,8 @@ class main(threading.Thread):
       if video_length > 120: video_length = 120
       tmp_video_frame = video_frame
       current_frame = 0
-      while self.create_best_video_thumbnail and readable and current_frame < video_length:
+      start_time = time.time()
+      while self.create_best_video_thumbnail and readable and current_frame < video_length and time.time() - start_time < 30:
         histogram = cv2.calcHist(tmp_video_frame, [42], None, [256], [0, 256])
         histogram_length = sum(histogram)
         samples_probability = [float(h) / histogram_length for h in histogram]
