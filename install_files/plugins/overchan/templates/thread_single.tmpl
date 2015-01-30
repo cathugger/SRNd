@@ -18,25 +18,7 @@
     </div>
     <center><b>${board} :: ${subject}</b></center>
 ${single_postform}
-    <input type="checkbox" id="chkhelp" class="chkhelp" title="evil mod">
-    <label for="chkhelp" class="lblhelp">?</label>
-    <input type="checkbox" class="evilmod" title="evil mod" />
-    <form method="POST" action="/moderate?evil" enctype="multipart/form-data">
-      <div class="overlay">
-        <br />
-        <span class="overlaytext">What the fuck is this?</span>
-        <label for="chkhelp" class="lblhelp">x</label>
-        <br /><br /><br />
-        <div class="overlay_inner">
-          <span class="message_span">${help}</span>
-        </div>
-      </div>
-      <div class="evilstuff">&nbsp;<!--[<a href="/moderate?getkey" target="_blank">?</a>]-->
-        <label>secret</label>
-        <input type="hidden" name="target" value="${target}" />
-        <input type="text" title="secret" name="secret" class="posttext" />
-        <input type="submit" value="be evil" class="postbutton" />
-      </div>
+${base_help}
 ${thread_single}
     <hr style="clear: both;">
     </form>

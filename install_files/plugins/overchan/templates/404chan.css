@@ -45,7 +45,7 @@
   .sitetitle h2 {
     margin: 0px;
   }
-  .sitetitle h2 a {
+  .sitetitle a {
     color: #ABABAB;
     text-decoration: none;
   }
@@ -204,18 +204,6 @@
   .sig_chk:checked ~ .sig_key {
     display: inline;
   }
-  .overlay {
-    position: fixed;
-    top: 0px;
-    bottom: 0px;
-    left: 0px;
-    right: 0px;
-    background: #000000;
-    opacity: 0.97;
-    z-index: 1;
-    visibility: hidden;
-    text-align: center;
-  }
   .lblhelp {
     position: fixed;
     top: 0.5em;
@@ -223,24 +211,10 @@
     cursor: pointer;
     font-weight: bold;
   }
-  .chkhelp {
-    display: none;
-  }
-  .chkhelp:checked ~ form .overlay {
-    visibility: visible;
-  }
-  .overlay_inner {
-    position: absolute;
-    left: 5%;
-    width: 90%;
-    height: 500px;
-    background: #0A0A0A;
-    border: 1px solid #454545;
-    text-align: left;
-    overflow: auto;
-  }
-  .overlaytext {
-    font-weight: bold;
+  a.lblhelp, a.lblhelp:hover {
+    color: #C5C8C6;
+    padding: 0px;
+    text-decoration: none;
   }
   .quote {
     color: #789922;

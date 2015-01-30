@@ -2,7 +2,7 @@
       <form method="POST" action="/incoming" enctype="multipart/form-data">
         <input type="hidden" name="frontend" value="overchan" />
         <input type="hidden" name="board" value="${full_board}" />
-        <input type="hidden" name="reply" value="" />
+        <input type="hidden" name="reply" value="${thread_id}" />
         <input type="hidden" name="target" value="${target}" />
         <table cellspacing="1" cellpadding="0">
           <tr>
@@ -23,7 +23,7 @@
               <table cellspacing="0" cellpadding="0" width="100%">
                 <tr>
                   <td><input type="file" name="file" class="postfile" /></td>
-                  <td align="right"><input type="submit" value="new thread" class="postbutton" id="newthread" /></td>
+                  <td align="right"><input type="submit" value="${postform_action}" class="postbutton" ${new_thread_id}/></td>
                 </tr>
               </table>
             </td>

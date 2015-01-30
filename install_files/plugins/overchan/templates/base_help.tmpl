@@ -1,16 +1,6 @@
-    <input type="checkbox" id="chkhelp" class="chkhelp" title="evil mod">
-    <label for="chkhelp" class="lblhelp">?</label>
+    <a href="help.html" class="lblhelp">?</a>
     <input type="checkbox" class="evilmod" title="evil mod" />
     <form method="POST" action="/moderate?evil" enctype="multipart/form-data">
-    <div class="overlay">
-      <br />
-      <span class="overlaytext">What the fuck is this?</span>
-      <label for="chkhelp" class="lblhelp">x</label>
-      <br /><br /><br />
-      <div class="overlay_inner">
-        <span class="message_span">${help}</span>
-      </div>
-    </div>
     <div class="evilstuff">
       <label>secret</label><!--&nbsp;[<a href="/moderate?getkey" target="_blank">?</a>]-->
       <input type="hidden" name="target" value="${target}" />

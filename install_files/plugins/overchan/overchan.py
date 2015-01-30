@@ -217,8 +217,8 @@ class main(threading.Thread):
 
     # temporary templates
     template_brick = dict()
-    for x in ('help', 'base_pagelist', 'base_postform', 'base_footer', 'single_postform', 'dummy_postform', 'message_child_pic', 'message_child_nopic',
-        'message_root', 'message_child_quickreply', 'message_root_quickreply', 'stats_usage', 'latest_posts', 'stats_boards'):
+    for x in ('help', 'base_pagelist', 'base_postform', 'base_footer', 'dummy_postform', 'message_child_pic', 'message_child_nopic',
+        'message_root', 'message_child_quickreply', 'message_root_quickreply', 'stats_usage', 'latest_posts', 'stats_boards', 'base_help'):
       template_file = os.path.join(self.template_directory, '%s.tmpl' % x)
       try:
         f = codecs.open(template_file, "r", "utf-8")
@@ -227,10 +227,6 @@ class main(threading.Thread):
       except Exception as e:
         self.die('Error loading template {0}: {1}'.format(template_file, e))
 
-    f = codecs.open(os.path.join(self.template_directory, 'base_help.tmpl'), "r", "utf-8")
-    template_brick['base_help'] = string.Template(f.read()).safe_substitute(
-      help=template_brick['help']
-    )
     f = codecs.open(os.path.join(self.template_directory, 'base_head.tmpl'), "r", "utf-8")
     template_brick['base_head'] = string.Template(f.read()).safe_substitute(
       title=self.html_title
@@ -239,8 +235,8 @@ class main(threading.Thread):
     f = codecs.open(os.path.join(self.template_directory, 'thread_single.tmpl'), "r", "utf-8")
     template_brick['thread_single'] = string.Template(
       string.Template(f.read()).safe_substitute(
-        help=template_brick['help'],
-        title=self.html_title
+        title=self.html_title,
+        base_help=template_brick['base_help']
       )
     )
     f.close()
@@ -250,15 +246,22 @@ class main(threading.Thread):
       string.Template(f.read()).safe_substitute(
         base_head=template_brick['base_head'],
         base_pagelist=template_brick['base_pagelist'],
-        base_postform=template_brick['base_postform'],
         base_help=template_brick['base_help'],
-        base_footer=template_brick['base_footer']
+        base_footer=template_brick['base_footer'],
+        base_postform=string.Template(template_brick['base_postform']).safe_substitute(
+          postform_action='new thread',
+          thread_id='',
+          new_thread_id='id="newthread" '
+        )
       )
     )
     f.close()
     self.t_engine_thread_single = string.Template(
       template_brick['thread_single'].safe_substitute(
-        single_postform=template_brick['single_postform']
+        single_postform=string.Template(template_brick['base_postform']).safe_substitute(
+          postform_action='reply',
+          new_thread_id=''
+        )
       )
     )
     self.t_engine_thread_single_closed = string.Template(
@@ -288,7 +291,6 @@ class main(threading.Thread):
     f = codecs.open(os.path.join(self.template_directory, 'overview.tmpl'), "r", "utf-8")
     self.t_engine_overview = string.Template(
       string.Template(f.read()).safe_substitute(
-        help=template_brick['help'],
         stats_usage=template_brick['stats_usage'],
         latest_posts=template_brick['latest_posts'],
         stats_boards=template_brick['stats_boards'],
@@ -336,6 +338,15 @@ class main(threading.Thread):
     )
     f = codecs.open(os.path.join(self.template_directory, 'signed.tmpl'), "r", "utf-8")
     self.t_engine_signed = string.Template(f.read())
+    f.close()
+    f = codecs.open(os.path.join(self.template_directory, 'help_page.tmpl'), "r", "utf-8")
+    self.t_engine['help_page'] = string.Template(
+      string.Template(f.read()).safe_substitute(
+        base_head=string.Template(template_brick['base_head']).safe_substitute(board='help'),
+        help=template_brick['help'],
+        base_footer=template_brick['base_footer']
+      )
+    )
     f.close()
 
     del template_brick
@@ -1410,7 +1421,6 @@ class main(threading.Thread):
     board_data = self.sqlite.execute('SELECT article_uid, sender, subject, sent, message, imagename, imagelink, thumblink, public_key, last_update, closed \
       FROM articles WHERE group_id = ? AND (parent = "" OR parent = article_uid) ORDER BY last_update DESC LIMIT ?', (group_id, threads_per_page * pages_per_board)).fetchall()
     threads = len(board_data)
-    if threads == 0: return
     if self.enable_archive and ((int(self.sqlite.execute("SELECT flags FROM groups WHERE group_id=?", (group_id,)).fetchone()[0]) & self.cache['flags']['no-archive']) == 0) and \
         int(self.sqlite.execute('SELECT count(group_id) FROM (SELECT group_id FROM articles WHERE group_id = ? AND (parent = "" OR parent = article_uid))', (group_id,)).fetchone()[0]) > threads:
       generate_archive = True
@@ -1874,15 +1884,15 @@ class main(threading.Thread):
       if row[5] in ('', row[4]):
         # root post
         latest_posts_row['parent'] = latest_posts_row['articlehash']
-        latest_posts_row['subject'] = row[3][:60]
+        latest_posts_row['subject'] = row[3]
         if latest_posts_row['subject'] in ('', 'None'):
-          latest_posts_row['subject'] = self.sqlite.execute('SELECT message FROM articles WHERE article_uid = ?', (row[4],)).fetchone()[0][:60]
+          latest_posts_row['subject'] = self.sqlite.execute('SELECT message FROM articles WHERE article_uid = ?', (row[4],)).fetchone()[0]
       else:
         latest_posts_row['parent'] = sha1(row[5]).hexdigest()[:10]
-        latest_posts_row['subject'] = self.sqlite.execute('SELECT subject FROM articles WHERE article_uid = ?', (row[5],)).fetchone()[0][:60]
+        latest_posts_row['subject'] = self.sqlite.execute('SELECT subject FROM articles WHERE article_uid = ?', (row[5],)).fetchone()[0]
         if latest_posts_row['subject'] in ('', 'None'):
-          latest_posts_row['subject'] = self.sqlite.execute('SELECT message FROM articles WHERE article_uid = ?', (row[5],)).fetchone()[0][:60]
-      latest_posts_row['subject'] = 'None' if latest_posts_row['subject'] == '' else latest_posts_row['subject'].replace('\n', ' ')
+          latest_posts_row['subject'] = self.sqlite.execute('SELECT message FROM articles WHERE article_uid = ?', (row[5],)).fetchone()[0]
+      latest_posts_row['subject'] = 'None' if latest_posts_row['subject'] == '' else latest_posts_row['subject'].replace('\n', ' ')[:50]
       stats.append(self.t_engine['latest_posts_row'].substitute(latest_posts_row))
     t_engine_mappings_overview['latest_posts_rows'] = '\n'.join(stats)
 
@@ -1896,6 +1906,12 @@ class main(threading.Thread):
     t_engine_mappings_overview['stats_boards_rows'] = '\n'.join(stats)
     f = codecs.open(os.path.join(self.output_directory, 'overview.html'), 'w', 'UTF-8')
     f.write(self.t_engine_overview.substitute(t_engine_mappings_overview))
+    f.close()
+    self.generate_help(t_engine_mappings_overview['news'])
+
+  def generate_help(self, news_data):
+    f = codecs.open(os.path.join(self.output_directory, 'help.html'), 'w', 'UTF-8')
+    f.write(self.t_engine['help_page'].substitute({'boardlist': self.get_board_list(), 'news': news_data}))
     f.close()
 
   def generate_news_data(self):
