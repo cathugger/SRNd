@@ -5,56 +5,6 @@
     <title>${title} :: Overview</title>
     <meta http-equiv="content-type" content="text/html; charset=utf-8">
     <link rel="stylesheet" type="text/css" href="styles.css" />
-    <style type="text/css">
-      .news {
-        border: 1px solid #3b3b3b;
-        background: #1c1c1c;
-        margin: 10px 20px 10px 20px;
-        padding: 0.3em;
-      }
-      .news .header {
-        font-style: italic;
-        padding: 3px 5px 0px 5px;
-        text-align: right;
-        border: 1px dotted #3b3b3b;
-      }
-      .news .author {
-        font-style: italic;
-        font-weight: bold;
-      }
-      .topicline .subject {
-        font-style: normal;
-        float: left;
-      }
-      .news .message_span {
-        padding: 10px 5px 0px 5px;
-      }
-      .news .footer {
-        text-align: right;
-        font-style: italic;
-        padding: 0px 5px 5px;
-      }
-      .activity {
-        padding: 10px 20px;
-        #background: #AAAAAA;
-      }
-      .activity td, .activity th {
-        vertical-align: top;
-        white-space: nowrap;
-      }
-      .post_td {
-        width: 100%;
-        padding: 0px 10px;
-      }
-      .post_td td {
-        text-align: right;
-      }
-      .post_td .subject {
-        text-align: left;
-        white-space: normal;
-        padding-left: 10px;
-      }
-    </style>
     <link rel="stylesheet" href="user.css" type="text/css">
   </head>
   <body>
@@ -77,11 +27,7 @@
       </div>
     </div>
     </form>
-    <div class="news">
-      <div class="header"><div class="topicline"><b class="subject">${subject}</b><span class="published">${sent}</span></div><input type="checkbox" class="sig_chk" id="sign${parent}"><span class="sig_key">${pubkey}</span>&nbsp;<span class="author">${author}</span>&nbsp;<label title="signed message, click to show full public key" class="sig_label" for="sign${parent}">${pubkey_short}</label></div>
-      <div class="message_span">${message}</div>
-      <div class="footer"><a href="thread-${parent}.html">${comment_count}&nbsp;comments</a>&nbsp;&nbsp;<a href="${allnews_link}">all news</a></div>
-    </div>
+${news}
     <table class="activity" cellspacing="0" cellpadding="0" border="0" width="100%">
       <tr>
         <td class="usage_td">

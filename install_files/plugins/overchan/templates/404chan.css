@@ -350,3 +350,50 @@
   .play_button:hover { 
     opacity: 0.7;
   }
+  .news {
+    border: 1px solid #3b3b3b;
+    background: #1c1c1c;
+    margin: 10px 20px 10px 20px;
+    padding: 0.3em;
+  }
+  .news .header {
+    font-style: italic;
+    padding: 3px 5px 0px 5px;
+    text-align: right;
+    border: 1px dotted #3b3b3b;
+  }
+  .news .author {
+    font-style: italic;
+    font-weight: bold;
+  }
+  .news .header .topicline .subject {
+    font-style: normal;
+    float: left;
+  }
+  .news .message_span {
+    padding: 10px 5px 0px 5px;
+  }
+  .news .footer {
+    text-align: right;
+    font-style: italic;
+    padding: 0px 5px 5px;
+  }
+  .activity {
+    padding: 10px 20px;
+  }
+  .activity td, .activity th {
+    vertical-align: top;
+    white-space: nowrap;
+  }
+  .post_td {
+    width: 100%;
+    padding: 0px 10px;
+  }
+  .post_td td {
+    text-align: right;
+  }
+  .post_td .subject {
+    text-align: left;
+    white-space: normal;
+    padding-left: 10px;
+  }

@@ -206,7 +206,7 @@ class main(threading.Thread):
 
     # statics
     self.t_engine = dict()
-    for x in ('stats_usage_row', 'latest_posts_row', 'stats_boards_row'):
+    for x in ('stats_usage_row', 'latest_posts_row', 'stats_boards_row', 'news'):
       template_file = os.path.join(self.template_directory, '%s.tmpl' % x)
       try:
         f = codecs.open(template_file, "r", "utf-8")
@@ -1835,41 +1835,9 @@ class main(threading.Thread):
 
   def generate_overview(self):
     self.log(self.logger.INFO, 'generating %s/overview.html' % self.output_directory)
-    t_engine_mappings_overview = {'subject': '', 'sent': '', 'author': '', 'pubkey_short': '', 'pubkey': '', 'comment_count': ''}
+    t_engine_mappings_overview = dict()
     t_engine_mappings_overview['boardlist'] = self.get_board_list()
-    news_board = self.sqlite.execute('SELECT group_id, group_name FROM groups WHERE \
-        (cast(flags as integer) & ?) != 0 AND (cast(flags as integer) & ?) = 0', (self.cache['flags']['news'], self.cache['flags']['blocked'])).fetchone()
-    if news_board:
-      t_engine_mappings_overview['allnews_link'] = '{0}-1.html'.format(news_board[1].replace('"', '').replace('/', '').split('.', 1)[1])
-      row = self.sqlite.execute('SELECT subject, message, sent, public_key, article_uid, sender FROM articles \
-          WHERE (parent = "" OR parent = article_uid) AND group_id = ? ORDER BY last_update DESC', (news_board[0],)).fetchone()
-    else:
-      t_engine_mappings_overview['allnews_link'] = 'overview.html'
-    if not (news_board and row):
-      t_engine_mappings_overview['parent'] = 'does_not_exist_yet'
-      t_engine_mappings_overview['message'] = 'once upon a time there was a news post'
-    else:
-      parent = sha1(row[4]).hexdigest()[:10]
-      if len(row[1].split('\n')) > 5:
-        message = '\n'.join(row[1].split('\n')[:5]) + '\n[..] <a href="thread-%s.html"><i>message too large</i></a>' % parent
-      elif len(row[1]) > 1000:
-        message = row[1][:1000] + '\n[..] <a href="thread-%s.html"><i>message too large</i></a>' % parent
-      else:
-        message = row[1]
-      message = self.markup_parser(message)
-      t_engine_mappings_overview['subject'] = 'Breaking news' if row[0] == 'None' or row[0] == '' else row[0]
-      t_engine_mappings_overview['sent'] = datetime.utcfromtimestamp(row[2] + self.utc_time_offset).strftime(self.datetime_format)
-      if row[3] != '':
-          t_engine_mappings_overview['pubkey_short'] = self.generate_pubkey_short_utf_8(row[3])
-          moder_name = self.pubkey_to_name(row[3])
-      else:
-          moder_name = ''
-      t_engine_mappings_overview['author'] = moder_name if moder_name else row[5]
-      t_engine_mappings_overview['pubkey'] = row[3]
-      t_engine_mappings_overview['parent'] = parent
-      t_engine_mappings_overview['message'] = message
-      t_engine_mappings_overview['comment_count'] = self.sqlite.execute('SELECT count(article_uid) FROM articles WHERE \
-          parent = ? AND parent != article_uid AND group_id = ?', (row[4], news_board[0])).fetchone()[0]
+    t_engine_mappings_overview['news'] = self.generate_news_data()
 
     weekdays = ('Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday')
     max_post = 0
@@ -1929,6 +1897,43 @@ class main(threading.Thread):
     f = codecs.open(os.path.join(self.output_directory, 'overview.html'), 'w', 'UTF-8')
     f.write(self.t_engine_overview.substitute(t_engine_mappings_overview))
     f.close()
+
+  def generate_news_data(self):
+    t_engine_mappings_news = {'subject': '', 'sent': '', 'author': '', 'pubkey_short': '', 'pubkey': '', 'comment_count': ''}
+    news_board = self.sqlite.execute('SELECT group_id, group_name FROM groups WHERE \
+        (cast(flags as integer) & ?) != 0 AND (cast(flags as integer) & ?) = 0', (self.cache['flags']['news'], self.cache['flags']['blocked'])).fetchone()
+    if news_board:
+      t_engine_mappings_news['allnews_link'] = '{0}-1.html'.format(news_board[1].replace('"', '').replace('/', '').split('.', 1)[1])
+      row = self.sqlite.execute('SELECT subject, message, sent, public_key, article_uid, sender FROM articles \
+          WHERE (parent = "" OR parent = article_uid) AND group_id = ? ORDER BY last_update DESC', (news_board[0],)).fetchone()
+    else:
+      t_engine_mappings_news['allnews_link'] = 'overview.html'
+    if not (news_board and row):
+      t_engine_mappings_news['parent'] = 'does_not_exist_yet'
+      t_engine_mappings_news['message'] = 'once upon a time there was a news post'
+    else:
+      parent = sha1(row[4]).hexdigest()[:10]
+      if len(row[1].split('\n')) > 5:
+        message = '\n'.join(row[1].split('\n')[:5]) + '\n[..] <a href="thread-%s.html"><i>message too large</i></a>' % parent
+      elif len(row[1]) > 1000:
+        message = row[1][:1000] + '\n[..] <a href="thread-%s.html"><i>message too large</i></a>' % parent
+      else:
+        message = row[1]
+      message = self.markup_parser(message)
+      t_engine_mappings_news['subject'] = 'Breaking news' if row[0] == 'None' or row[0] == '' else row[0]
+      t_engine_mappings_news['sent'] = datetime.utcfromtimestamp(row[2] + self.utc_time_offset).strftime(self.datetime_format)
+      if row[3] != '':
+          t_engine_mappings_news['pubkey_short'] = self.generate_pubkey_short_utf_8(row[3])
+          moder_name = self.pubkey_to_name(row[3])
+      else:
+          moder_name = ''
+      t_engine_mappings_news['author'] = moder_name if moder_name else row[5]
+      t_engine_mappings_news['pubkey'] = row[3]
+      t_engine_mappings_news['parent'] = parent
+      t_engine_mappings_news['message'] = message
+      t_engine_mappings_news['comment_count'] = self.sqlite.execute('SELECT count(article_uid) FROM articles WHERE \
+          parent = ? AND parent != article_uid AND group_id = ?', (row[4], news_board[0])).fetchone()[0]
+    return self.t_engine['news'].substitute(t_engine_mappings_news)
 
 if __name__ == '__main__':
   # FIXME fix this shit
