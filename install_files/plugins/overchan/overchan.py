@@ -1763,7 +1763,7 @@ class main(threading.Thread):
     timestamp = int(time.time()) - 3600*24
     for group_row in self.sqlite.execute('SELECT group_name, group_id, ph_name, link FROM groups WHERE \
       (cast(groups.flags as integer) & ?) = 0 ORDER by group_name ASC', (exclude_flags,)).fetchall():
-      menu_entry['group_name'] = group_row[0].split('.', 1)[1].replace('"', '').replace('/', '')
+      menu_entry['group_name'] = group_row[0].split('.', 1)[-1].replace('"', '').replace('/', '')
       menu_entry['group_link'] = group_row[3] if self.use_unsecure_aliases and group_row[3] != '' else '%s-1.html' % menu_entry['group_name']
       menu_entry['group_name_encoded'] = group_row[2] if group_row[2] != '' else self.basicHTMLencode(menu_entry['group_name'])
       menu_entry['postcount'] = self.sqlite.execute('SELECT count(article_uid) FROM articles WHERE group_id = ? AND sent > ?', (group_row[1], timestamp)).fetchone()[0]
@@ -1816,7 +1816,7 @@ class main(threading.Thread):
     exclude_flags = self.cache['flags']['hidden'] | self.cache['flags']['blocked']
     for group_row in self.sqlite.execute('SELECT group_name, group_id, ph_name, ph_shortname, link, description FROM groups \
       WHERE ((cast(flags as integer) & ?) = 0 OR group_id = ?) ORDER by group_name ASC', (exclude_flags, group_id)).fetchall():
-      current_group_name = group_row[0].split('.', 1)[1].replace('"', '').replace('/', '')
+      current_group_name = group_row[0].split('.', 1)[-1].replace('"', '').replace('/', '')
       if group_row[3] != '':
         current_group_name_encoded = group_row[3]
       else:
@@ -1832,12 +1832,12 @@ class main(threading.Thread):
       if group_row[1] == group_id:
         full_board_name_unquoted = group_row[0].replace('"', '').replace('/', '')
         full_board_name = self.basicHTMLencode(full_board_name_unquoted)
-        board_name_unquoted = full_board_name_unquoted.split('.', 1)[1]
+        board_name_unquoted = full_board_name_unquoted.split('.', 1)[-1]
         board_description = group_row[5]
         if group_row[2] != '':
           board_name = group_row[2]
         else:
-          board_name = full_board_name.split('.', 1)[1]
+          board_name = full_board_name.split('.', 1)[-1]
     if not self.use_unsecure_aliases:
       board_description = self.markup_parser(self.basicHTMLencode(board_description))
     if boardlist: boardlist[-1] = boardlist[-1][:-1]
@@ -1878,7 +1878,7 @@ class main(threading.Thread):
       ORDER BY sent DESC LIMIT ?', (exclude_flags, str(postcount))).fetchall():
       latest_posts_row = dict()
       latest_posts_row['sent'] = datetime.utcfromtimestamp(row[0] + self.utc_time_offset).strftime(self.datetime_format)
-      latest_posts_row['board'] = row[6] if row[6] != '' else self.basicHTMLencode(row[1].replace('"', '')).split('.', 1)[1]
+      latest_posts_row['board'] = row[6] if row[6] != '' else self.basicHTMLencode(row[1].split('.', 1)[-1].replace('"', ''))
       latest_posts_row['author'] = row[2][:12]
       latest_posts_row['articlehash'] = sha1(row[4]).hexdigest()[:10]
       if row[5] in ('', row[4]):
@@ -1919,7 +1919,7 @@ class main(threading.Thread):
     news_board = self.sqlite.execute('SELECT group_id, group_name FROM groups WHERE \
         (cast(flags as integer) & ?) != 0 AND (cast(flags as integer) & ?) = 0', (self.cache['flags']['news'], self.cache['flags']['blocked'])).fetchone()
     if news_board:
-      t_engine_mappings_news['allnews_link'] = '{0}-1.html'.format(news_board[1].replace('"', '').replace('/', '').split('.', 1)[1])
+      t_engine_mappings_news['allnews_link'] = '{0}-1.html'.format(news_board[1].split('.', 1)[-1].replace('"', '').replace('/', ''))
       row = self.sqlite.execute('SELECT subject, message, sent, public_key, article_uid, sender FROM articles \
           WHERE (parent = "" OR parent = article_uid) AND group_id = ? ORDER BY last_update DESC', (news_board[0],)).fetchone()
     else:
