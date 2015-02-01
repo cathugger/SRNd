@@ -181,6 +181,11 @@ class main(threading.Thread):
       if args['create_best_video_thumbnail'].lower() == 'true':
         self.create_best_video_thumbnail = True
 
+    self.minify_css = False
+    if 'minify_css' in args:
+      if args['minify_css'].lower() == 'true':
+        self.minify_css = True
+
     self.utc_time_offset = 0.0
     if 'utc_time_offset' in args:
       try:    self.utc_time_offset = float(args['utc_time_offset'])
@@ -445,12 +450,21 @@ class main(threading.Thread):
         except IOError as e:
           self.log(self.logger.ERROR, 'can\'t thumb save %s. wtf? %s' % (link, e))
 
-  def copy_out(self, *sources):
+  def copy_out(self, css, sources):
     for source, target in sources:
       try:
         i = open(os.path.join(self.template_directory, source), 'r')
         o = open(os.path.join(self.output_directory, target), 'w')
-        o.write(i.read())
+        if css and self.minify_css:
+          css = i.read()
+          old_size = len(css)
+          css = self.css_minifer(css)
+          new_size = len(css)
+          diff = -int(float(old_size-new_size)/old_size * 100) if old_size > 0 else 0
+          o.write(css)
+          self.log(self.logger.INFO, 'Minify CSS {0}: old size={1}, new size={2}, difference={3}%'.format(source, old_size, new_size, diff))
+        else:
+          o.write(i.read())
         o.close()
         i.close()
       except IOError as e:
@@ -472,9 +486,8 @@ class main(threading.Thread):
     # ^ hardlinks not gonna work because of remote filesystems
     # ^ softlinks not gonna work because of nginx chroot
     # ^ => cp
-    self.copy_out((self.css_file, 'styles.css'), (self.censor_css, 'censor.css'), ('user.css', 'user.css'), (self.no_file, os.path.join('img', self.no_file)),
-        ('suicide.txt', os.path.join('img', 'suicide.txt')), ('playbutton.png', os.path.join('img', 'playbutton.png')),
-    )
+    self.copy_out(css=False, sources=((self.no_file, os.path.join('img', self.no_file)), ('suicide.txt', os.path.join('img', 'suicide.txt')), ('playbutton.png', os.path.join('img', 'playbutton.png')),))
+    self.copy_out(css=True,  sources=((self.css_file, 'styles.css'), (self.censor_css, 'censor.css'), ('user.css', 'user.css'),))
     self.gen_template_thumbs(self.invalid_file, self.document_file, self.audio_file, self.webm_file, self.no_file, self.censored_file, self.torrent_file, self.archive_file)
 
     self.regenerate_boards = set()
@@ -1014,6 +1027,39 @@ class main(threading.Thread):
       message = clicker.sub(self.clickit, message)
 
     return message
+
+  def css_minifer(self, css):
+    """
+    Thanks for Borgar
+    https://stackoverflow.com/questions/222581/python-script-for-minifying-css
+    """
+    minifed_css = list()
+    # remove comments - this will break a lot of hacks :-P
+    css = re.sub( r'\s*/\*\s*\*/', "$$HACK1$$", css ) # preserve IE<6 comment hack
+    css = re.sub( r'/\*[\s\S]*?\*/', "", css )
+    css = css.replace( "$$HACK1$$", '/**/' ) # preserve IE<6 comment hack
+    # url() doesn't need quotes
+    css = re.sub( r'url\((["\'])([^)]*)\1\)', r'url(\2)', css )
+    # spaces may be safely collapsed as generated content will collapse them anyway
+    css = re.sub( r'\s+', ' ', css )
+    # shorten collapsable colors: #aabbcc to #abc
+    css = re.sub( r'#([0-9a-f])\1([0-9a-f])\2([0-9a-f])\3(\s|;)', r'#\1\2\3\4', css )
+    # fragment values can loose zeros
+    css = re.sub( r':\s*0(\.\d+([cm]m|e[mx]|in|p[ctx]))\s*;', r':\1;', css )
+    for rule in re.findall( r'([^{]+){([^}]*)}', css ):
+      # we don't need spaces around operators
+      selectors = [re.sub( r'(?<=[\[\(>+=])\s+|\s+(?=[=~^$*|>+\]\)])', r'', selector.strip() ) for selector in rule[0].split( ',' )]
+      # order is important, but we still want to discard repetitions
+      properties = {}
+      porder = []
+      for prop in re.findall( '(.*?):(.*?)(;|$)', rule[1] ):
+        key = prop[0].strip().lower()
+        if key not in porder: porder.append( key )
+        properties[ key ] = prop[1].strip()
+      # output rule if it contains any declarations
+      if properties:
+        minifed_css.append("%s{%s}" % ( ','.join( selectors ), ''.join(['%s:%s;' % (key, properties[key]) for key in porder])[:-1] ))
+    return '\n'.join(minifed_css)
 
   def move_censored_article(self, message_id):
     if os.path.exists(os.path.join('articles', 'censored', message_id)):
