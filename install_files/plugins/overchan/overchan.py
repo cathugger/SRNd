@@ -482,7 +482,7 @@ class main(threading.Thread):
     self.delete_messages = set()
     self.missing_parents = dict()
     self.cache = dict()
-    self.cache['last_thread'] = dict()
+    self.cache['page_stamp_archiv'] = dict()
     self.cache['page_stamp'] = dict()
     self.cache['flags'] = dict()
     self.cache['moder_flags'] = dict()
@@ -1441,12 +1441,14 @@ class main(threading.Thread):
     basic_board['board_description'] = self.get_board_data(group_id)
     prepared_template = string.Template(self.t_engine_board.safe_substitute(basic_board))
     t_engine_mapper_board = dict()
+    isgenerated = False
     for board in xrange(1, pages + 1):
       board_offset = threads_per_page * (board - 1)
       first_last_parent = board_data[board_offset:][0][0] + board_data[:board_offset+threads_per_page][-1][0] if thread_count > 0 else None
       if self.cache['page_stamp'][group_id].get(board, '') != first_last_parent or \
           len(self.regenerate_threads & set(x[0] for x in board_data[board_offset:board_offset+threads_per_page])) > 0:
         self.cache['page_stamp'][group_id][board] = first_last_parent
+        isgenerated = True
       else:
         continue # board page not change
       threads = list()
@@ -1467,8 +1469,8 @@ class main(threading.Thread):
       f.close()
     last_root_message = board_data[-1][0] if thread_count > 0 else None
     del board_data, t_engine_mapper_board, prepared_template
-    if generate_archive and (not self.cache['last_thread'].has_key(group_id) or self.cache['last_thread'][group_id] != last_root_message):
-      self.cache['last_thread'][group_id] = last_root_message
+    if generate_archive and (self.cache['page_stamp'][group_id].get(0, '') != last_root_message or (not isgenerated and len(self.regenerate_threads) > 0)):
+      self.cache['page_stamp'][group_id][0] = last_root_message
       self.generate_archive(group_id)
     if self.enable_recent:
       self.generate_recent(group_id)
@@ -1634,11 +1636,12 @@ class main(threading.Thread):
     pages_per_board = self.archive_pages_per_board
     board_data = self.sqlite.execute('SELECT article_uid, sender, subject, sent, message, imagename, imagelink, thumblink, public_key, last_update, closed FROM \
       articles WHERE group_id = ? AND (parent = "" OR parent = article_uid) ORDER BY last_update DESC LIMIT ? OFFSET ?', (group_id, threads_per_page * pages_per_board, offset)).fetchall()
-    threads = len(board_data)
-    if threads == 0: return
-    pages = int(threads / threads_per_page)
-    if threads % threads_per_page != 0:
+    thread_count = len(board_data)
+    if thread_count == 0: return
+    pages = int(thread_count / threads_per_page)
+    if thread_count % threads_per_page != 0:
       pages += 1
+    if group_id not in self.cache['page_stamp_archiv']: self.cache['page_stamp_archiv'][group_id] = dict()
 
     basic_board = dict()
     basic_board['board_subtype'] = ' :: archive'
@@ -1651,6 +1654,12 @@ class main(threading.Thread):
     t_engine_mapper_board = dict()
     for board in xrange(1, pages + 1):
       board_offset = threads_per_page * (board - 1)
+      first_last_parent = board_data[board_offset:][0][0] + board_data[:board_offset+threads_per_page][-1][0] if thread_count > 0 else None
+      if self.cache['page_stamp_archiv'][group_id].get(board, '') != first_last_parent or \
+          len(self.regenerate_threads & set(x[0] for x in board_data[board_offset:board_offset+threads_per_page])) > 0:
+        self.cache['page_stamp_archiv'][group_id][board] = first_last_parent
+      else:
+        continue # board page not change
       threads = list()
       self.log(self.logger.INFO, 'generating %s/%s-archive-%s.html' % (self.output_directory, board_name_unquoted, board))
       for root_row in board_data[board_offset:board_offset+threads_per_page]:
@@ -1813,10 +1822,10 @@ class main(threading.Thread):
     self.board_cache = dict()
     if group_id:
       self.cache['page_stamp'][group_id] = dict()
-      self.cache['last_thread'][group_id] = ''
+      self.cache['page_stamp_archiv'][group_id] = dict()
     else:
       self.cache['page_stamp'] = dict()
-      self.cache['last_thread'] = dict()
+      self.cache['page_stamp_archiv'] = dict()
 
   def get_board_list(self, group_id='selflink'):
     if group_id not in self.board_cache:
