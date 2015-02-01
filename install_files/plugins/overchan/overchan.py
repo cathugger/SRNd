@@ -483,6 +483,7 @@ class main(threading.Thread):
     self.missing_parents = dict()
     self.cache = dict()
     self.cache['last_thread'] = dict()
+    self.cache['page_stamp'] = dict()
     self.cache['flags'] = dict()
     self.cache['moder_flags'] = dict()
     self.board_cache = dict()
@@ -698,7 +699,7 @@ class main(threading.Thread):
     if len(args) > 2:
       self.overchan_aliases_update(args[2], group_name)
     self.sqlite_conn.commit()
-    self.board_cache = dict()
+    self.__flush_board_cache()
     self.regenerate_all_html()
 
   def overchan_board_del(self, group_name, flags=0):
@@ -708,7 +709,7 @@ class main(threading.Thread):
       self.sqlite.execute('UPDATE groups SET flags = ? WHERE group_name = ?', (str(flags), group_name))
       self.log(self.logger.INFO, 'blocked board: \'%s\'' % group_name)
       self.sqlite_conn.commit()
-      self.board_cache = dict()
+      self.__flush_board_cache()
       self.regenerate_all_html()
     except:
       self.log(self.logger.WARNING, 'should delete board %s but there is no board with that name' % group_name)
@@ -744,7 +745,7 @@ class main(threading.Thread):
           if len(get_data) > 2:
             self.overchan_aliases_update(get_data[2], group_name)
           self.sqlite_conn.commit()
-          self.board_cache = dict()
+          self.__flush_board_cache(group_id)
           self.regenerate_boards.add(group_id)
       elif line.lower().startswith('overchan-board-add'):
         self.overchan_board_add(line.split(" ")[1:])
@@ -1325,8 +1326,8 @@ class main(threading.Thread):
       if not result:
         try:
           self.sqlite.execute('INSERT INTO groups(group_name, article_count, last_update) VALUES (?,?,?)', (group, 1, int(time.time())))
-          self.board_cache = dict()
           self.sqlite_conn.commit()
+          self.__flush_board_cache()
         except:
           self.log(self.logger.INFO, 'ignoring message for blocked group %s' % group)
           continue
@@ -1420,15 +1421,16 @@ class main(threading.Thread):
     pages_per_board = self.pages_per_board
     board_data = self.sqlite.execute('SELECT article_uid, sender, subject, sent, message, imagename, imagelink, thumblink, public_key, last_update, closed \
       FROM articles WHERE group_id = ? AND (parent = "" OR parent = article_uid) ORDER BY last_update DESC LIMIT ?', (group_id, threads_per_page * pages_per_board)).fetchall()
-    threads = len(board_data)
+    thread_count = len(board_data)
     if self.enable_archive and ((int(self.sqlite.execute("SELECT flags FROM groups WHERE group_id=?", (group_id,)).fetchone()[0]) & self.cache['flags']['no-archive']) == 0) and \
-        int(self.sqlite.execute('SELECT count(group_id) FROM (SELECT group_id FROM articles WHERE group_id = ? AND (parent = "" OR parent = article_uid))', (group_id,)).fetchone()[0]) > threads:
+        int(self.sqlite.execute('SELECT count(group_id) FROM (SELECT group_id FROM articles WHERE group_id = ? AND (parent = "" OR parent = article_uid))', (group_id,)).fetchone()[0]) > thread_count:
       generate_archive = True
     else:
       generate_archive = False
-    pages = int(threads / threads_per_page)
-    if (threads % threads_per_page != 0) or pages == 0:
+    pages = int(thread_count / threads_per_page)
+    if (thread_count % threads_per_page != 0) or pages == 0:
       pages += 1
+    if group_id not in self.cache['page_stamp']: self.cache['page_stamp'][group_id] = dict()
 
     basic_board = dict()
     basic_board['board_subtype'] = ''
@@ -1441,6 +1443,12 @@ class main(threading.Thread):
     t_engine_mapper_board = dict()
     for board in xrange(1, pages + 1):
       board_offset = threads_per_page * (board - 1)
+      first_last_parent = board_data[board_offset:][0][0] + board_data[:board_offset+threads_per_page][-1][0] if thread_count > 0 else None
+      if self.cache['page_stamp'][group_id].get(board, '') != first_last_parent or \
+          len(self.regenerate_threads & set(x[0] for x in board_data[board_offset:board_offset+threads_per_page])) > 0:
+        self.cache['page_stamp'][group_id][board] = first_last_parent
+      else:
+        continue # board page not change
       threads = list()
       self.log(self.logger.INFO, 'generating %s/%s-%s.html' % (self.output_directory, board_name_unquoted, board))
       for root_row in board_data[board_offset:board_offset+threads_per_page]:
@@ -1457,9 +1465,10 @@ class main(threading.Thread):
       f = codecs.open(os.path.join(self.output_directory, '{0}-{1}.html'.format(board_name_unquoted, board)), 'w', 'UTF-8')
       f.write(prepared_template.substitute(t_engine_mapper_board))
       f.close()
-    del board_data, t_engine_mapper_board, threads, prepared_template
-    if generate_archive and (not self.cache['last_thread'].has_key(group_id) or self.cache['last_thread'][group_id] != root_message_id_hash):
-      self.cache['last_thread'][group_id] = root_message_id_hash
+    last_root_message = board_data[-1][0] if thread_count > 0 else None
+    del board_data, t_engine_mapper_board, prepared_template
+    if generate_archive and (not self.cache['last_thread'].has_key(group_id) or self.cache['last_thread'][group_id] != last_root_message):
+      self.cache['last_thread'][group_id] = last_root_message
       self.generate_archive(group_id)
     if self.enable_recent:
       self.generate_recent(group_id)
@@ -1799,6 +1808,15 @@ class main(threading.Thread):
       self.cache['flags'][row[0]] = row[1]
     for row in self.censordb.execute('SELECT command, cast(flag as integer) FROM commands WHERE command != ""').fetchall():
       self.cache['moder_flags'][row[0]] = row[1]
+
+  def __flush_board_cache(self, group_id=None):
+    self.board_cache = dict()
+    if group_id:
+      self.cache['page_stamp'][group_id] = dict()
+      self.cache['last_thread'][group_id] = ''
+    else:
+      self.cache['page_stamp'] = dict()
+      self.cache['last_thread'] = dict()
 
   def get_board_list(self, group_id='selflink'):
     if group_id not in self.board_cache:
