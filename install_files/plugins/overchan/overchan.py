@@ -948,22 +948,26 @@ class main(threading.Thread):
       # hash not found or multiple matches for that 10 char hash
       return rematch.group(0)
     message_id = row[0][0]
-    parent_row = self.sqlite.execute("SELECT parent FROM articles WHERE article_uid = ?", (message_id,)).fetchone()
+    parent_row = self.sqlite.execute("SELECT parent, group_id FROM articles WHERE article_uid = ?", (message_id,)).fetchone()
     if not parent_row:
       # not an overchan article (anymore)
       return rematch.group(0)
     parent_id = parent_row[0]
+    if self.__current_markup_parser_group_id is not None and parent_row[1] != self.__current_markup_parser_group_id:
+      another_board = u' [%s]' % self.get_board_data(int(parent_row[1]), 'board')[:20]
+    else:
+      another_board = ''
     if self.fake_id:
       article_name = self.message_uid_to_fake_id(message_id)
     else:
       article_name = rematch.group(2)
     if parent_id == "":
       # article is root post
-      return '<a onclick="return highlight(\'%s\');" href="thread-%s.html">%s%s</a>' % (rematch.group(2), rematch.group(2), rematch.group(1), article_name)
+      return u'<a onclick="return highlight(\'{0}\');" href="thread-%{0}.html">{1}{2}{3}</a>'.format(rematch.group(2), rematch.group(1), article_name, another_board)
     # article has a parent
     # FIXME: cache results somehow?
     parent = sha1(parent_id).hexdigest()[:10]
-    return '<a onclick="return highlight(\'%s\');" href="thread-%s.html#%s">%s%s</a>' % (rematch.group(2), parent, rematch.group(2), rematch.group(1), article_name)
+    return u'<a onclick="return highlight(\'{0}\');" href="thread-{1}.html#{0}">{2}{3}{4}</a>'.format(rematch.group(2), parent, rematch.group(1), article_name, another_board)
 
   def quoteit(self, rematch):
     return '<span class="quote">%s</span>' % rematch.group(0).rstrip("\r")
@@ -989,7 +993,7 @@ class main(threading.Thread):
   def underlineit(self, rematch):
     return '<span style="border-bottom: 1px solid">%s</span>' % rematch.group(1)
 
-  def markup_parser(self, message):
+  def markup_parser(self, message, group_id=None):
     # make >>post_id links
     linker = re.compile("(&gt;&gt;)([0-9a-f]{10})")
     # make >quotes
@@ -1009,12 +1013,12 @@ class main(threading.Thread):
     striker = re.compile("(?<![0-9a-zA-Z\x80-\x9f\xe0-\xfc*_/()\-]) -- (?![\s*_-]) (.+?) (?<![\s*_-]) -- (?![0-9a-zA-Z\x80-\x9f\xe0-\xfc*_/()\-])", re.VERBOSE)
     # make underlined text
     underliner = re.compile("(?<![0-9a-zA-Z\x80-\x9f\xe0-\xfc*_/()]) _ (?![\s*_]) (.+?) (?<![\s*_]) _ (?![0-9a-zA-Z\x80-\x9f\xe0-\xfc*_/()])", re.VERBOSE)
-
+    self.__current_markup_parser_group_id = group_id
     # perform parsing
     if re.search(coder, message):
       # list indices: 0 - before [code], 1 - inside [code]...[/code], 2 - after [/code]
       message_parts = re.split(coder, message, maxsplit=1)
-      message = self.markup_parser(message_parts[0]) + self.codeit(message_parts[1]) + self.markup_parser(message_parts[2])
+      message = self.markup_parser(message_parts[0], group_id) + self.codeit(message_parts[1]) + self.markup_parser(message_parts[2], group_id)
     else:
       message = linker.sub(self.linkit, message)
       message = quoter.sub(self.quoteit, message)
@@ -1629,7 +1633,7 @@ class main(threading.Thread):
         message = data[4][:max_chars] + '\n[..] <a href="thread-%s.html"><i>message too large</i></a>' % message_id_hash[:10]
     else:
       message = data[4]
-    message = self.markup_parser(message)
+    message = self.markup_parser(message, group_id)
     if father == '':
       child_count = int(self.sqlite.execute('SELECT count(article_uid) FROM articles WHERE parent = ? AND parent != article_uid AND group_id = ?', (data[0], group_id)).fetchone()[0])
       if self.bump_limit > 0 and child_count >= self.bump_limit:
@@ -1878,10 +1882,17 @@ class main(threading.Thread):
       self.board_cache[group_id] = (self.__generate_board_list(group_id))
     return self.board_cache[group_id][0]
 
-  def get_board_data(self, group_id):
+  def get_board_data(self, group_id, colname=None):
     if group_id not in self.board_cache:
       self.board_cache[group_id] = (self.__generate_board_list(group_id))
-    return self.board_cache[group_id][1:]
+    if colname is None:
+      return self.board_cache[group_id][1:]
+    else:
+      name_list = ('full_board', 'board_name_unquoted', 'board', 'board_description')
+      try:
+        return self.board_cache[group_id][name_list.index(colname)+1]
+      except:
+        return 'None'
 
   def __generate_board_list(self, group_id='', selflink=False):
     full_board_name_unquoted = board_name_unquoted = board_name = board_description = ''
