@@ -4,12 +4,26 @@
     <meta http-equiv="content-type" content="text/html; charset=utf-8">
     <link type="text/css" href="/styles.css" rel="stylesheet">
     <link type="text/css" href="/censor.css" rel="stylesheet">
+    <script language="javascript">
+      function checkAll(ele, ename){
+        var checkboxes = document.getElementsByName(ename);
+        if (ele.checked){
+          for (var i = 0; i < checkboxes.length; i++){
+            if (checkboxes[i].type == 'checkbox'){checkboxes[i].checked = true;}
+          }
+        }else {
+          for (var i = 0; i < checkboxes.length; i++){
+            if (checkboxes[i].type == 'checkbox'){checkboxes[i].checked = false;}
+          }
+        }
+      }
+    </script>
   </head>
   <body class="mod">
     ${navigation}
 ${search_form}
 ${evil_mod}
-      <table class="datatable"><tr><th>sent</th><th>board</th><th>sender</th><th>subject</th><th class="stillevil">delete</th><th>message</th></tr>
+      <table class="datatable"><tr><th>sent</th><th>board</th><th>sender</th><th>subject</th><th class="stillevil"><input type="checkbox" onchange="checkAll(this, 'purge')"/> <input type="checkbox" onchange="checkAll(this, 'purge_desthash')" /></th><th>message</th></tr>
 ${content}
       </table>
     </form>
