@@ -636,15 +636,19 @@ class censor(BaseHTTPRequestHandler):
   def send_messagelog(self, query_data={}):
     message_log = dict()
     query_str = unicode(''.join(query_data.get('q', '')), 'utf-8')
+    message_log['count'] = unicode(''.join(query_data.get('c', '100')), 'utf-8')
+    try: message_log['count'] = int(message_log['count'])
+    except: message_log['count'] = 100
+    if message_log['count'] < 1: message_log['count'] = 1
     message_log['search_action'] = 'message_log'
     message_log['search_target'] = query_str
     message_log['navigation'] = self.__get_navigation('message_log')
     if len(query_str) < 3:
       data_row = self.origin.sqlite_overchan.execute('SELECT article_uid, parent, sender, subject, message, parent, public_key, sent, group_name FROM articles, groups WHERE \
-        groups.group_id = articles.group_id ORDER BY articles.sent DESC LIMIT ?,100', (0,)).fetchall()
+        groups.group_id = articles.group_id ORDER BY articles.sent DESC LIMIT ?', (message_log['count'],)).fetchall()
     else:
       data_row = self.origin.sqlite_overchan.execute('SELECT article_uid, parent, sender, subject, message, parent, public_key, sent, group_name FROM articles, groups WHERE \
-        groups.group_id = articles.group_id AND message LIKE ? ORDER BY articles.sent DESC LIMIT ?,100', ('%'+query_str+'%', 0)).fetchall()
+        groups.group_id = articles.group_id AND message LIKE ? ORDER BY articles.sent DESC LIMIT ?', ('%'+query_str+'%', message_log['count'])).fetchall()
     message_log['content'] = self.send_messagelog_construct(data_row)
     message_log['target'] = self.root_path + 'message_log'
     self.send_response(200)
