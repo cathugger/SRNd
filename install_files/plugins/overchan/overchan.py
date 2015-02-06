@@ -75,11 +75,6 @@ class main(threading.Thread):
     self.html_title = args['title']
     if not os.path.exists(self.template_directory):
       self.die('error: template directory \'%s\' does not exist' % self.template_directory)
-    self.no_file = args['no_file']
-    self.invalid_file = args['invalid_file']
-    self.document_file = args['document_file']
-    self.audio_file = args['audio_file']
-    self.webm_file = args['webm_file']
     self.css_file = args['css_file']
     self.loglevel = self.logger.INFO
     if 'debug' in args:
@@ -155,17 +150,11 @@ class main(threading.Thread):
       try:    self.bump_limit = int(args['bump_limit'])
       except: pass
 
-    self.censored_file = 'censored.png'
-    if 'censored_file' in args:
-      self.censored_file = args['censored_file']
-
-    self.archive_file = 'archive.png'
-    if 'archive_file' in args:
-      self.archive_file = args['archive_file']
-
-    self.torrent_file = 'torrent.png'
-    if 'torrent_file' in args:
-      self.torrent_file = args['torrent_file']
+    self.thumbnail_files = dict()
+    # read filename from config or use default
+    for internal, external, by_default in (('no_file', 'no_file', 'nope.png'), ('document', 'document_file', 'document.png'), ('invalid', 'invalid_file', 'invalid.png'), ('audio', 'audio_file', 'audio.png'), \
+      ('video', 'webm_file', 'video.png'), ('censored', 'censored_file', 'censored.png'), ('archive', 'archive_file', 'archive.png'), ('torrent', 'torrent_file', 'torrent.png'),):
+      self.thumbnail_files[internal] = args.get(external, by_default)
 
     self.censor_css = 'censor.css'
     if 'censor_css' in args:
@@ -204,7 +193,7 @@ class main(threading.Thread):
     if cv2_load_result != 'true':
       self.log(self.logger.ERROR, '%s. Thumbnail for video will not be created. See http://docs.opencv.org/' % cv2_load_result)
 
-    for x in (self.no_file, self.audio_file, self.invalid_file, self.document_file, self.css_file, self.censored_file):
+    for x in ([self.css_file,] + [self.thumbnail_files[target] for target in self.thumbnail_files]):
       cheking_file = os.path.join(self.template_directory, x)
       if not os.path.exists(cheking_file):
         self.die('{0} file not found in {1}'.format(x, cheking_file))
@@ -396,7 +385,7 @@ class main(threading.Thread):
     self.log(self.logger.INFO, 'initializing as plugin..')
     try:
       # load required imports for PIL
-      something = Image.open(os.path.join(self.template_directory, self.no_file))
+      something = Image.open(os.path.join(self.template_directory, self.thumbnail_files['no_file']))
       modifier = float(180) / something.size[0]
       x = int(something.size[0] * modifier)
       y = int(something.size[1] * modifier)
@@ -433,7 +422,7 @@ class main(threading.Thread):
     self.past_init()
     return True
 
-  def gen_template_thumbs(self, *sources):
+  def gen_template_thumbs(self, sources):
     for source in sources:
       link = os.path.join(self.output_directory, 'thumbs', source)
       if not os.path.exists(link):
@@ -486,9 +475,10 @@ class main(threading.Thread):
     # ^ hardlinks not gonna work because of remote filesystems
     # ^ softlinks not gonna work because of nginx chroot
     # ^ => cp
-    self.copy_out(css=False, sources=((self.no_file, os.path.join('img', self.no_file)), ('suicide.txt', os.path.join('img', 'suicide.txt')), ('playbutton.png', os.path.join('img', 'playbutton.png')),))
+    self.copy_out(css=False, sources=((self.thumbnail_files['no_file'], os.path.join('img', self.thumbnail_files['no_file'])), ('suicide.txt', os.path.join('img', 'suicide.txt')), \
+      ('playbutton.png', os.path.join('img', 'playbutton.png')),))
     self.copy_out(css=True,  sources=((self.css_file, 'styles.css'), (self.censor_css, 'censor.css'), ('user.css', 'user.css'),))
-    self.gen_template_thumbs(self.invalid_file, self.document_file, self.audio_file, self.webm_file, self.no_file, self.censored_file, self.torrent_file, self.archive_file)
+    self.gen_template_thumbs([self.thumbnail_files[target] for target in self.thumbnail_files])
 
     self.regenerate_boards = set()
     self.regenerate_threads = set()
@@ -1590,26 +1580,14 @@ class main(threading.Thread):
     parsed_data = dict()
     if data[6] != '':
         imagelink = data[6]
-        if data[7] == 'document':
-          thumblink = self.document_file
-        elif data[7] == 'invalid':
-          thumblink = self.invalid_file
-        elif data[7] == 'audio':
-          thumblink = self.audio_file
-        elif data[7] == 'video':
-          thumblink = self.webm_file
-        elif data[7] == 'censored':
-          thumblink = self.censored_file
-        elif data[7] == 'archive':
-          thumblink = self.archive_file
-        elif data[7] == 'torrent':
-          thumblink = self.torrent_file
+        if data[7] in self.thumbnail_files:
+          thumblink = self.thumbnail_files[data[7]]
         else:
           thumblink = data[7]
           if data[6] != data[7] and data[6].rsplit('.', 1)[-1] in ('gif', 'webm', 'mp4'):
             is_playable = True
     else:
-      imagelink = thumblink = self.no_file
+      imagelink = thumblink = self.thumbnail_files['no_file']
     if data[8] != '':
       parsed_data['signed'] = self.t_engine_signed.substitute(
         articlehash=message_id_hash[:10],
