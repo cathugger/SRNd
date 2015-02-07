@@ -1081,7 +1081,6 @@ class main(threading.Thread):
     self.httpd.postmandb_conn.commit()
 
   def allow_this_desthash(self, desthash):
-    print self.httpd.dest_cache
     if desthash not in self.httpd.dest_cache:
       return self.add_this_desthash(desthash)
     current_time = int(time.time())
