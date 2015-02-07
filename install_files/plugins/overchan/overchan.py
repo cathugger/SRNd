@@ -543,6 +543,10 @@ class main(threading.Thread):
       self.sqlite.execute('ALTER TABLE articles ADD COLUMN closed INTEGER DEFAULT 0')
     except:
       pass
+    try:
+      self.sqlite.execute('ALTER TABLE articles ADD COLUMN sticky INTEGER DEFAULT 0')
+    except:
+      pass
     self.sqlite.execute('CREATE INDEX IF NOT EXISTS articles_group_idx ON articles(group_id);')
     self.sqlite.execute('CREATE INDEX IF NOT EXISTS articles_parent_idx ON articles(parent);')
     self.sqlite.execute('CREATE INDEX IF NOT EXISTS articles_article_idx ON articles(article_uid);')
@@ -570,28 +574,27 @@ class main(threading.Thread):
     self.queue.put((source, message_id, timestamp))
 
   def sticky_processing(self, message_id):
-    current_time = int(time.time())
-    thread_last_update, group_id = self.sqlite.execute('SELECT last_update, group_id FROM articles WHERE article_uid = ? AND (parent = "" OR parent = article_uid)', (message_id,)).fetchone()
-    if not thread_last_update: return 'article not found'
-    if thread_last_update > current_time:
-      new_thread_last_update = current_time
+    result = self.sqlite.execute('SELECT sticky, group_id FROM articles WHERE article_uid = ? AND (parent = "" OR parent = article_uid)', (message_id,)).fetchone()
+    if not result: return 'article not found'
+    if result[0] == 1:
+      sticky_flag = 0
       sticky_action = 'unsticky thread'
     else:
-      new_thread_last_update = current_time + (3600 * 24 * 30 * 6)
-      sticky_action = 'sticky thread for half year'
+      sticky_flag = 1
+      sticky_action = 'sticky thread'
     try:
-      self.sqlite.execute('UPDATE articles SET last_update = ? WHERE article_uid = ? AND (parent = "" OR parent = article_uid)', (new_thread_last_update, message_id))
+      self.sqlite.execute('UPDATE articles SET sticky = ? WHERE article_uid = ? AND (parent = "" OR parent = article_uid)', (sticky_flag, message_id))
       self.sqlite_conn.commit()
     except:
       return 'Fail time update'
-    self.regenerate_boards.add(group_id)
+    self.regenerate_boards.add(result[1])
     self.regenerate_threads.add(message_id)
     return sticky_action
 
   def close_processing(self, message_id):
-    close_status, group_id = self.sqlite.execute('SELECT closed, group_id FROM articles WHERE article_uid = ? AND (parent = "" OR parent = article_uid)', (message_id,)).fetchone()
-    if not group_id: return 'article not found'
-    if close_status == 0:
+    result = self.sqlite.execute('SELECT closed, group_id FROM articles WHERE article_uid = ? AND (parent = "" OR parent = article_uid)', (message_id,)).fetchone()
+    if not result: return 'article not found'
+    if result[0] == 0:
       close_status = 1
       close_action = 'close thread'
     else:
@@ -602,7 +605,7 @@ class main(threading.Thread):
       self.sqlite_conn.commit()
     except:
       return 'Fail db update'
-    self.regenerate_boards.add(group_id)
+    self.regenerate_boards.add(result[1])
     self.regenerate_threads.add(message_id)
     return close_action
 
@@ -641,8 +644,7 @@ class main(threading.Thread):
             parent_row = self.sqlite.execute('SELECT last_update, sent FROM articles WHERE article_uid = ?', (row[2],)).fetchone()
             if parent_row:
               new_last_update = parent_row[1] if childs_count == 1 else all_child_time[1][1]
-              # sticky or abnormal last_update
-              if parent_row[0] < time.time() and parent_row[0] > new_last_update:
+              if parent_row[0] > new_last_update:
                 self.sqlite.execute('UPDATE articles SET last_update = ? WHERE article_uid = ?', (new_last_update, row[2]))
         self.log(self.logger.INFO, 'deleting child message_id %s' % message_id)
         self.sqlite.execute('DELETE FROM articles WHERE article_uid = ?', (message_id,))
@@ -1349,16 +1351,14 @@ class main(threading.Thread):
       except Exception as e:
         self.log(self.logger.INFO, 'Processing group %s error message %s %s' % (group, message_id, e))
 
-    parent_last_update = None
+    parent_result = None
 
     if parent != '' and parent != message_id:
-      result = self.sqlite.execute('SELECT last_update, closed FROM articles WHERE article_uid = ?', (parent,)).fetchone()
-      if result:
-        parent_last_update = result[0]
-        if result[1] != 0:
-          self.log(self.logger.INFO, 'censored article %s for closed thread.' % message_id)
-          self.delete_orphan_attach(image_name, thumb_name)
-          return self.move_censored_article(message_id)
+      parent_result = self.sqlite.execute('SELECT closed FROM articles WHERE article_uid = ?', (parent,)).fetchone()
+      if parent_result and parent_result[0] != 0:
+        self.log(self.logger.INFO, 'censored article %s for closed thread.' % message_id)
+        self.delete_orphan_attach(image_name, thumb_name)
+        return self.move_censored_article(message_id)
 
     group_ids = list()
     for group in groups:
@@ -1388,18 +1388,12 @@ class main(threading.Thread):
         # sage mark
         last_update = sent - 10
       else:
-        if parent_last_update is not None:
-          if sent > parent_last_update:
-            if self.bump_limit > 0:
-              child_count = self.sqlite.execute('SELECT count(article_uid) FROM articles WHERE parent = ? AND parent != article_uid ', (parent,)).fetchone()
-              if not (child_count and int(child_count[0]) >= self.bump_limit):
-                self.sqlite.execute('UPDATE articles SET last_update=? WHERE article_uid=?', (sent, parent))
-                self.sqlite_conn.commit()
-              else:
-                last_update = sent - 10
-            else:
-              self.sqlite.execute('UPDATE articles SET last_update=? WHERE article_uid=?', (sent, parent))
-              self.sqlite_conn.commit()
+        if parent_result is not None:
+          if self.bump_limit == 0 or self.sqlite.execute('SELECT count(article_uid) FROM articles WHERE parent = ? AND parent != article_uid ', (parent,)).fetchone()[0] < self.bump_limit:
+            self.sqlite.execute('UPDATE articles SET last_update=? WHERE article_uid=?', (sent, parent))
+            self.sqlite_conn.commit()
+          else:
+            last_update = sent - 10
         else:
           self.log(self.logger.INFO, 'missing parent %s for post %s' %  (parent, message_id))
           if parent in self.missing_parents:
@@ -1459,8 +1453,8 @@ class main(threading.Thread):
   def generate_board(self, group_id):
     threads_per_page = self.threads_per_page
     pages_per_board = self.pages_per_board
-    board_data = self.sqlite.execute('SELECT article_uid, sender, subject, sent, message, imagename, imagelink, thumblink, public_key, last_update, closed \
-      FROM articles WHERE group_id = ? AND (parent = "" OR parent = article_uid) ORDER BY last_update DESC LIMIT ?', (group_id, threads_per_page * pages_per_board)).fetchall()
+    board_data = self.sqlite.execute('SELECT article_uid, sender, subject, sent, message, imagename, imagelink, thumblink, public_key, last_update, closed, sticky \
+      FROM articles WHERE group_id = ? AND (parent = "" OR parent = article_uid) ORDER BY sticky DESC, last_update DESC LIMIT ?', (group_id, threads_per_page * pages_per_board)).fetchall()
     thread_count = len(board_data)
     if self.enable_archive and ((int(self.sqlite.execute("SELECT flags FROM groups WHERE group_id=?", (group_id,)).fetchone()[0]) & self.cache['flags']['no-archive']) == 0) and \
         int(self.sqlite.execute('SELECT count(group_id) FROM (SELECT group_id FROM articles WHERE group_id = ? AND (parent = "" OR parent = article_uid))', (group_id,)).fetchone()[0]) > thread_count:
@@ -1529,7 +1523,7 @@ class main(threading.Thread):
 
   def get_root_post(self, data, group_id, child_count, message_id_hash, single, isclosed):
     root_data = self.get_preparse_post(data[:9], message_id_hash, group_id, 25, 2000, child_count, '', '', single)
-    if data[9] > time.time():
+    if data[11] != 0:
       root_data['thread_status'] += '[&#177;]'
       root_data['sticky_prefix'] = 'un'
     else:
@@ -1662,8 +1656,8 @@ class main(threading.Thread):
     # we want anoter threads_per_page setting for archive pages
     threads_per_page = self.archive_threads_per_page
     pages_per_board = self.archive_pages_per_board
-    board_data = self.sqlite.execute('SELECT article_uid, sender, subject, sent, message, imagename, imagelink, thumblink, public_key, last_update, closed FROM \
-      articles WHERE group_id = ? AND (parent = "" OR parent = article_uid) ORDER BY last_update DESC LIMIT ? OFFSET ?', (group_id, threads_per_page * pages_per_board, offset)).fetchall()
+    board_data = self.sqlite.execute('SELECT article_uid, sender, subject, sent, message, imagename, imagelink, thumblink, public_key, last_update, closed, sticky FROM \
+      articles WHERE group_id = ? AND (parent = "" OR parent = article_uid) ORDER BY sticky DESC, last_update DESC LIMIT ? OFFSET ?', (group_id, threads_per_page * pages_per_board, offset)).fetchall()
     thread_count = len(board_data)
     if thread_count == 0: return
     pages = int(thread_count / threads_per_page)
@@ -1716,8 +1710,8 @@ class main(threading.Thread):
     t_engine_mapper_board_recent['board'], \
     t_engine_mapper_board_recent['board_description'] = self.get_board_data(group_id)
     self.log(self.logger.INFO, 'generating %s/%s-recent.html' % (self.output_directory, board_name_unquoted))
-    for root_row in self.sqlite.execute('SELECT article_uid, sender, subject, sent, message, imagename, imagelink, thumblink, public_key, last_update, closed \
-        FROM articles WHERE group_id = ? AND (parent = "" OR parent = article_uid) AND last_update > ? ORDER BY last_update DESC', (group_id, timestamp)).fetchall():
+    for root_row in self.sqlite.execute('SELECT article_uid, sender, subject, sent, message, imagename, imagelink, thumblink, public_key, last_update, closed, sticky \
+        FROM articles WHERE group_id = ? AND (parent = "" OR parent = article_uid) AND last_update > ? ORDER BY sticky DESC, last_update DESC', (group_id, timestamp)).fetchall():
       root_message_id_hash = sha1(root_row[0]).hexdigest()
       threads.append(
         self.t_engine_board_threads.substitute(
@@ -1748,7 +1742,7 @@ class main(threading.Thread):
         self.log(self.logger.ERROR, 'could not delete %s: %s' % (thread_path, e))
 
   def generate_thread(self, root_uid):
-    root_row = self.sqlite.execute('SELECT article_uid, sender, subject, sent, message, imagename, imagelink, thumblink, public_key, last_update, closed, group_id \
+    root_row = self.sqlite.execute('SELECT article_uid, sender, subject, sent, message, imagename, imagelink, thumblink, public_key, last_update, closed, sticky, group_id \
         FROM articles WHERE article_uid = ?', (root_uid,)).fetchone()
     if not root_row:
       # FIXME: create temporary root post here? this will never get called on startup because it checks for root posts only
