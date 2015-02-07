@@ -1928,27 +1928,15 @@ class main(threading.Thread):
     postcount = 50
     stats = list()
     exclude_flags = self.cache['flags']['hidden'] | self.cache['flags']['no-overview'] | self.cache['flags']['blocked']
-    for row in self.sqlite.execute('SELECT sent, group_name, sender, subject, article_uid, parent, ph_name FROM groups, articles WHERE \
-      groups.group_id = articles.group_id AND articles.last_update >= articles.sent AND (cast(groups.flags as integer) & ?) = 0 AND \
-      (articles.parent = "" OR articles.parent = articles.article_uid OR articles.parent IN (SELECT article_uid FROM articles)) \
-      ORDER BY sent DESC LIMIT ?', (exclude_flags, str(postcount))).fetchall():
+    for row in self.sqlite.execute('SELECT articles.last_update, group_name, subject, message, article_uid, ph_name FROM groups, articles WHERE \
+      groups.group_id = articles.group_id AND (cast(groups.flags as integer) & ?) = 0 AND \
+      (articles.parent = "" OR articles.parent = articles.article_uid) ORDER BY articles.last_update DESC LIMIT ?', (exclude_flags, str(postcount))).fetchall():
       latest_posts_row = dict()
-      latest_posts_row['sent'] = datetime.utcfromtimestamp(row[0] + self.utc_time_offset).strftime(self.datetime_format)
-      latest_posts_row['board'] = row[6] if row[6] != '' else self.basicHTMLencode(row[1].split('.', 1)[-1].replace('"', ''))
-      latest_posts_row['author'] = row[2][:12]
+      latest_posts_row['last_update'] = datetime.utcfromtimestamp(row[0] + self.utc_time_offset).strftime(self.datetime_format)
+      latest_posts_row['board'] = row[5] if row[5] != '' else self.basicHTMLencode(row[1].split('.', 1)[-1].replace('"', ''))
       latest_posts_row['articlehash'] = sha1(row[4]).hexdigest()[:10]
-      if row[5] in ('', row[4]):
-        # root post
-        latest_posts_row['parent'] = latest_posts_row['articlehash']
-        latest_posts_row['subject'] = row[3]
-        if latest_posts_row['subject'] in ('', 'None'):
-          latest_posts_row['subject'] = self.sqlite.execute('SELECT message FROM articles WHERE article_uid = ?', (row[4],)).fetchone()[0]
-      else:
-        latest_posts_row['parent'] = sha1(row[5]).hexdigest()[:10]
-        latest_posts_row['subject'] = self.sqlite.execute('SELECT subject FROM articles WHERE article_uid = ?', (row[5],)).fetchone()[0]
-        if latest_posts_row['subject'] in ('', 'None'):
-          latest_posts_row['subject'] = self.sqlite.execute('SELECT message FROM articles WHERE article_uid = ?', (row[5],)).fetchone()[0]
-      latest_posts_row['subject'] = 'None' if latest_posts_row['subject'] == '' else latest_posts_row['subject'].replace('\n', ' ')[:50]
+      latest_posts_row['subject'] = row[2] if row[2] not in ('', 'None') else row[3]
+      latest_posts_row['subject'] = 'None' if latest_posts_row['subject'] == '' else latest_posts_row['subject'].replace('\n', ' ')[:55]
       stats.append(self.t_engine['latest_posts_row'].substitute(latest_posts_row))
     t_engine_mappings_overview['latest_posts_rows'] = '\n'.join(stats)
 
