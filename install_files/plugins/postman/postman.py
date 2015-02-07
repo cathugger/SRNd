@@ -456,6 +456,10 @@ class postman(BaseHTTPRequestHandler):
       i2p_desthash = self.headers.get('X-I2P-DestHash')
     except:
       i2p_desthash = 'non-i2p'
+    if self.origin.i2p_spamprotect and user_cookie is None:
+      if i2p_desthash == 'non-i2p' or not self.origin.allow_this_desthash(i2p_desthash):
+        self.die('This fronted enable hardened spamprotect. Come back one hour later.')
+        return
     #f = open('tmp/' + boundary, 'w')
     if signature:
       link = os.path.join('incoming', 'tmp', boundary + '_')
@@ -652,6 +656,11 @@ class main(threading.Thread):
       if args['overchan_fake_id'].lower() == 'true':
         self.httpd.overchan_fake_id = True
 
+    self.httpd.i2p_spamprotect = False
+    if 'i2p_spamprotect' in args:
+      if args['i2p_spamprotect'].lower() == 'true':
+        self.httpd.i2p_spamprotect = True
+
     if 'reject_debug' in args:
       tmp = args['reject_debug']
       if tmp.lower() == 'true':
@@ -771,7 +780,27 @@ class main(threading.Thread):
     self.httpd.userkey_timestamp = 0
     self.httpd.allow_this_cookie = self.allow_this_cookie
     self.httpd.update_this_cookie = self.update_this_cookie
-
+    if self.httpd.i2p_spamprotect:
+      spamprot_cfg = dict()
+      # allow new desthash no more
+      spamprot_cfg['allow_time'] = 60 * 5
+      spamprot_cfg['last_allow'] = 0
+      # if new dest add +- allow_time*border +- allow_time*allow_time_modify
+      spamprot_cfg['allow_time_border'] = 0.25
+      spamprot_cfg['allow_time_modify'] = 0.3
+      # time limits
+      spamprot_cfg['allow_time_min'] = 60 * 5
+      spamprot_cfg['allow_time_max'] = 60 * 60
+      spamprot_cfg['dest_expires'] = 3600 * 24 * 4
+      # max desthash saving
+      spamprot_cfg['dest_limit'] = 4096
+      # max 5 posts in 20 minut.
+      spamprot_cfg['dest_time_limit'] = 60 * 20
+      spamprot_cfg['dest_post_limit'] = 5
+      self.httpd.spamprot_cfg = spamprot_cfg
+      # [count, expires limit, expires]
+      self.httpd.dest_cache = dict()
+      self.httpd.allow_this_desthash = self.allow_this_desthash
     self.httpd.spamprot_base64 = re.compile('^[a-zA-Z0-9]*$')
     self.httpd.spammers = list()
     self.httpd.fake_ok = False
@@ -869,6 +898,12 @@ class main(threading.Thread):
       self.httpd.postmandb.execute('UPDATE config SET value = "2" WHERE key = "db_version"')
       self.httpd.postmandb_conn.commit()
       current_version = 2
+    if current_version == 2:
+      self.log(self.logger.INFO, "updating db from version %i to version %i" % (current_version, 3))
+      self.httpd.postmandb.execute('CREATE TABLE i2p_desthash (desthash text PRIMARY KEY, expires INTEGER)')
+      self.httpd.postmandb.execute('UPDATE config SET value = "3" WHERE key = "db_version"')
+      self.httpd.postmandb_conn.commit()
+      current_version = 3
 
   def run(self):
     if self.should_terminate:
@@ -876,7 +911,7 @@ class main(threading.Thread):
     # connect to hasher database
     # FIXME: add database_directory to postman?
     self.database_directory = ''
-    self.db_version = 2
+    self.db_version = 3
     self.httpd.sqlite_conn = sqlite3.connect(os.path.join(self.database_directory, 'hashes.db3'))
     self.httpd.sqlite = self.httpd.sqlite_conn.cursor()
     if self.httpd.overchan_fake_id:
@@ -891,11 +926,15 @@ class main(threading.Thread):
       db_version = 0
     if db_version < self.db_version:
       self.update_db(db_version)
+    if self.httpd.i2p_spamprotect:
+      self.load_i2p_spamprotect_cache()
     self.log(self.logger.INFO, 'start listening at http://%s:%i' % (self.ip, self.port))
     self.serving = True
     self.httpd.serve_forever()
     if self.httpd.receive_from_friends > 0:
       self.save_cookie()
+    if self.httpd.i2p_spamprotect:
+      self.save_i2p_spamprotect_cache()
     self.log(self.logger.INFO, 'bye')
 
   def captcha_generate(self, text, secret, expires=300):
@@ -1025,6 +1064,72 @@ class main(threading.Thread):
       self.httpd.postmandb_conn.commit()
     self.httpd.db_busy = False
     return db_update
+
+  def load_i2p_spamprotect_cache(self):
+    current_time = int(time.time())
+    for row in self.httpd.postmandb.execute('SELECT desthash, expires FROM i2p_desthash WHERE expires > ?', (current_time,)).fetchall():
+      self.httpd.dest_cache[row[0]] = [0, current_time, int(row[1])]
+    self.httpd.postmandb.execute('DELETE FROM i2p_desthash')
+    self.httpd.postmandb_conn.commit()
+    self.log(self.logger.INFO, "Hardened i2p spamprotect enable. Load {0} desthash. If you hosted non-i2p disable this now".format(len(self.httpd.dest_cache)))
+
+  def save_i2p_spamprotect_cache(self):
+    current_time = int(time.time())
+    for desthash in self.httpd.dest_cache:
+      if current_time < self.httpd.dest_cache[desthash][2]:
+        self.httpd.postmandb.execute("INSERT INTO i2p_desthash (desthash, expires) VALUES (?, ?)", (desthash, self.httpd.dest_cache[desthash][2]))
+    self.httpd.postmandb_conn.commit()
+
+  def allow_this_desthash(self, desthash):
+    print self.httpd.dest_cache
+    if desthash not in self.httpd.dest_cache:
+      return self.add_this_desthash(desthash)
+    current_time = int(time.time())
+    if self.httpd.dest_cache[desthash][0] >= self.httpd.spamprot_cfg['dest_post_limit'] or self.httpd.dest_cache[desthash][2] <= current_time:
+      self.httpd.dest_cache.pop(desthash, None)
+      return False
+    if self.httpd.dest_cache[desthash][1] <= current_time:
+      self.httpd.dest_cache[desthash][1] = current_time + self.httpd.spamprot_cfg['dest_time_limit']
+      self.httpd.dest_cache[desthash][0] = 0
+    self.httpd.dest_cache[desthash][0] += 1
+    return True
+
+  def add_this_desthash(self, desthash):
+    current_time = int(time.time())
+    time_diff = current_time - (self.httpd.spamprot_cfg['last_allow'] + self.httpd.spamprot_cfg['allow_time'])
+    if time_diff < 0:
+      return False
+    if len(self.httpd.dest_cache) >= self.httpd.spamprot_cfg['dest_limit']:
+      self.clean_overload_dest_cache()
+    self.httpd.dest_cache[desthash] = [1, current_time + self.httpd.spamprot_cfg['dest_time_limit'], current_time + self.httpd.spamprot_cfg['dest_expires']]
+    self.httpd.spamprot_cfg['last_allow'] = current_time
+    # decreace or increce time
+    new_allow_time = self.httpd.spamprot_cfg['allow_time']
+    if time_diff > int(self.httpd.spamprot_cfg['allow_time'] * self.httpd.spamprot_cfg['allow_time_border']):
+      new_allow_time -= int(self.httpd.spamprot_cfg['allow_time'] * self.httpd.spamprot_cfg['allow_time_modify'])
+    else:
+      new_allow_time += int(self.httpd.spamprot_cfg['allow_time'] * self.httpd.spamprot_cfg['allow_time_modify'])
+    if new_allow_time > self.httpd.spamprot_cfg['allow_time_max']:
+      new_allow_time = self.httpd.spamprot_cfg['allow_time_max']
+    elif new_allow_time < self.httpd.spamprot_cfg['allow_time_min']:
+      new_allow_time = self.httpd.spamprot_cfg['allow_time_min']
+    if new_allow_time != self.httpd.spamprot_cfg['allow_time']:
+      self.log(self.logger.INFO, "Hardened i2p spamprotect change time limit from {0} to {1} second. ".format(self.httpd.spamprot_cfg['allow_time'], new_allow_time))
+      self.httpd.spamprot_cfg['allow_time'] = new_allow_time
+    return True
+
+  def clean_overload_dest_cache(self):
+    need_removed = self.httpd.spamprot_cfg['dest_limit'] / 10
+    current_time = int(time.time())
+    # remove expired ...
+    for desthash in self.httpd.dest_cache:
+      if self.httpd.dest_cache[desthash][2] <= current_time:
+        self.httpd.dest_cache.pop(desthash, None)
+        need_removed -= 1
+    # .. and random
+    if need_removed > 0:
+      for x in range(need_removed):
+        self.httpd.dest_cache.pop(random.choice(self.httpd.dest_cache.keys()))
 
   def get_db_last_update(self):
     db_last_update = self.httpd.postmandb.execute("SELECT changed_at FROM modifications WHERE table_name = 'userkey'").fetchone()
