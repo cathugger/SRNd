@@ -507,7 +507,7 @@ class main(threading.Thread):
     try:
       local_name, allow, expires, logout = [base64.urlsafe_b64decode(x) for x in base64_blob.split(':')]
     except:
-      self.log(self.logger.WARNING, 'get corrupt data for %s' % userkey)
+      self.log(self.logger.WARNING, 'get corrupted data for %s' % userkey)
       return (userkey, None)
     local_name = self.basicHTMLencode(local_name[:20])
     try:
@@ -544,13 +544,13 @@ class main(threading.Thread):
       send, received, replayable = [base64.urlsafe_b64decode(x) for x in base64_blob.split(':')]
       send, received, replayable = int(send), int(received), int(replayable)
     except:
-      self.log(self.logger.WARNING, 'handle srnd-cmd: get corrupt data for %s' % command)
+      self.log(self.logger.WARNING, 'handle srnd-cmd: get corrupted data for %s' % command)
       return (command, None)
     if send not in (-1, 0, 1) or received not in (-1, 0, 1) or replayable not in (0, 1):
       self.log(self.logger.WARNING, 'handle srnd-cmd: get invalid value for %s, send=%s, received=%s, replayable=%s' % (command, send, received, replayable))
       return (command, None)
     if command == 'handle-srnd-cmd':
-      self.log(self.logger.WARNING, 'handle srnd-cmd: not allow modify self. This maybe suicide!')
+      self.log(self.logger.WARNING, 'handle srnd-cmd: modifying self is not allowed. This maybe suicide!')
       return (command, None)
 
     try:
@@ -561,7 +561,7 @@ class main(threading.Thread):
       else:
         self.log(self.logger.WARNING, "handle srnd-cmd: command %s not found or duplicated" % (command,))
     except Exception as e:
-      self.log(self.logger.WARNING, "handle srnd-cmd: db not upgrade: %s, line = '%s'" % (e, line))
+      self.log(self.logger.WARNING, "handle srnd-cmd: db not upgraded: %s, line = '%s'" % (e, line))
     return (command, None)
 
   def handle_delete(self, line, debug=False):

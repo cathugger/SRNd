@@ -213,7 +213,7 @@ class postman(BaseHTTPRequestHandler):
         self.handleNewArticle(post_vars, user_cookie)
         return
       elif self.origin.receive_from_friends == 2:
-        self.die('This frontend not allow anonymity posting')
+        self.die('Anonymous posting is not allowed on this frontend.')
         return
     board = post_vars.getvalue('board', '').replace('"', '&quot;')
     target = post_vars.getvalue('target', '').replace('"', '&quot;')
@@ -458,7 +458,7 @@ class postman(BaseHTTPRequestHandler):
       i2p_desthash = 'non-i2p'
     if self.origin.i2p_spamprotect and user_cookie is None:
       if i2p_desthash == 'non-i2p' or not self.origin.allow_this_desthash(i2p_desthash):
-        self.die('This fronted enable hardened spamprotect. Come back one hour later.')
+        self.die('This frontend uses hardened spamprotect. Come back one hour later.')
         return
     #f = open('tmp/' + boundary, 'w')
     if signature:
@@ -1071,7 +1071,7 @@ class main(threading.Thread):
       self.httpd.dest_cache[row[0]] = [0, current_time, int(row[1])]
     self.httpd.postmandb.execute('DELETE FROM i2p_desthash')
     self.httpd.postmandb_conn.commit()
-    self.log(self.logger.INFO, "Hardened i2p spamprotect enable. Load {0} desthash. If you hosted non-i2p disable this now".format(len(self.httpd.dest_cache)))
+    self.log(self.logger.INFO, "Hardened i2p spamprotect enabled. Loaded {0} desthashes. If you're hosting non-i2p site, disable this".format(len(self.httpd.dest_cache)))
 
   def save_i2p_spamprotect_cache(self):
     current_time = int(time.time())
@@ -1113,7 +1113,7 @@ class main(threading.Thread):
     elif new_allow_time < self.httpd.spamprot_cfg['allow_time_min']:
       new_allow_time = self.httpd.spamprot_cfg['allow_time_min']
     if new_allow_time != self.httpd.spamprot_cfg['allow_time']:
-      self.log(self.logger.INFO, "Hardened i2p spamprotect change time limit from {0} to {1} second. ".format(self.httpd.spamprot_cfg['allow_time'], new_allow_time))
+      self.log(self.logger.INFO, "Hardened i2p spamprotect: timelimit changed from {0} to {1} seconds. ".format(self.httpd.spamprot_cfg['allow_time'], new_allow_time))
       self.httpd.spamprot_cfg['allow_time'] = new_allow_time
     return True
 
@@ -1166,7 +1166,7 @@ class main(threading.Thread):
     else:
       self.httpd.userkey_list[pubkey] = 1
     if self.httpd.userkey_list[pubkey] > self.httpd.userkey_messagelimit:
-      self.log(self.logger.WARNING, "Key %s send %s messages in %s seconds. Spamprotect auto disallow this key for stopping spam" % (pubkey, self.httpd.userkey_list[pubkey], self.httpd.userkey_timelimit))
+      self.log(self.logger.WARNING, "Key %s sent %s messages in %s seconds. Spamprotect auto-disallowed this key for stopping spam" % (pubkey, self.httpd.userkey_list[pubkey], self.httpd.userkey_timelimit))
       self.wait_db_busy()
       self.httpd.db_busy = True
       del self.httpd.userkey_list[pubkey]

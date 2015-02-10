@@ -1474,7 +1474,7 @@ class main(threading.Thread):
         self.cache['page_stamp'][group_id][board] = first_last_parent
         isgenerated = True
       else:
-        continue # board page not change
+        continue # board page not changed
       threads = list()
       self.log(self.logger.INFO, 'generating %s/%s-%s.html' % (self.output_directory, board_name_unquoted, board))
       for root_row in board_data[board_offset:board_offset+threads_per_page]:
@@ -1671,7 +1671,7 @@ class main(threading.Thread):
           len(self.regenerate_threads & set(x[0] for x in board_data[board_offset:board_offset+threads_per_page])) > 0:
         self.cache['page_stamp_archiv'][group_id][board] = first_last_parent
       else:
-        continue # board page not change
+        continue # board page not changed
       threads = list()
       self.log(self.logger.INFO, 'generating %s/%s-archive-%s.html' % (self.output_directory, board_name_unquoted, board))
       for root_row in board_data[board_offset:board_offset+threads_per_page]:
