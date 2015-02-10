@@ -1144,14 +1144,11 @@ class main(threading.Thread):
     thumb.save(thumb_link, optimize=True)
     return thumb_name
 
-  def really_os_rename(self, src, dst):
-    # TODO: check if out dir is remote fs, use os.rename if not
-    c = open(dst, 'w')
-    f = open(src, 'r')
-    c.write(f.read())
-    c.close()
-    f.close()
-    os.remove(src)
+  def _get_exist_thumb_name(self, image_name):
+    result = self.sqlite.execute('SELECT thumblink FROM articles WHERE imagelink = ? LIMIT 1', (image_name,)).fetchone()
+    if result and len(result[0]) > 40 and os.path.isfile(os.path.join(self.output_directory, 'thumbs', result[0])):
+      return result[0]
+    return None
 
   def parse_message(self, message_id, fd):
     self.log(self.logger.INFO, 'new message: %s' % message_id)
@@ -1260,66 +1257,59 @@ class main(threading.Thread):
       for part in result.get_payload():
         self.log(self.logger.DEBUG, 'got part == %s' % part.get_content_type())
 
-        deny_extensions = ('.html', '.php', '.phtml', '.php3', '.php4', '.js')
-        tmp_attach = os.path.join(self.temp_directory, 'tmp_attach')
-        if part.get_content_type() != 'text/plain':
-          file_data = part.get_payload(decode=True)
-          imagehash = sha1(file_data).hexdigest()
-          f = open(tmp_attach, 'w')
-          f.write(file_data)
-          f.close()
-          del file_data
-          if part.get_filename() is None or part.get_filename().strip() == '':
-            image_name_original = 'empty_file_name.empty'
-          else:
-            image_name_original = self.basicHTMLencode(part.get_filename().replace('/', '_').replace('"', '_'))
-          image_extension = '.' + image_name_original.split('.')[-1].lower()
-          if len(image_name_original) > 512:
-            image_name_original = image_name_original[:512] + '...'
-          local_mime_type = mimetypes.types_map.get(image_extension, '/')
-          local_mime_maintype, local_mime_subtype = local_mime_type.split('/', 2)
-          image_mime_types = mimetypes.guess_all_extensions(local_mime_type)
-          image_name = imagehash + image_extension
-          out_link = os.path.join(self.output_directory, 'img', image_name)
         if part.get_content_type() == 'text/plain':
           message += part.get_payload(decode=True)
+          continue
+        deny_extensions = ('.html', '.php', '.phtml', '.php3', '.php4', '.js')
+        file_data = part.get_payload(decode=True)
+        imagehash = sha1(file_data).hexdigest()
+        image_name_original = 'empty_file_name.empty' if part.get_filename() is None or part.get_filename().strip() == '' else self.basicHTMLencode(part.get_filename().replace('/', '_').replace('"', '_'))
+        image_extension = '.' + image_name_original.split('.')[-1].lower()
+        if len(image_name_original) > 512: image_name_original = image_name_original[:512] + '...'
+        local_mime_type = mimetypes.types_map.get(image_extension, '/')
+        local_mime_maintype, local_mime_subtype = local_mime_type.split('/', 2)
+        image_mime_types = mimetypes.guess_all_extensions(local_mime_type)
+        image_name = imagehash + image_extension
         # Bad file type, unknown or deny type found
-        elif local_mime_type == '/' or len((set(image_extension) | set(image_mime_types)) & set(deny_extensions)) > 0:
+        if local_mime_type == '/' or len((set(image_extension) | set(image_mime_types)) & set(deny_extensions)) > 0:
           self.log(self.logger.WARNING, 'Found bad attach %s in %s. Mimetype local=%s, remote=%s' % (image_name_original, message_id, local_mime_type, part.get_content_type()))
           image_name_original = 'fake.and.gay.txt'
           thumb_name = 'document'
           image_name = 'suicide.txt'
+          del file_data
+          continue
+        out_link = os.path.join(self.output_directory, 'img', image_name)
+        if os.path.isfile(out_link):
+          exist_thumb_name = self._get_exist_thumb_name(image_name)
+        else:
+          exist_thumb_name = None
+          f = open(out_link, 'w')
+          f.write(file_data)
+          f.close()
+        del file_data
+        if exist_thumb_name is not None:
+          thumb_name = exist_thumb_name
         elif local_mime_maintype == 'image':
-          self.really_os_rename(tmp_attach, out_link)
           try:
             thumb_name = self.gen_thumb(out_link, imagehash)
           except Exception as e:
             thumb_name = 'invalid'
             self.log(self.logger.WARNING, 'Error creating thumb in %s: %s' % (image_name, e))
         elif local_mime_type in ('application/pdf', 'application/postscript', 'application/ps'):
-          self.really_os_rename(tmp_attach, out_link)
           thumb_name = 'document'
         elif local_mime_type in ('audio/ogg', 'audio/mpeg', 'audio/mp3', 'audio/opus'):
-          self.really_os_rename(tmp_attach, out_link)
           thumb_name = 'audio'
         elif local_mime_maintype == 'video' and local_mime_subtype in ('webm', 'mp4'):
-          self.really_os_rename(tmp_attach, out_link)
-          if cv2_load_result == 'true':
-            thumb_name = self.gen_thumb_from_video(out_link, imagehash)
-          else:
-            thumb_name = 'video'
+          thumb_name = self.gen_thumb_from_video(out_link, imagehash) if cv2_load_result == 'true' else 'video'
         elif local_mime_maintype == 'application' and local_mime_subtype == 'x-bittorrent':
-          self.really_os_rename(tmp_attach, out_link)
           thumb_name = 'torrent'
         elif local_mime_maintype == 'application' and local_mime_subtype in ('x-7z-compressed', 'zip', 'x-gzip', 'x-tar', 'rar'):
-          self.really_os_rename(tmp_attach, out_link)
           thumb_name = 'archive'
         else:
           image_name_original = image_name = thumb_name = ''
           message += '\n----' + part.get_content_type() + '----\n'
           message += 'invalid content type\n'
           message += '----' + part.get_content_type() + '----\n\n'
-        if os.path.exists(tmp_attach): os.remove(tmp_attach)
     else:
       if result.get_content_type().lower() == 'text/plain':
         message += result.get_payload(decode=True)
