@@ -1440,21 +1440,37 @@ class main(threading.Thread):
     self.sqlite_conn.commit()
     return True
 
+  def _get_board_root_posts(self, group_id, post_count, offset=0):
+    return self.sqlite.execute('SELECT article_uid, sender, subject, sent, message, imagename, imagelink, thumblink, public_key, last_update, closed, sticky FROM \
+      articles WHERE group_id = ? AND (parent = "" OR parent = article_uid) ORDER BY sticky DESC, last_update DESC LIMIT ? OFFSET ?', (group_id, post_count, offset)).fetchall()
+
+  def _board_root_post_iter(self, board_data, group_id, pages, threads_per_page, cache_target='page_stamp'):
+    if group_id not in self.cache[cache_target]: self.cache[cache_target][group_id] = dict()
+    for page in xrange(1, pages + 1):
+      page_data = board_data[threads_per_page*(page-1):threads_per_page*(page-1)+threads_per_page]
+      first_last_parent = sha1(page_data[0][0] + page_data[-1][0]).hexdigest()[:10] if len(page_data) > 0 else None
+      if self.cache[cache_target][group_id].get(page, '') != first_last_parent or \
+          len(self.regenerate_threads & set(x[0] for x in page_data)) > 0:
+        self.cache[cache_target][group_id][page] = first_last_parent
+        yield page, page_data
+
+  def _get_page_count(self, thread_count, threads_per_page):
+    pages = int(thread_count / threads_per_page)
+    if (thread_count % threads_per_page != 0) or pages == 0:
+      pages += 1
+    return pages
+
   def generate_board(self, group_id):
     threads_per_page = self.threads_per_page
     pages_per_board = self.pages_per_board
-    board_data = self.sqlite.execute('SELECT article_uid, sender, subject, sent, message, imagename, imagelink, thumblink, public_key, last_update, closed, sticky \
-      FROM articles WHERE group_id = ? AND (parent = "" OR parent = article_uid) ORDER BY sticky DESC, last_update DESC LIMIT ?', (group_id, threads_per_page * pages_per_board)).fetchall()
+    board_data = self._get_board_root_posts(group_id, threads_per_page * pages_per_board)
     thread_count = len(board_data)
+    pages = self._get_page_count(thread_count, threads_per_page)
     if self.enable_archive and ((int(self.sqlite.execute("SELECT flags FROM groups WHERE group_id=?", (group_id,)).fetchone()[0]) & self.cache['flags']['no-archive']) == 0) and \
         int(self.sqlite.execute('SELECT count(group_id) FROM (SELECT group_id FROM articles WHERE group_id = ? AND (parent = "" OR parent = article_uid))', (group_id,)).fetchone()[0]) > thread_count:
       generate_archive = True
     else:
       generate_archive = False
-    pages = int(thread_count / threads_per_page)
-    if (thread_count % threads_per_page != 0) or pages == 0:
-      pages += 1
-    if group_id not in self.cache['page_stamp']: self.cache['page_stamp'][group_id] = dict()
 
     basic_board = dict()
     basic_board['board_subtype'] = ''
@@ -1466,18 +1482,11 @@ class main(threading.Thread):
     prepared_template = string.Template(self.t_engine_board.safe_substitute(basic_board))
     t_engine_mapper_board = dict()
     isgenerated = False
-    for board in xrange(1, pages + 1):
-      board_offset = threads_per_page * (board - 1)
-      first_last_parent = board_data[board_offset:][0][0] + board_data[:board_offset+threads_per_page][-1][0] if thread_count > 0 else None
-      if self.cache['page_stamp'][group_id].get(board, '') != first_last_parent or \
-          len(self.regenerate_threads & set(x[0] for x in board_data[board_offset:board_offset+threads_per_page])) > 0:
-        self.cache['page_stamp'][group_id][board] = first_last_parent
-        isgenerated = True
-      else:
-        continue # board page not changed
+    for board, page_data in self._board_root_post_iter(board_data, group_id, pages, threads_per_page):
+      isgenerated = True
       threads = list()
       self.log(self.logger.INFO, 'generating %s/%s-%s.html' % (self.output_directory, board_name_unquoted, board))
-      for root_row in board_data[board_offset:board_offset+threads_per_page]:
+      for root_row in page_data:
         root_message_id_hash = sha1(root_row[0]).hexdigest()
         threads.append(
           self.t_engine_board_threads.substitute(
@@ -1496,7 +1505,7 @@ class main(threading.Thread):
     if generate_archive and (self.cache['page_stamp'][group_id].get(0, '') != last_root_message or (not isgenerated and len(self.regenerate_threads) > 0)):
       self.cache['page_stamp'][group_id][0] = last_root_message
       self.generate_archive(group_id)
-    if self.enable_recent:
+    if isgenerated and self.enable_recent:
       self.generate_recent(group_id)
 
   def get_base_thread(self, root_row, root_message_id_hash, group_id, child_count=4, single=False):
@@ -1641,19 +1650,12 @@ class main(threading.Thread):
     return parsed_data
 
   def generate_archive(self, group_id):
-    # Get threads count offsetting threads in main board pages
-    offset = self.threads_per_page * self.pages_per_board
-    # we want anoter threads_per_page setting for archive pages
     threads_per_page = self.archive_threads_per_page
     pages_per_board = self.archive_pages_per_board
-    board_data = self.sqlite.execute('SELECT article_uid, sender, subject, sent, message, imagename, imagelink, thumblink, public_key, last_update, closed, sticky FROM \
-      articles WHERE group_id = ? AND (parent = "" OR parent = article_uid) ORDER BY sticky DESC, last_update DESC LIMIT ? OFFSET ?', (group_id, threads_per_page * pages_per_board, offset)).fetchall()
+    board_data = self._get_board_root_posts(group_id, threads_per_page * pages_per_board, self.threads_per_page * self.pages_per_board)
     thread_count = len(board_data)
     if thread_count == 0: return
-    pages = int(thread_count / threads_per_page)
-    if thread_count % threads_per_page != 0:
-      pages += 1
-    if group_id not in self.cache['page_stamp_archiv']: self.cache['page_stamp_archiv'][group_id] = dict()
+    pages = self._get_page_count(thread_count, threads_per_page)
 
     basic_board = dict()
     basic_board['board_subtype'] = ' :: archive'
@@ -1664,17 +1666,10 @@ class main(threading.Thread):
     basic_board['board_description'] = self.get_board_data(group_id)
     prepared_template = string.Template(self.t_engine_board.safe_substitute(basic_board))
     t_engine_mapper_board = dict()
-    for board in xrange(1, pages + 1):
-      board_offset = threads_per_page * (board - 1)
-      first_last_parent = board_data[board_offset:][0][0] + board_data[:board_offset+threads_per_page][-1][0] if thread_count > 0 else None
-      if self.cache['page_stamp_archiv'][group_id].get(board, '') != first_last_parent or \
-          len(self.regenerate_threads & set(x[0] for x in board_data[board_offset:board_offset+threads_per_page])) > 0:
-        self.cache['page_stamp_archiv'][group_id][board] = first_last_parent
-      else:
-        continue # board page not changed
+    for board, page_data in self._board_root_post_iter(board_data, group_id, pages, threads_per_page, 'page_stamp_archiv'):
       threads = list()
       self.log(self.logger.INFO, 'generating %s/%s-archive-%s.html' % (self.output_directory, board_name_unquoted, board))
-      for root_row in board_data[board_offset:board_offset+threads_per_page]:
+      for root_row in page_data:
         threads.append(
           self.t_engine_archive_threads.substitute(
             self.get_base_thread(root_row, '', group_id, child_count=0)
