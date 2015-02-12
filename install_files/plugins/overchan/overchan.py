@@ -11,6 +11,7 @@ import traceback
 import math
 import mimetypes
 mimetypes.init()
+import json
 from binascii import unhexlify
 from calendar import timegm
 from datetime import datetime, timedelta
@@ -198,6 +199,45 @@ class main(threading.Thread):
       if not os.path.exists(cheking_file):
         self.die('{0} file not found in {1}'.format(x, cheking_file))
 
+    self.upper_table = {'0': '1',
+                        '1': '2',
+                        '2': '3',
+                        '3': '4',
+                        '4': '5',
+                        '5': '6',
+                        '6': '7',
+                        '7': '8',
+                        '8': '9',
+                        '9': 'a',
+                        'a': 'b',
+                        'b': 'c',
+                        'c': 'd',
+                        'd': 'e',
+                        'e': 'f',
+                        'f': 'g'}
+
+    if __name__ == '__main__':
+      self._load_templates()
+      i = open(os.path.join(self.template_directory, self.css_file), 'r')
+      o = open(os.path.join(self.output_directory, 'styles.css'), 'w')
+      o.write(i.read())
+      o.close()
+      i.close()
+      if not 'watch_dir' in args:
+        self.log(self.logger.CRITICAL, 'watch_dir not in args')
+        self.log(self.logger.CRITICAL, 'terminating..')
+        exit(1)
+      else:
+        self.watch_dir = args['watch_dir']
+      if not self.init_standalone():
+        exit(1)
+    else:
+      if not self.init_plugin():
+        self.should_terminate = True
+        return
+
+  def _load_templates(self):
+    start_time = time.time()
     # statics
     self.t_engine = dict()
     for x in ('stats_usage_row', 'latest_posts_row', 'stats_boards_row', 'news'):
@@ -211,8 +251,7 @@ class main(threading.Thread):
 
     # temporary templates
     template_brick = dict()
-    for x in ('help', 'base_pagelist', 'base_postform', 'base_footer', 'dummy_postform', 'message_child_pic', 'message_child_nopic',
-        'message_root', 'message_child_quickreply', 'message_root_quickreply', 'stats_usage', 'latest_posts', 'stats_boards', 'base_help'):
+    for x in ('help', 'base_pagelist', 'base_postform', 'base_footer', 'dummy_postform', 'message_child_quickreply', 'message_root_quickreply', 'stats_usage', 'latest_posts', 'stats_boards', 'base_help'):
       template_file = os.path.join(self.template_directory, '%s.tmpl' % x)
       try:
         f = codecs.open(template_file, "r", "utf-8")
@@ -221,6 +260,12 @@ class main(threading.Thread):
       except Exception as e:
         self.die('Error loading template {0}: {1}'.format(template_file, e))
 
+    evil_cmd = self._load_evil_commands()
+    for target, evil_inject in (('message_root', 'root'), ('message_child_pic', 'child_pic'), ('message_child_nopic', 'child_nopic')):
+      with codecs.open(os.path.join(self.template_directory, '{}.tmpl'.format(target)), "r", "utf-8") as f:
+        template_brick[target] = string.Template(f.read()).safe_substitute(
+          {'evil_{}'.format(evil_inject): evil_cmd.get(evil_inject, 'Internal error')}
+        )
     f = codecs.open(os.path.join(self.template_directory, 'base_head.tmpl'), "r", "utf-8")
     template_brick['base_head'] = string.Template(f.read()).safe_substitute(
       title=self.html_title
@@ -342,44 +387,7 @@ class main(threading.Thread):
       )
     )
     f.close()
-
-    del template_brick
-
-    self.upper_table = {'0': '1',
-                        '1': '2',
-                        '2': '3',
-                        '3': '4',
-                        '4': '5',
-                        '5': '6',
-                        '6': '7',
-                        '7': '8',
-                        '8': '9',
-                        '9': 'a',
-                        'a': 'b',
-                        'b': 'c',
-                        'c': 'd',
-                        'd': 'e',
-                        'e': 'f',
-                        'f': 'g'}
-
-    if __name__ == '__main__':
-      i = open(os.path.join(self.template_directory, self.css_file), 'r')
-      o = open(os.path.join(self.output_directory, 'styles.css'), 'w')
-      o.write(i.read())
-      o.close()
-      i.close()
-      if not 'watch_dir' in args:
-        self.log(self.logger.CRITICAL, 'watch_dir not in args')
-        self.log(self.logger.CRITICAL, 'terminating..')
-        exit(1)
-      else:
-        self.watch_dir = args['watch_dir']
-      if not self.init_standalone():
-        exit(1)
-    else:
-      if not self.init_plugin():
-        self.should_terminate = True
-        return
+    self.log(self.logger.INFO, 'Templates loaded at {} seconds'.format(int(time.time() - start_time)))
 
   def init_plugin(self):
     self.log(self.logger.INFO, 'initializing as plugin..')
@@ -458,6 +466,29 @@ class main(threading.Thread):
         i.close()
       except IOError as e:
         self.log(self.logger.ERROR, 'can\'t copy %s: %s' % (source, e))
+
+  def _load_evil_commands(self, evil_conf='evil_cmd.json'):
+    with codecs.open(os.path.join(self.template_directory, evil_conf), 'r', 'UTF-8') as f:
+      evil_cmd = json.load(f)
+    # Load only enabled commands
+    # FIXME: first start table maybe not created. What check it? Re-load templates if values changed?
+    try:    allow_cmd = [x[0] for x in self.censordb.execute('SELECT evil FROM evil_to_srnd, cmd_map WHERE srnd = command AND (send = 1 or send = 0)').fetchall()]
+    except: allow_cmd = ['purge', 'purge_root']
+    injected_cmd = {'root': [], 'child_pic': [], 'child_nopic': []}
+    for cmd in allow_cmd:
+      for target in injected_cmd:
+        if target in evil_cmd[cmd]['target']:
+          formatting_cmd = '{0}{1}\n{0}{2}'.format(evil_cmd['_base']['html_sugar'], evil_cmd['_base']['input'], evil_cmd['_base']['label'])
+          formatting_cmd = string.Template(formatting_cmd).safe_substitute(
+            evil_cmd=cmd,
+            input_title=evil_cmd[cmd]['input_title'],
+            label_txt=evil_cmd[cmd]['label_txt']
+          )
+          injected_cmd[target].append((formatting_cmd, evil_cmd[cmd]['pos']))
+   # sort and join
+    for target in injected_cmd:
+      injected_cmd[target] = '\n'.join(y[0] for y in sorted(injected_cmd[target], key=lambda x: x[1]))
+    return injected_cmd
 
   def past_init(self):
     required_dirs = list()
@@ -553,6 +584,7 @@ class main(threading.Thread):
     self.sqlite.execute('CREATE INDEX IF NOT EXISTS articles_last_update_idx ON articles(group_id, parent, last_update);')
     self.sqlite_conn.commit()
 
+    self._load_templates()
     self.cache_init()
 
     if self.regenerate_html_on_startup:

@@ -1,0 +1,13 @@
+{
+  "purge_desthash": {"label_txt": "Delete all i2p-user's posts",   "input_title": "Delete all",        "pos": 4, "target": ["root", "child_pic", "child_nopic"]},
+  "sticky":         {"label_txt": "${sticky_prefix}sticky thread", "input_title": "sticky",            "pos": 5, "target": ["root"]},
+  "purge":          {"label_txt": "delete post",                   "input_title": "delete post",       "pos": 2, "target": ["child_pic", "child_nopic"]},
+  "purge_root":     {"label_txt": "delete thread",                 "input_title": "delete thread",     "pos": 1, "target": ["root"]},
+  "close":          {"label_txt": "${close_action} thread",        "input_title": "close",             "pos": 6, "target": ["root"]},
+  "delete_a":       {"label_txt": "delete attachment",             "input_title": "delete attachment", "pos": 3, "target": ["root", "child_pic"]},
+  "_base": {
+    "input": "<input type=\"checkbox\" value=\"${articlehash_full}\" title=\"${input_title}\" name=\"${evil_cmd}\" id=\"${evil_cmd}${articlehash}\">",
+    "label": "<label for=\"${evil_cmd}${articlehash}\">${label_txt}</label>",
+    "html_sugar": "          "
+  }
+}
