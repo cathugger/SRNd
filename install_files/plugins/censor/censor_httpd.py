@@ -1113,12 +1113,8 @@ class censor(BaseHTTPRequestHandler):
     commands = dict()
     for evil, srnd, comment in self.origin.sqlite_censor.execute('SELECT evil, srnd, comment FROM evil_to_srnd WHERE evil != "" AND srnd != ""').fetchall():
       if evil in post_vars:
-        if srnd not in commands:
-          commands[srnd] = list()
-        if comment:
-          add_comment = '#' + comment
-        else:
-          add_comment = ''
+        if srnd not in commands: commands[srnd] = set()
+        add_comment = '#' + comment if comment else ''
         for item in post_vars.getlist(evil):
           if evil == 'purge_desthash':
             try:
@@ -1127,10 +1123,10 @@ class censor(BaseHTTPRequestHandler):
               self.console_headers_dump("local moderation request: could not find X-I2P-DestHash for hash %s: %s" % (item, e))
             else:
               if len(i2p_dest_hash) == 44:
-                commands[srnd].extend(['{0}{1}'.format(message_id[0], add_comment) for message_id in self.__get_messages_id_by_dest_hash(i2p_dest_hash)])
+                commands[srnd].update(['{0}{1}'.format(message_id[0], add_comment) for message_id in self.__get_messages_id_by_dest_hash(i2p_dest_hash)])
           else:
             try:
-              commands[srnd].append('{0}{1}'.format(self.__get_message_id_by_hash(item), add_comment))
+              commands[srnd].add('{0}{1}'.format(self.__get_message_id_by_hash(item), add_comment))
             except Exception as e:
               self.console_headers_dump("local moderation request: could not find message_id for hash %s: %s" % (item, e))
         if len(commands[srnd]) == 0: del commands[srnd]
@@ -1140,8 +1136,8 @@ class censor(BaseHTTPRequestHandler):
       self.die('local moderation request: nothing to do')
 
   def handle_commands(self, commands, pubkey, secret=None):
-    local_cmd = list()
-    remote_cmd = list()
+    local_cmd = set()
+    remote_cmd = set()
     for command, send in self.origin.sqlite_censor.execute('SELECT command, send FROM cmd_map WHERE send != -1').fetchall():
       if command in commands:
         if type(commands[command]) not in (list, tuple, set):
@@ -1149,13 +1145,11 @@ class censor(BaseHTTPRequestHandler):
           return False
         cmd_list = ['{0} {1}'.format(command, self.__remove_cmd__escape(cmd)) for cmd in commands[command]]
         if send == 1 and secret is not None:
-          remote_cmd.extend(cmd_list)
+          remote_cmd.update(cmd_list)
         elif send in (0, 1):
-          local_cmd.extend(cmd_list)
+          local_cmd.update(cmd_list)
 
     status = False
-    local_cmd  = list(set(local_cmd))
-    remote_cmd = list(set(remote_cmd))
     if len(local_cmd) > 0:
       self.send_local_cmd(pubkey, local_cmd)
       status = True
