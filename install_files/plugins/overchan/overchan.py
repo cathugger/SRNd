@@ -1200,7 +1200,8 @@ class main(threading.Thread):
       parser.feed(line)
       lower_line = line.lower()
       if lower_line.startswith('subject:'):
-        subject = self.basicHTMLencode(line.split(' ', 1)[1][:-1])
+        subject = line.split(' ', 1)[-1][:-1]
+        subject = self.basicHTMLencode(subject[4:]) if subject.lower().startswith('re: ') else self.basicHTMLencode(subject)
       elif lower_line.startswith('date:'):
         sent = line.split(' ', 1)[1][:-1]
         sent_tz = parsedate_tz(sent)
