@@ -141,9 +141,7 @@
   .postfile {
   }
   .boards {
-    padding-left: 1em;
-    padding-right: 2.5em;
-    padding-top: 0.5em;
+    padding: 0.5em 2.5em 0px 1em;
     display: inline-block;
   }
   .pagelist {
