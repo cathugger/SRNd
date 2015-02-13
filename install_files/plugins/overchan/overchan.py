@@ -76,7 +76,6 @@ class main(threading.Thread):
     self.html_title = args['title']
     if not os.path.exists(self.template_directory):
       self.die('error: template directory \'%s\' does not exist' % self.template_directory)
-    self.css_file = args['css_file']
     self.loglevel = self.logger.INFO
     if 'debug' in args:
       try:
@@ -87,6 +86,11 @@ class main(threading.Thread):
       except:
         self.loglevel = 2
         self.log(self.logger.WARNING, 'invalid value for debug, using default debug level of 2')
+
+    self.css_files = args.get('css_file', 'krane.css').split(';')
+    # for compatibility
+    if 'user.css' not in self.css_files and len(self.css_files) == 1:
+      self.css_files.append('user.css')
 
     self.config['site_url'] = 'my-address.i2p'
     if 'site_url' in args:
@@ -194,7 +198,7 @@ class main(threading.Thread):
     if cv2_load_result != 'true':
       self.log(self.logger.ERROR, '%s. Thumbnail for video will not be created. See http://docs.opencv.org/' % cv2_load_result)
 
-    for x in ([self.css_file,] + [self.thumbnail_files[target] for target in self.thumbnail_files]):
+    for x in (self.css_files + [self.thumbnail_files[target] for target in self.thumbnail_files]):
       cheking_file = os.path.join(self.template_directory, x)
       if not os.path.exists(cheking_file):
         self.die('{0} file not found in {1}'.format(x, cheking_file))
@@ -218,7 +222,7 @@ class main(threading.Thread):
 
     if __name__ == '__main__':
       self._load_templates()
-      i = open(os.path.join(self.template_directory, self.css_file), 'r')
+      i = open(os.path.join(self.template_directory, self.css_files[0]), 'r')
       o = open(os.path.join(self.output_directory, 'styles.css'), 'w')
       o.write(i.read())
       o.close()
@@ -236,6 +240,16 @@ class main(threading.Thread):
         self.should_terminate = True
         return
 
+  def _css_headers_construct(self):
+    with codecs.open(os.path.join(self.template_directory, 'base_css_head.tmpl'), "r", "utf-8") as f:
+      css_header = string.Template(f.read().rstrip())
+    css_list = list()
+    for css in self.css_files:
+      if os.path.isfile(os.path.join(self.output_directory, css)) and os.stat(os.path.join(self.output_directory, css)).st_size > 0:
+        css_list.append(css_header.substitute(stylesheet=css))
+    del self.css_files
+    return '\n'.join(css_list)
+
   def _load_templates(self):
     start_time = time.time()
     # statics
@@ -251,7 +265,8 @@ class main(threading.Thread):
 
     # temporary templates
     template_brick = dict()
-    for x in ('help', 'base_pagelist', 'base_postform', 'base_footer', 'dummy_postform', 'message_child_quickreply', 'message_root_quickreply', 'stats_usage', 'latest_posts', 'stats_boards', 'base_help'):
+    for x in ('help', 'base_pagelist', 'base_postform', 'base_footer', 'dummy_postform', 'message_child_quickreply', 'message_root_quickreply', 'stats_usage', \
+      'latest_posts', 'stats_boards', 'base_help', 'base_js_head'):
       template_file = os.path.join(self.template_directory, '%s.tmpl' % x)
       try:
         f = codecs.open(template_file, "r", "utf-8")
@@ -261,20 +276,28 @@ class main(threading.Thread):
         self.die('Error loading template {0}: {1}'.format(template_file, e))
 
     evil_cmd = self._load_evil_commands()
+    css_headers = self._css_headers_construct()
     for target, evil_inject in (('message_root', 'root'), ('message_child_pic', 'child_pic'), ('message_child_nopic', 'child_nopic')):
       with codecs.open(os.path.join(self.template_directory, '{}.tmpl'.format(target)), "r", "utf-8") as f:
         template_brick[target] = string.Template(f.read()).safe_substitute(
           {'evil_{}'.format(evil_inject): evil_cmd.get(evil_inject, 'Internal error')}
         )
-    f = codecs.open(os.path.join(self.template_directory, 'base_head.tmpl'), "r", "utf-8")
-    template_brick['base_head'] = string.Template(f.read()).safe_substitute(
-      title=self.html_title
+    with codecs.open(os.path.join(self.template_directory, 'base_head.tmpl'), "r", "utf-8") as f:
+      template_brick['base_head'] = string.Template(f.read()).safe_substitute(
+        stylesheet=css_headers,
+        title = self.html_title
+      )
+    template_brick['base_head_prep'] = string.Template(template_brick['base_head']).safe_substitute(
+      head_title=string.Template('${title} :: ${board}').safe_substitute(title=self.html_title),
+      javascript=template_brick['base_js_head']
     )
-    f.close()
     f = codecs.open(os.path.join(self.template_directory, 'thread_single.tmpl'), "r", "utf-8")
     template_brick['thread_single'] = string.Template(
       string.Template(f.read()).safe_substitute(
-        title=self.html_title,
+        head_single=string.Template(template_brick['base_head']).safe_substitute(
+          head_title=string.Template('${title} :: ${board} :: ${subject}').safe_substitute(title=self.html_title),
+          javascript=template_brick['base_js_head']
+        ),
         base_help=template_brick['base_help']
       )
     )
@@ -283,7 +306,7 @@ class main(threading.Thread):
     f = codecs.open(os.path.join(self.template_directory, 'board.tmpl'), "r", "utf-8")
     self.t_engine_board = string.Template(
       string.Template(f.read()).safe_substitute(
-        base_head=template_brick['base_head'],
+        base_head=template_brick['base_head_prep'],
         base_pagelist=template_brick['base_pagelist'],
         base_help=template_brick['base_help'],
         base_footer=template_brick['base_footer'],
@@ -319,6 +342,7 @@ class main(threading.Thread):
     self.t_engine_menu = string.Template(
       string.Template(f.read()).safe_substitute(
         title=self.html_title,
+        stylesheet=css_headers,
         site_url=self.config['site_url'],
         local_dest=self.config['local_dest']
       )
@@ -333,7 +357,10 @@ class main(threading.Thread):
         stats_usage=template_brick['stats_usage'],
         latest_posts=template_brick['latest_posts'],
         stats_boards=template_brick['stats_boards'],
-        title=self.html_title
+        head_overview=string.Template(template_brick['base_head']).safe_substitute(
+          head_title='{} :: Overview'.format(self.html_title),
+          javascript=''
+        )
       )
     )
     f.close()
@@ -381,7 +408,7 @@ class main(threading.Thread):
     f = codecs.open(os.path.join(self.template_directory, 'help_page.tmpl'), "r", "utf-8")
     self.t_engine['help_page'] = string.Template(
       string.Template(f.read()).safe_substitute(
-        base_head=string.Template(template_brick['base_head']).safe_substitute(board='help'),
+        base_head=string.Template(template_brick['base_head_prep']).safe_substitute(board='help'),
         help=template_brick['help'],
         base_footer=template_brick['base_footer']
       )
@@ -453,14 +480,15 @@ class main(threading.Thread):
         i = open(os.path.join(self.template_directory, source), 'r')
         o = open(os.path.join(self.output_directory, target), 'w')
         if css and self.minify_css:
-          css = i.read()
-          old_size = len(css)
-          css = self.css_minifer(css)
-          new_size = len(css)
-          diff = -int(float(old_size-new_size)/old_size * 100) if old_size > 0 else 0
-          o.write(css)
-          self.log(self.logger.INFO, 'Minify CSS {0}: old size={1}, new size={2}, difference={3}%'.format(source, old_size, new_size, diff))
-        else:
+          read_css = i.read()
+          old_size = len(read_css)
+          read_css = self.css_minifer(read_css)
+          new_size = len(read_css)
+          if new_size > 0:
+            diff = -int(float(old_size-new_size)/old_size * 100) if old_size > 0 else 0
+            o.write(read_css)
+            self.log(self.logger.INFO, 'Minify CSS {0}: old size={1}, new size={2}, difference={3}%'.format(source, old_size, new_size, diff))
+        elif not css or os.fstat(i.fileno()).st_size > 0:
           o.write(i.read())
         o.close()
         i.close()
@@ -508,7 +536,7 @@ class main(threading.Thread):
     # ^ => cp
     self.copy_out(css=False, sources=((self.thumbnail_files['no_file'], os.path.join('img', self.thumbnail_files['no_file'])), ('suicide.txt', os.path.join('img', 'suicide.txt')), \
       ('playbutton.png', os.path.join('img', 'playbutton.png')),))
-    self.copy_out(css=True,  sources=((self.css_file, 'styles.css'), (self.censor_css, 'censor.css'), ('user.css', 'user.css'),))
+    self.copy_out(css=True,  sources=([(self.censor_css, 'censor.css'),] + [(x, x) for x in self.css_files]))
     self.gen_template_thumbs([self.thumbnail_files[target] for target in self.thumbnail_files])
 
     self.regenerate_boards = set()
