@@ -496,7 +496,8 @@ class main(threading.Thread):
     # ^ => cp
     self.copy_out(css=False, sources=((self.thumbnail_files['no_file'], os.path.join('img', self.thumbnail_files['no_file'])), ('suicide.txt', os.path.join('img', 'suicide.txt')), \
       ('playbutton.png', os.path.join('img', 'playbutton.png')),))
-    self.copy_out(css=True,  sources=([(self.censor_css, 'censor.css'),] + [(x, x) for x in self.css_files]))
+    self.copy_out(css=True,  sources=([(self.censor_css, 'censor.css'),] + [(x, x if self.css_files[0] != x else 'styles.css') for x in self.css_files]))
+    self.css_files[0] = 'styles.css'
     self.gen_template_thumbs([self.thumbnail_files[target] for target in self.thumbnail_files])
 
     self.regenerate_boards = set()
