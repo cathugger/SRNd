@@ -162,6 +162,8 @@ class main(threading.Thread):
       if not os.path.exists(cheking_file):
         self.die('{0} file not found in {1}'.format(x, cheking_file))
 
+    self._compite_regexp()
+
     self.upper_table = {'0': '1',
                         '1': '2',
                         '2': '3',
@@ -1007,43 +1009,41 @@ class main(threading.Thread):
     return '<span style="border-bottom: 1px solid">%s</span>' % rematch.group(1)
 
   def markup_parser(self, message, group_id=None):
-    # make >>post_id links
-    linker = re.compile("(&gt;&gt;)([0-9a-f]{10})")
-    # make >quotes
-    quoter = re.compile("^&gt;(?!&gt;[0-9a-f]{10}).*", re.MULTILINE)
-    # Make http:// urls in posts clickable
-    clicker = re.compile("(http://|https://|ftp://|mailto:|news:|irc:|magnet:\?|maggot://)([^\s\[\]<>'\"]*)")
-    # make code blocks
-    coder = re.compile('\[code](?!\[/code])(.+?)\[/code]', re.DOTALL)
-    # make spoilers
-    spoiler = re.compile("%% (?!\s) (.+?) (?!\s) %%", re.VERBOSE)
-    # make <b>
-    bolder1 = re.compile("(?<![0-9a-zA-Z\x80-\x9f\xe0-\xfc*_/()]) \*\* (?![\s*_]) (.+?) (?<![\s*_]) \*\* (?![0-9a-zA-Z\x80-\x9f\xe0-\xfc*_/()])", re.VERBOSE)
-    bolder2 = re.compile("(?<![0-9a-zA-Z\x80-\x9f\xe0-\xfc*_/()]) __ (?![\s*_]) (.+?) (?<![\s*_]) __ (?![0-9a-zA-Z\x80-\x9f\xe0-\xfc*_/()])", re.VERBOSE)
-    # make <i>
-    italer = re.compile("(?<![0-9a-zA-Z\x80-\x9f\xe0-\xfc*_/()]) \* (?![\s*_]) (.+?) (?<![\s*_]) \* (?![0-9a-zA-Z\x80-\x9f\xe0-\xfc*_/()])", re.VERBOSE)
-    # make <strike>
-    striker = re.compile("(?<![0-9a-zA-Z\x80-\x9f\xe0-\xfc*_/()\-]) -- (?![\s*_-]) (.+?) (?<![\s*_-]) -- (?![0-9a-zA-Z\x80-\x9f\xe0-\xfc*_/()\-])", re.VERBOSE)
-    # make underlined text
-    underliner = re.compile("(?<![0-9a-zA-Z\x80-\x9f\xe0-\xfc*_/()]) _ (?![\s*_]) (.+?) (?<![\s*_]) _ (?![0-9a-zA-Z\x80-\x9f\xe0-\xfc*_/()])", re.VERBOSE)
     self.__current_markup_parser_group_id = group_id
     # perform parsing
-    if re.search(coder, message):
+    if re.search(self._regexp['coder'], message):
       # list indices: 0 - before [code], 1 - inside [code]...[/code], 2 - after [/code]
-      message_parts = re.split(coder, message, maxsplit=1)
+      message_parts = re.split(self._regexp['coder'], message, maxsplit=1)
       message = self.markup_parser(message_parts[0], group_id) + self.codeit(message_parts[1]) + self.markup_parser(message_parts[2], group_id)
     else:
-      message = linker.sub(self.linkit, message)
-      message = quoter.sub(self.quoteit, message)
-      message = spoiler.sub(self.spoilit, message)
-      message = bolder1.sub(self.boldit, message)
-      message = bolder2.sub(self.boldit, message)
-      message = italer.sub(self.italit, message)
-      message = striker.sub(self.strikeit, message)
-      message = underliner.sub(self.underlineit, message)
-      message = clicker.sub(self.clickit, message)
-
+      for regexp, handler in self._regexp['regular_markup']:
+        message = regexp.sub(handler, message)
     return message
+
+  def _compite_regexp(self):
+    self._regexp = dict()
+    # make code blocks
+    self._regexp['coder'] = re.compile('\[code](?!\[/code])(.+?)\[/code]', re.DOTALL)
+    # AHTUNG: consistency is important!
+    self._regexp['regular_markup'] = (
+        # make >>post_id links
+        (re.compile("(&gt;&gt;)([0-9a-f]{10})"), self.linkit),
+        # make >quotes
+        (re.compile("^&gt;(?!&gt;[0-9a-f]{10}).*", re.MULTILINE), self.quoteit),
+        # make spoilers
+        (re.compile("%% (?!\s) (.+?) (?!\s) %%", re.VERBOSE), self.spoilit),
+        # make <b>
+        (re.compile("(?<![0-9a-zA-Z\x80-\x9f\xe0-\xfc*_/()]) \*\* (?![\s*_]) (.+?) (?<![\s*_]) \*\* (?![0-9a-zA-Z\x80-\x9f\xe0-\xfc*_/()])", re.VERBOSE), self.boldit),
+        (re.compile("(?<![0-9a-zA-Z\x80-\x9f\xe0-\xfc*_/()]) __ (?![\s*_]) (.+?) (?<![\s*_]) __ (?![0-9a-zA-Z\x80-\x9f\xe0-\xfc*_/()])", re.VERBOSE), self.boldit),
+        # make <i>
+        (re.compile("(?<![0-9a-zA-Z\x80-\x9f\xe0-\xfc*_/()]) \* (?![\s*_]) (.+?) (?<![\s*_]) \* (?![0-9a-zA-Z\x80-\x9f\xe0-\xfc*_/()])", re.VERBOSE), self.italit),
+        # make <strike>
+        (re.compile("(?<![0-9a-zA-Z\x80-\x9f\xe0-\xfc*_/()\-]) -- (?![\s*_-]) (.+?) (?<![\s*_-]) -- (?![0-9a-zA-Z\x80-\x9f\xe0-\xfc*_/()\-])", re.VERBOSE), self.strikeit),
+        # make underlined text
+        (re.compile("(?<![0-9a-zA-Z\x80-\x9f\xe0-\xfc*_/()]) _ (?![\s*_]) (.+?) (?<![\s*_]) _ (?![0-9a-zA-Z\x80-\x9f\xe0-\xfc*_/()])", re.VERBOSE), self.underlineit),
+        # Make http:// urls in posts clickable
+        (re.compile("(http://|https://|ftp://|mailto:|news:|irc:|magnet:\?|maggot://)([^\s\[\]<>'\"]*)"), self.clickit)
+    )
 
   def html_minifer(self):
     old_size, new_size, count = 0, 0, 0
