@@ -252,7 +252,6 @@ class main(threading.Thread):
 
   def _load_templates(self):
     start_time = time.time()
-    # statics
     self.t_engine = dict()
     for x in ('stats_usage_row', 'latest_posts_row', 'stats_boards_row', 'news'):
       template_file = os.path.join(self.template_directory, '%s.tmpl' % x)
@@ -304,7 +303,7 @@ class main(threading.Thread):
     f.close()
     # template_engines
     f = codecs.open(os.path.join(self.template_directory, 'board.tmpl'), "r", "utf-8")
-    self.t_engine_board = string.Template(
+    self.t_engine['board'] = string.Template(
       string.Template(f.read()).safe_substitute(
         base_head=template_brick['base_head_prep'],
         base_pagelist=template_brick['base_pagelist'],
@@ -318,7 +317,7 @@ class main(threading.Thread):
       )
     )
     f.close()
-    self.t_engine_thread_single = string.Template(
+    self.t_engine['thread_single'] = string.Template(
       template_brick['thread_single'].safe_substitute(
         single_postform=string.Template(template_brick['base_postform']).safe_substitute(
           postform_action='reply',
@@ -326,20 +325,20 @@ class main(threading.Thread):
         )
       )
     )
-    self.t_engine_thread_single_closed = string.Template(
+    self.t_engine['thread_single_closed'] = string.Template(
       template_brick['thread_single'].safe_substitute(
         single_postform=template_brick['dummy_postform']
       )
     )
     f = codecs.open(os.path.join(self.template_directory, 'index.tmpl'), "r", "utf-8")
-    self.t_engine_index = string.Template(
+    self.t_engine['index'] = string.Template(
       string.Template(f.read()).safe_substitute(
         title=self.html_title
       )
     )
     f.close()
     f = codecs.open(os.path.join(self.template_directory, 'menu.tmpl'), "r", "utf-8")
-    self.t_engine_menu = string.Template(
+    self.t_engine['menu'] = string.Template(
       string.Template(f.read()).safe_substitute(
         title=self.html_title,
         stylesheet=css_headers,
@@ -349,10 +348,10 @@ class main(threading.Thread):
     )
     f.close()
     f = codecs.open(os.path.join(self.template_directory, 'menu_entry.tmpl'), "r", "utf-8")
-    self.t_engine_menu_entry = string.Template(f.read())
+    self.t_engine['menu_entry'] = string.Template(f.read())
     f.close()
     f = codecs.open(os.path.join(self.template_directory, 'overview.tmpl'), "r", "utf-8")
-    self.t_engine_overview = string.Template(
+    self.t_engine['overview'] = string.Template(
       string.Template(f.read()).safe_substitute(
         stats_usage=template_brick['stats_usage'],
         latest_posts=template_brick['latest_posts'],
@@ -365,45 +364,45 @@ class main(threading.Thread):
     )
     f.close()
     f = codecs.open(os.path.join(self.template_directory, 'board_threads.tmpl'), "r", "utf-8")
-    self.t_engine_board_threads = string.Template(f.read())
+    self.t_engine['board_threads'] = string.Template(f.read())
     f.close()
     f = codecs.open(os.path.join(self.template_directory, 'archive_threads.tmpl'), "r", "utf-8")
-    self.t_engine_archive_threads = string.Template(f.read())
+    self.t_engine['archive_threads'] = string.Template(f.read())
     f.close()
-    self.t_engine_message_root = string.Template(
+    self.t_engine['message_root'] = string.Template(
       string.Template(template_brick['message_root']).safe_substitute(
         root_quickreply=template_brick['message_root_quickreply'],
         click_action='Reply'
       )
     )
-    self.t_engine_message_root_closed = string.Template(
+    self.t_engine['message_root_closed'] = string.Template(
       string.Template(template_brick['message_root']).safe_substitute(
         root_quickreply='&#8470;  ${article_id}',
         click_action='View'
       )
     )
-    self.t_engine_message_pic = string.Template(
+    self.t_engine['message_pic'] = string.Template(
       string.Template(template_brick['message_child_pic']).safe_substitute(
         child_quickreply=template_brick['message_child_quickreply']
       )
     )
-    self.t_engine_message_pic_closed = string.Template(
+    self.t_engine['message_pic_closed'] = string.Template(
       string.Template(template_brick['message_child_pic']).safe_substitute(
         child_quickreply='${article_id}'
       )
     )
-    self.t_engine_message_nopic = string.Template(
+    self.t_engine['message_nopic'] = string.Template(
       string.Template(template_brick['message_child_nopic']).safe_substitute(
         child_quickreply=template_brick['message_child_quickreply']
       )
     )
-    self.t_engine_message_nopic_closed = string.Template(
+    self.t_engine['message_nopic_closed'] = string.Template(
       string.Template(template_brick['message_child_nopic']).safe_substitute(
         child_quickreply='${article_id}'
       )
     )
     f = codecs.open(os.path.join(self.template_directory, 'signed.tmpl'), "r", "utf-8")
-    self.t_engine_signed = string.Template(f.read())
+    self.t_engine['signed'] = string.Template(f.read())
     f.close()
     f = codecs.open(os.path.join(self.template_directory, 'help_page.tmpl'), "r", "utf-8")
     self.t_engine['help_page'] = string.Template(
@@ -1540,7 +1539,7 @@ class main(threading.Thread):
     board_name_unquoted, \
     basic_board['board'], \
     basic_board['board_description'] = self.get_board_data(group_id)
-    prepared_template = string.Template(self.t_engine_board.safe_substitute(basic_board))
+    prepared_template = string.Template(self.t_engine['board'].safe_substitute(basic_board))
     t_engine_mapper_board = dict()
     isgenerated = False
     for board, page_data in self._board_root_post_iter(board_data, group_id, pages, threads_per_page):
@@ -1550,7 +1549,7 @@ class main(threading.Thread):
       for root_row in page_data:
         root_message_id_hash = sha1(root_row[0]).hexdigest()
         threads.append(
-          self.t_engine_board_threads.substitute(
+          self.t_engine['board_threads'].substitute(
             self.get_base_thread(root_row, root_message_id_hash, group_id, 4)
           )
         )
@@ -1591,10 +1590,10 @@ class main(threading.Thread):
     if isclosed:
       root_data['close_action'] = 'open'
       root_data['thread_status'] += '[closed]'
-      return self.t_engine_message_root_closed.substitute(root_data)
+      return self.t_engine['message_root_closed'].substitute(root_data)
     else:
       root_data['close_action'] = 'close'
-      return self.t_engine_message_root.substitute(root_data)
+      return self.t_engine['message_root'].substitute(root_data)
 
   def get_childs_posts(self, parent, group_id, father, father_pubkey, child_count, single, isclosed):
     childs = list()
@@ -1602,16 +1601,9 @@ class main(threading.Thread):
     for child_row in self.sqlite.execute('SELECT * FROM (SELECT article_uid, sender, subject, sent, message, imagename, imagelink, thumblink, public_key \
         FROM articles WHERE parent = ? AND parent != article_uid AND group_id = ? ORDER BY sent DESC LIMIT ?) ORDER BY sent ASC', (parent, group_id, child_count)).fetchall():
       childs_message = self.get_preparse_post(child_row, sha1(child_row[0]).hexdigest(), group_id, 20, 1500, 0, father, father_pubkey, single)
-      if child_row[6] != '':
-        if isclosed:
-          childs.append(self.t_engine_message_pic_closed.substitute(childs_message))
-        else:
-          childs.append(self.t_engine_message_pic.substitute(childs_message))
-      else:
-        if isclosed:
-          childs.append(self.t_engine_message_nopic_closed.substitute(childs_message))
-        else:
-          childs.append(self.t_engine_message_nopic.substitute(childs_message))
+      nopic = '' if child_row[6] != '' else 'no'
+      closed = '' if not isclosed else '_closed'
+      childs.append(self.t_engine['message_'+ nopic +'pic'+ closed].substitute(childs_message))
     return childs
 
   def generate_pagelist(self, count, current, board_name_unquoted, archive_link=False):
@@ -1643,7 +1635,7 @@ class main(threading.Thread):
     else:
       imagelink = thumblink = self.thumbnail_files['no_file']
     if data[8] != '':
-      parsed_data['signed'] = self.t_engine_signed.substitute(
+      parsed_data['signed'] = self.t_engine['signed'].substitute(
         articlehash=message_id_hash[:10],
         pubkey=data[8],
         pubkey_short=self.generate_pubkey_short_utf_8(data[8])
@@ -1725,14 +1717,14 @@ class main(threading.Thread):
     board_name_unquoted, \
     basic_board['board'], \
     basic_board['board_description'] = self.get_board_data(group_id)
-    prepared_template = string.Template(self.t_engine_board.safe_substitute(basic_board))
+    prepared_template = string.Template(self.t_engine['board'].safe_substitute(basic_board))
     t_engine_mapper_board = dict()
     for board, page_data in self._board_root_post_iter(board_data, group_id, pages, threads_per_page, 'page_stamp_archiv'):
       threads = list()
       self.log(self.logger.INFO, 'generating %s/%s-archive-%s.html' % (self.output_directory, board_name_unquoted, board))
       for root_row in page_data:
         threads.append(
-          self.t_engine_archive_threads.substitute(
+          self.t_engine['archive_threads'].substitute(
             self.get_base_thread(root_row, '', group_id, child_count=0)
           )
         )
@@ -1760,7 +1752,7 @@ class main(threading.Thread):
         FROM articles WHERE group_id = ? AND (parent = "" OR parent = article_uid) AND last_update > ? ORDER BY sticky DESC, last_update DESC', (group_id, timestamp)).fetchall():
       root_message_id_hash = sha1(root_row[0]).hexdigest()
       threads.append(
-        self.t_engine_board_threads.substitute(
+        self.t_engine['board_threads'].substitute(
           self.get_base_thread(root_row, root_message_id_hash, group_id, 4)
         )
       )
@@ -1769,7 +1761,7 @@ class main(threading.Thread):
     t_engine_mapper_board_recent['pagelist'] = ''
 
     f = codecs.open(os.path.join(self.output_directory, '{0}-recent.html'.format(board_name_unquoted)), 'w', 'UTF-8')
-    f.write(self.t_engine_board.substitute(t_engine_mapper_board_recent))
+    f.write(self.t_engine['board'].substitute(t_engine_mapper_board_recent))
     f.close()
 
   def frontend(self, uid):
@@ -1817,7 +1809,7 @@ class main(threading.Thread):
   def create_thread_page(self, root_row, thread_path, max_child_view, root_message_id_hash, group_id):
     self.log(self.logger.INFO, 'generating %s' % (thread_path,))
     t_engine_mappings_thread_single = dict()
-    t_engine_mappings_thread_single['thread_single'] = self.t_engine_board_threads.substitute(self.get_base_thread(root_row, root_message_id_hash, group_id, max_child_view, True))
+    t_engine_mappings_thread_single['thread_single'] = self.t_engine['board_threads'].substitute(self.get_base_thread(root_row, root_message_id_hash, group_id, max_child_view, True))
     t_engine_mappings_thread_single['boardlist'] = self.get_board_list()
     t_engine_mappings_thread_single['full_board'], \
     board_name_unquoted, \
@@ -1829,15 +1821,15 @@ class main(threading.Thread):
 
     f = codecs.open(thread_path, 'w', 'UTF-8')
     if root_row[10] == 0:
-      f.write(self.t_engine_thread_single.substitute(t_engine_mappings_thread_single))
+      f.write(self.t_engine['thread_single'].substitute(t_engine_mappings_thread_single))
     else:
-      f.write(self.t_engine_thread_single_closed.substitute(t_engine_mappings_thread_single))
+      f.write(self.t_engine['thread_single_closed'].substitute(t_engine_mappings_thread_single))
     f.close()
 
   def generate_index(self):
     self.log(self.logger.INFO, 'generating %s/index.html' % self.output_directory)
     f = codecs.open(os.path.join(self.output_directory, 'index.html'), 'w', 'UTF-8')
-    f.write(self.t_engine_index.substitute())
+    f.write(self.t_engine['index'].substitute())
     f.close()
 
   def generate_menu(self):
@@ -1853,10 +1845,10 @@ class main(threading.Thread):
       menu_entry['group_link'] = group_row[3] if self.use_unsecure_aliases and group_row[3] != '' else '%s-1.html' % menu_entry['group_name']
       menu_entry['group_name_encoded'] = group_row[2] if group_row[2] != '' else self.basicHTMLencode(menu_entry['group_name'])
       menu_entry['postcount'] = self.sqlite.execute('SELECT count(article_uid) FROM articles WHERE group_id = ? AND sent > ?', (group_row[1], timestamp)).fetchone()[0]
-      menu_entries.append(self.t_engine_menu_entry.substitute(menu_entry))
+      menu_entries.append(self.t_engine['menu_entry'].substitute(menu_entry))
 
     f = codecs.open(os.path.join(self.output_directory, 'menu.html'), 'w', 'UTF-8')
-    f.write(self.t_engine_menu.substitute(menu_entries='\n'.join(menu_entries)))
+    f.write(self.t_engine['menu'].substitute(menu_entries='\n'.join(menu_entries)))
     f.close()
 
   def check_board_flags(self, group_id, *args):
@@ -1995,7 +1987,7 @@ class main(threading.Thread):
       stats.append(self.t_engine['stats_boards_row'].substitute({'postcount': row[0], 'board': board}))
     t_engine_mappings_overview['stats_boards_rows'] = '\n'.join(stats)
     f = codecs.open(os.path.join(self.output_directory, 'overview.html'), 'w', 'UTF-8')
-    f.write(self.t_engine_overview.substitute(t_engine_mappings_overview))
+    f.write(self.t_engine['overview'].substitute(t_engine_mappings_overview))
     f.close()
     self.generate_help(t_engine_mappings_overview['news'])
 
