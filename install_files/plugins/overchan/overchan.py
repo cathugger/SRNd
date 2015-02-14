@@ -92,68 +92,36 @@ class main(threading.Thread):
     if 'user.css' not in self.css_files and len(self.css_files) == 1:
       self.css_files.append('user.css')
 
-    self.config['site_url'] = 'my-address.i2p'
-    if 'site_url' in args:
-      self.config['site_url'] = args['site_url']
+    self.config['site_url'] = args.get('site_url', 'my-address.i2p')
 
-    self.config['local_dest'] = 'i.did.not.read.the.config'
-    if 'local_dest' in args:
-      self.config['local_dest'] = args['local_dest']
+    self.config['local_dest'] = args.get('local_dest', 'i.did.not.read.the.config')
 
-    self.regenerate_html_on_startup = True
-    if 'generate_all' in args:
-      if args['generate_all'].lower() in ('false', 'no'):
-        self.regenerate_html_on_startup = False
+    self.regenerate_html_on_startup = args.get('generate_all', 'true').lower() not in ('false', 'no')
 
-    self.threads_per_page = 10
-    if 'threads_per_page' in args:
-      try:    self.threads_per_page = int(args['threads_per_page'])
-      except: pass
+    try:    self.threads_per_page = int(args.get('threads_per_page', '10'))
+    except: self.threads_per_page = 10
 
-    self.pages_per_board = 10
-    if 'pages_per_board' in args:
-      try:    self.pages_per_board = int(args['pages_per_board'])
-      except: pass
+    try:    self.pages_per_board = int(args.get('pages_per_board', '10'))
+    except: self.pages_per_board = 10
 
-    self.enable_archive = True
-    if 'enable_archive' in args:
-      try:    self.enable_archive = bool(args['enable_archive'])
-      except: pass
+    self.enable_archive = args.get('enable_archive', 'true').lower() == 'true'
 
-    self.enable_recent = True
-    if 'enable_recent' in args:
-      try:    self.enable_recent = bool(args['enable_recent'])
-      except: pass
+    self.enable_recent = args.get('enable_recent', 'true').lower() == 'true'
 
-    self.archive_threads_per_page = 500
-    if 'archive_threads_per_page' in args:
-      try:    self.archive_threads_per_page = int(args['archive_threads_per_page'])
-      except: pass
+    try:    self.archive_threads_per_page = int(args.get('archive_threads_per_page', '500'))
+    except: self.archive_threads_per_page = 500
 
-    self.archive_pages_per_board = 20
-    if 'archive_pages_per_board' in args:
-      try:    self.archive_pages_per_board = int(args['archive_pages_per_board'])
-      except: pass
+    try:    self.archive_pages_per_board = int(args.get('archive_pages_per_board', '20'))
+    except: self.archive_pages_per_board = 20
 
-    self.sqlite_synchronous = True
-    if 'sqlite_synchronous' in args:
-      try:   self.sqlite_synchronous = bool(args['sqlite_synchronous'])
-      except: pass
+    self.sqlite_synchronous = args.get('sqlite_synchronous', 'true').lower() == 'true'
 
-    self.sync_on_startup = False
-    if 'sync_on_startup' in args:
-      if args['sync_on_startup'].lower() == 'true':
-        self.sync_on_startup = True
+    self.sync_on_startup = args.get('sync_on_startup', 'false').lower() == 'true'
 
-    self.fake_id = False
-    if 'fake_id' in args:
-      if args['fake_id'].lower() == 'true':
-        self.fake_id = True
+    self.fake_id = args.get('fake_id', 'false').lower() == 'true'
 
-    self.bump_limit = 0
-    if 'bump_limit' in args:
-      try:    self.bump_limit = int(args['bump_limit'])
-      except: pass
+    try:    self.bump_limit = int(args.get('bump_limit', '0'))
+    except: self.bump_limit = 0
 
     self.thumbnail_files = dict()
     # read filename from config or use default
@@ -161,24 +129,15 @@ class main(threading.Thread):
       ('video', 'webm_file', 'video.png'), ('censored', 'censored_file', 'censored.png'), ('archive', 'archive_file', 'archive.png'), ('torrent', 'torrent_file', 'torrent.png'),):
       self.thumbnail_files[internal] = args.get(external, by_default)
 
-    self.censor_css = 'censor.css'
-    if 'censor_css' in args:
-      self.censor_css = args['censor_css']
+    self.censor_css = args.get('censor_css', 'censor.css')
 
-    self.use_unsecure_aliases = False
-    if 'use_unsecure_aliases' in args:
-      if args['use_unsecure_aliases'].lower() == 'true':
-        self.use_unsecure_aliases = True
+    self.use_unsecure_aliases = args.get('use_unsecure_aliases', 'false').lower() == 'true'
 
-    self.create_best_video_thumbnail = False
-    if 'create_best_video_thumbnail' in args:
-      if args['create_best_video_thumbnail'].lower() == 'true':
-        self.create_best_video_thumbnail = True
+    self.create_best_video_thumbnail = args.get('create_best_video_thumbnail', 'false').lower() == 'true'
 
-    self.minify_css = False
-    if 'minify_css' in args:
-      if args['minify_css'].lower() == 'true':
-        self.minify_css = True
+    self.minify_css = args.get('minify_css', 'false').lower() == 'true'
+
+    self.minify_html = args.get('minify_html', 'false').lower() == 'true'
 
     self.utc_time_offset = 0.0
     if 'utc_time_offset' in args:
@@ -189,9 +148,7 @@ class main(threading.Thread):
       self.utc_time_offset = 0.0
     self.utc_time_offset = int(self.utc_time_offset * 3600)
 
-    tz_name = 'UTC'
-    if 'tz_name' in args:
-      tz_name = args['tz_name'].replace('%', '')
+    tz_name = args.get('tz_name', 'UTC').replace('%', '')
     if tz_name != '': tz_name = ' ' + tz_name
     self.datetime_format = '%d.%m.%Y (%a) %H:%M' + tz_name
 
@@ -413,6 +370,8 @@ class main(threading.Thread):
       )
     )
     f.close()
+    if self.minify_html:
+      self.html_minifer()
     self.log(self.logger.INFO, 'Templates loaded at {} seconds'.format(int(time.time() - start_time)))
 
   def init_plugin(self):
@@ -1082,6 +1041,25 @@ class main(threading.Thread):
       message = clicker.sub(self.clickit, message)
 
     return message
+
+  def html_minifer(self):
+    old_size, new_size, count = 0, 0, 0
+    ignored_templates = ('help_page',)
+    for target in self.t_engine:
+      if target not in ignored_templates:
+        count += 1
+        html = self.t_engine[target].safe_substitute()
+        old_size += len(html)
+        html = self._html_minifer(html)
+        new_size += len(html)
+        self.t_engine[target] = string.Template(html)
+    diff = -int(float(old_size-new_size)/old_size * 100) if old_size > 0 else 0
+    self.log(self.logger.INFO, 'Minify {} html templates: old size={}, new size={}, difference={}%'.format(count, old_size, new_size, diff))
+
+  def _html_minifer(self, html):
+    # TODO: Improve this
+    html = re.sub(r'\s+', ' ', html)
+    return html
 
   def css_minifer(self, css):
     """
