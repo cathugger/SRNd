@@ -139,6 +139,8 @@ class main(threading.Thread):
 
     self.minify_html = args.get('minify_html', 'false').lower() == 'true'
 
+    self.replace_root_nope = args.get('replace_root_nope', 'false').lower() == 'true'
+
     self.utc_time_offset = 0.0
     if 'utc_time_offset' in args:
       try:    self.utc_time_offset = float(args['utc_time_offset'])
@@ -1471,6 +1473,12 @@ class main(threading.Thread):
           # attach has been censored and is now being restored. Restore all thumblink
           self.log(self.logger.INFO, 'Attach %s restored. Restore %s thumblinks for this attach' % (image_name, censored_count))
           self.sqlite.execute('UPDATE articles SET thumblink = ? WHERE imagelink = ?', (thumb_name, image_name))
+
+    if image_name == '' and thumb_name == '' and self.replace_root_nope and (parent == '' or parent == message_id) and len(group_ids) > 0:
+      # Get random image for root post
+      result = self.sqlite.execute('SELECT imagelink, thumblink, imagename FROM articles WHERE group_id = ? AND length(thumblink) > 40 ORDER BY RANDOM() LIMIT 1', (group_ids[0],)).fetchone()
+      if result:
+        image_name, thumb_name, image_name_original = result
 
     for group_id in group_ids:
       self.sqlite.execute('INSERT INTO articles(article_uid, group_id, sender, email, subject, sent, parent, message, imagename, imagelink, thumblink, last_update, public_key, received) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)', (message_id, group_id, sender.decode('UTF-8'), email.decode('UTF-8'), subject.decode('UTF-8'), sent, parent, message.decode('UTF-8'), image_name_original.decode('UTF-8'), image_name, thumb_name, last_update, public_key, int(time.time())))
