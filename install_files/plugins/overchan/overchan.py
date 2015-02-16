@@ -1311,8 +1311,13 @@ class main(threading.Thread):
         local_mime_maintype, local_mime_subtype = local_mime_type.split('/', 2)
         image_mime_types = mimetypes.guess_all_extensions(local_mime_type)
         image_name = imagehash + image_extension
+        # empty attachment
+        if imagehash == 'da39a3ee5e6b4b0d3255bfef95601890afd80709':
+          thumb_name, image_name = 'invalid', 'invalid'
+          del file_data
+          continue
         # Bad file type, unknown or deny type found
-        if local_mime_type == '/' or len((set(image_extension) | set(image_mime_types)) & set(deny_extensions)) > 0:
+        elif local_mime_type == '/' or len((set(image_extension) | set(image_mime_types)) & set(deny_extensions)) > 0:
           self.log(self.logger.WARNING, 'Found bad attach %s in %s. Mimetype local=%s, remote=%s' % (image_name_original, message_id, local_mime_type, part.get_content_type()))
           image_name_original = 'fake.and.gay.txt'
           thumb_name = 'document'
