@@ -851,7 +851,7 @@ class main(threading.Thread):
         ret = self.queue.get(block=True, timeout=1)
         if ret[0] == "article":
           message_id = ret[1]
-          message_thumblink = self.sqlite.execute('SELECT thumblink FROM articles WHERE article_uid = ? AND imagelink != "invalid"', (message_id,)).fetchone()
+          message_thumblink = self.sqlite.execute('SELECT thumblink FROM articles WHERE article_uid = ?', (message_id,)).fetchone()
           if message_thumblink and (message_thumblink[0] != 'censored' or not os.path.exists(os.path.join("articles", "restored", message_id))):
             self.log(self.logger.DEBUG, '%s already in database..' % message_id)
             continue
