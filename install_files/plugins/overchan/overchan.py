@@ -968,47 +968,56 @@ class main(threading.Thread):
     return u'<a onclick="return highlight(\'{0}\');" href="thread-{1}.html#{0}">{2}{3}{4}</a>'.format(rematch.group(2), parent, rematch.group(1), article_name, another_board)
 
   def quoteit(self, rematch):
-    return '<span class="quote">%s</span>' % rematch.group(0).rstrip("\r")
+    return u'<span class="quote">%s</span>' % rematch.group(0).rstrip("\r")
 
   def clickit(self, rematch):
-    return '<a href="%s%s">%s%s</a>' % (rematch.group(1), rematch.group(2), rematch.group(1), rematch.group(2))
+    return u'<a href="%s%s">%s%s</a>' % (rematch.group(1), rematch.group(2), rematch.group(1), rematch.group(2))
 
   def codeit(self, text):
-    return '<div class="code">%s</div>' % text
+    return u'<div class="code">%s</div>' % text
+
+  def sjisit (self, text):
+    return u'<div class="aa">{}</div>'.format(text)
 
   def spoilit(self, rematch):
-    return '<span class="spoiler">%s</span>' % rematch.group(1)
+    return u'<span class="spoiler">%s</span>' % rematch.group(1)
 
   def boldit(self, rematch):
-    return '<b>%s</b>' % rematch.group(1)
+    return u'<b>%s</b>' % rematch.group(1)
 
   def italit(self, rematch):
-    return '<i>%s</i>' % rematch.group(1)
+    return u'<i>%s</i>' % rematch.group(1)
 
   def strikeit(self, rematch):
-    return '<strike>%s</strike>' % rematch.group(1)
+    return u'<strike>%s</strike>' % rematch.group(1)
 
   def underlineit(self, rematch):
-    return '<span style="border-bottom: 1px solid">%s</span>' % rematch.group(1)
+    return u'<span style="border-bottom: 1px solid">%s</span>' % rematch.group(1)
 
   def markup_parser(self, message, group_id=None):
     self.__current_markup_parser_group_id = group_id
     # perform parsing
-    if re.search(self._regexp['coder'], message):
-      # list indices: 0 - before [code], 1 - inside [code]...[/code], 2 - after [/code]
-      message_parts = re.split(self._regexp['coder'], message, maxsplit=1)
-      message = self.markup_parser(message_parts[0], group_id) + self.codeit(message_parts[1]) + self.markup_parser(message_parts[2], group_id)
-    else:
-      for regexp, handler in self._regexp['regular_markup']:
-        message = regexp.sub(handler, message)
+    for regexp, handler in self._regexp['unbreakable_markup']:
+      if re.search(regexp, message):
+        # list indices: 0 - before [code], 1 - inside [code]...[/code], 2 - after [/code]
+        message_parts = re.split(regexp, message, maxsplit=1)
+        message = self.markup_parser(message_parts[0], group_id) + handler(message_parts[1]) + self.markup_parser(message_parts[2], group_id)
+        return message
+    for regexp, handler in self._regexp['regular_markup']:
+      message = regexp.sub(handler, message)
     return message
 
   def _compite_regexp(self):
     self._regexp = dict()
-    # make code blocks
-    self._regexp['coder'] = re.compile('\[code](?!\[/code])(.+?)\[/code]', re.DOTALL)
     # AHTUNG: consistency is important!
+    self._regexp['unbreakable_markup'] = (
+        # make code blocks
+        (re.compile('\[code](?!\[/code])(.+?)\[/code]', re.DOTALL), self.codeit),
+        # make aa blocks
+        (re.compile('\[aa](?!\[/aa])(.+?)\[/aa]', re.DOTALL), self.sjisit)
+    )
     self._regexp['regular_markup'] = (
+        # make [aa][/aa]
         # make >>post_id links
         (re.compile("(&gt;&gt;)([0-9a-f]{10})"), self.linkit),
         # make >quotes

@@ -369,3 +369,7 @@
     white-space: normal;
     padding-left: 10px;
   }
+  .aa {
+    font-family: "IPAMonaPGothic","Monapo","Mona","MS PGothic";
+    overflow: auto;
+  }
