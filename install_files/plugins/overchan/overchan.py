@@ -974,10 +974,10 @@ class main(threading.Thread):
     return u'<a href="%s%s">%s%s</a>' % (rematch.group(1), rematch.group(2), rematch.group(1), rematch.group(2))
 
   def codeit(self, text):
-    return u'<div class="code">%s</div>' % text
+    return u'<pre class="code">{}</pre>'.format(text)
 
   def sjisit (self, text):
-    return u'<div class="aa">{}</div>'.format(text)
+    return u'<pre class="aa">{}</pre>'.format(text)
 
   def spoilit(self, rematch):
     return u'<span class="spoiler">%s</span>' % rematch.group(1)

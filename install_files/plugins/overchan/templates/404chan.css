@@ -225,8 +225,9 @@
     font-family: monospace;
     font-size: 9pt;
     overflow: auto;
-    white-space: pre;
     width: 80%;
+    display: block;
+    margin: 0;
   }
   .datatable {
     border: 1px solid #3B3B3B;
@@ -372,4 +373,6 @@
   .aa {
     font-family: "IPAMonaPGothic","Monapo","Mona","MS PGothic";
     overflow: auto;
+    display: block;
+    margin: 0;
   }
