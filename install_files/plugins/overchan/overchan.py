@@ -37,7 +37,7 @@ except ImportError as cv2_load_result:
 class main(threading.Thread):
 
   def log(self, loglevel, message):
-    if loglevel >= self.loglevel:
+    if loglevel >= self.config.get('debug', 2):
       self.logger.log(self.name, message, loglevel)
 
   def die(self, message):
@@ -48,7 +48,6 @@ class main(threading.Thread):
       exit(1)
     else:
       raise Exception(message)
-      return
 
   def __init__(self, thread_name, logger, args):
     threading.Thread.__init__(self)
@@ -56,111 +55,25 @@ class main(threading.Thread):
     self.should_terminate = False
     self.logger = logger
 
-    # TODO: move sleep stuff to config table
-    self.sleep_threshold = 10
-    self.sleep_time = 0.02
     self.config = dict()
+    self._init_config(args)
 
-    error = ''
-    for arg in ('template_directory', 'output_directory', 'database_directory', 'temp_directory', 'no_file', 'invalid_file', 'css_file', 'title', 'audio_file'):
-      if not arg in args:
-        error += "%s not in arguments\n" % arg
-    if error != '':
-      error = error.rstrip("\n")
-      self.die(error)
-    self.pages = 15
-    self.output_directory = args['output_directory']
-    self.database_directory = args['database_directory']
-    self.template_directory = args['template_directory']
-    self.temp_directory = args['temp_directory']
-    self.html_title = args['title']
-    if not os.path.exists(self.template_directory):
-      self.die('error: template directory \'%s\' does not exist' % self.template_directory)
-    self.loglevel = self.logger.INFO
-    if 'debug' in args:
-      try:
-        self.loglevel = int(args['debug'])
-        if self.loglevel < 0 or self.loglevel > 5:
-          self.loglevel = 2
-          self.log(self.logger.WARNING, 'invalid value for debug, using default debug level of 2')
-      except:
-        self.loglevel = 2
-        self.log(self.logger.WARNING, 'invalid value for debug, using default debug level of 2')
+    error = ['{} not in arguments'.format(arg) for arg in ('template_directory', 'output_directory', 'database_directory', 'temp_directory') if not arg in self.config]
+    if len(error) > 0:
+      self.die('\n'.join(error))
 
-    self.css_files = args.get('css_file', 'krane.css').split(';')
-    # for compatibility
-    if 'user.css' not in self.css_files and len(self.css_files) == 1:
-      self.css_files.append('user.css')
+    if not os.path.exists(self.config['template_directory']):
+      self.die('error: template directory \'{}\' does not exist'.format(self.config['template_directory']))
 
-    self.config['site_url'] = args.get('site_url', 'my-address.i2p')
-
-    self.config['local_dest'] = args.get('local_dest', 'i.did.not.read.the.config')
-
-    self.regenerate_html_on_startup = args.get('generate_all', 'true').lower() not in ('false', 'no')
-
-    try:    self.threads_per_page = int(args.get('threads_per_page', '10'))
-    except: self.threads_per_page = 10
-
-    try:    self.pages_per_board = int(args.get('pages_per_board', '10'))
-    except: self.pages_per_board = 10
-
-    self.enable_archive = args.get('enable_archive', 'true').lower() == 'true'
-
-    self.enable_recent = args.get('enable_recent', 'true').lower() == 'true'
-
-    try:    self.archive_threads_per_page = int(args.get('archive_threads_per_page', '500'))
-    except: self.archive_threads_per_page = 500
-
-    try:    self.archive_pages_per_board = int(args.get('archive_pages_per_board', '20'))
-    except: self.archive_pages_per_board = 20
-
-    self.sqlite_synchronous = args.get('sqlite_synchronous', 'true').lower() == 'true'
-
-    self.sync_on_startup = args.get('sync_on_startup', 'false').lower() == 'true'
-
-    self.fake_id = args.get('fake_id', 'false').lower() == 'true'
-
-    try:    self.bump_limit = int(args.get('bump_limit', '0'))
-    except: self.bump_limit = 0
-
-    self.thumbnail_files = dict()
-    # read filename from config or use default
-    for internal, external, by_default in (('no_file', 'no_file', 'nope.png'), ('document', 'document_file', 'document.png'), ('invalid', 'invalid_file', 'invalid.png'), ('audio', 'audio_file', 'audio.png'), \
-      ('video', 'webm_file', 'video.png'), ('censored', 'censored_file', 'censored.png'), ('archive', 'archive_file', 'archive.png'), ('torrent', 'torrent_file', 'torrent.png'),):
-      self.thumbnail_files[internal] = args.get(external, by_default)
-
-    self.censor_css = args.get('censor_css', 'censor.css')
-
-    self.use_unsecure_aliases = args.get('use_unsecure_aliases', 'false').lower() == 'true'
-
-    self.create_best_video_thumbnail = args.get('create_best_video_thumbnail', 'false').lower() == 'true'
-
-    self.minify_css = args.get('minify_css', 'false').lower() == 'true'
-
-    self.minify_html = args.get('minify_html', 'false').lower() == 'true'
-
-    self.replace_root_nope = args.get('replace_root_nope', 'false').lower() == 'true'
-
-    self.utc_time_offset = 0.0
-    if 'utc_time_offset' in args:
-      try:    self.utc_time_offset = float(args['utc_time_offset'])
-      except: pass
-    if not (-15 < self.utc_time_offset < 15):
-      self.log(self.logger.ERROR, 'Abnormal UTC offset %s, use UTC+0' % (self.utc_time_offset,))
-      self.utc_time_offset = 0.0
-    self.utc_time_offset = int(self.utc_time_offset * 3600)
-
-    tz_name = args.get('tz_name', 'UTC').replace('%', '')
-    if tz_name != '': tz_name = ' ' + tz_name
-    self.datetime_format = '%d.%m.%Y (%a) %H:%M' + tz_name
+    error = ['{} file not found in {}'.format(x, os.path.join(self.config['template_directory'], x)) for x in self.config['csss'] + self.config['thumbs'].values() \
+             if not os.path.exists(os.path.join(self.config['template_directory'], x))]
+    if len(error) > 0:
+      self.die('\n'.join(error))
 
     if cv2_load_result != 'true':
-      self.log(self.logger.ERROR, '%s. Thumbnail for video will not be created. See http://docs.opencv.org/' % cv2_load_result)
+      self.log(self.logger.ERROR, '{}. Thumbnail for video will not be created. See http://docs.opencv.org/'.format(cv2_load_result))
 
-    for x in (self.css_files + [self.thumbnail_files[target] for target in self.thumbnail_files]):
-      cheking_file = os.path.join(self.template_directory, x)
-      if not os.path.exists(cheking_file):
-        self.die('{0} file not found in {1}'.format(x, cheking_file))
+    self.sync_on_startup = self.config['sync_on_startup']
 
     self._compite_regexp()
 
@@ -183,17 +96,11 @@ class main(threading.Thread):
 
     if __name__ == '__main__':
       self._load_templates()
-      i = open(os.path.join(self.template_directory, self.css_files[0]), 'r')
-      o = open(os.path.join(self.output_directory, 'styles.css'), 'w')
+      i = open(os.path.join(self.config['template_directory'], self.config['csss'][0]), 'r')
+      o = open(os.path.join(self.config['output_directory'], 'styles.css'), 'w')
       o.write(i.read())
       o.close()
       i.close()
-      if not 'watch_dir' in args:
-        self.log(self.logger.CRITICAL, 'watch_dir not in args')
-        self.log(self.logger.CRITICAL, 'terminating..')
-        exit(1)
-      else:
-        self.watch_dir = args['watch_dir']
       if not self.init_standalone():
         exit(1)
     else:
@@ -201,21 +108,97 @@ class main(threading.Thread):
         self.should_terminate = True
         return
 
+  def _init_config(self, args, add_default=True):
+    cfg_new = dict()
+    cfg_def = {
+               'sleep_threshold': 10,
+               'sleep_time': 0.02,
+               'debug': self.logger.INFO,
+               'title': 'i.did.not.read.the.config',
+               'site_url': 'my-address.i2p',
+               'local_dest': 'i.did.not.read.the.config',
+               'css_file': 'krane.css;user.css',
+               'generate_all': True,
+               'threads_per_page': 10,
+               'pages_per_board': 10,
+               'enable_archive': True,
+               'enable_recent': True,
+               'archive_threads_per_page': 500,
+               'archive_pages_per_board': 20,
+               'sqlite_synchronous': True,
+               'sync_on_startup': True,
+               'fake_id': False,
+               'bump_limit' : 0,
+               'censor_css': 'censor.css',
+               'use_unsecure_aliases': False,
+               'create_best_video_thumbnail': False,
+               'minify_css': False,
+               'minify_html': False,
+               'replace_root_nope': False,
+               'utc_time_offset': 0.0,
+               'tz_name': 'UTC'
+    }
+    # (to self.config['thumbs'], from args, default)
+    thumbnail_files = (('no_file', 'no_file', 'nope.png'), ('document', 'document_file', 'document.png'), ('invalid', 'invalid_file', 'invalid.png'), ('audio', 'audio_file', 'audio.png'), \
+                       ('video', 'webm_file', 'video.png'), ('censored', 'censored_file', 'censored.png'), ('archive', 'archive_file', 'archive.png'), ('torrent', 'torrent_file', 'torrent.png'),)
+    cfg_def.update(dict([[x[1], x[2]] for x in thumbnail_files]))
+    for target in args:
+      if target in cfg_def:
+        try:
+          if type(cfg_def[target]) is bool and args[target].lower() in ('false', 'no', '0', 'disable'):
+            cfg_new[target] = False
+          else:
+            cfg_new[target] = type(cfg_def[target])(args[target])
+        except:
+          if add_default:
+            self.log(self.logger.WARNING, 'Config error: #start_param {} {}, need {}. Use default value: {} '.format(target, type(args[target]), type(cfg_def[target]), cfg_def[target]))
+          else:
+            self.log(self.logger.WARNING, 'Config error: #start_param {} {}, need {}. Ignored'.format(target, type(args[target]), type(cfg_def[target])))
+      else:
+        cfg_new[target] = args[target]
+    if add_default:
+      cfg_new = dict(cfg_def.items() + cfg_new.items())
+
+    # move thumbnails in cfg_new['thumbs']
+    cfg_new['thumbs'] = dict([[target[0], cfg_new.pop(target[1])] for target in thumbnail_files if target[1] in cfg_new])
+    if len(cfg_new['thumbs']) == 0 and not add_default:
+      del cfg_new['thumbs']
+
+    if 'utc_time_offset' in cfg_new:
+      if not -15 < cfg_new['utc_time_offset'] < 15:
+        self.log(self.logger.ERROR, 'Abnormal UTC offset {}, use 0.0'.format(cfg_new['utc_time_offset']))
+        cfg_new['utc_time_offset'] = 0.0
+      cfg_new['utc_time_offset'] = int(cfg_new['utc_time_offset'] * 3600)
+
+    if 'tz_name' in cfg_new:
+      cfg_new['datetime_format'] = '%d.%m.%Y (%a) %H:%M'
+      if cfg_new['tz_name'] not in ('', '%'):
+        cfg_new['datetime_format'] += ' ' + cfg_new['tz_name']
+      del cfg_new['tz_name']
+
+    if 'debug' in cfg_new and cfg_new['debug'] < 0 or cfg_new['debug'] > 5:
+      cfg_new['debug'] = 2
+      self.log(self.logger.WARNING, 'invalid value for debug, using default debug level of 2')
+
+    if 'css_file' in cfg_new:
+      cfg_new['csss'] = cfg_new.pop('css_file').split(';')
+      # for compatibility
+      if 'user.css' not in cfg_new['csss'] and len(cfg_new['csss']) == 1:
+        cfg_new['csss'].append('user.css')
+
+    self.config.update(cfg_new)
+
   def _css_headers_construct(self):
-    with codecs.open(os.path.join(self.template_directory, 'base_css_head.tmpl'), "r", "utf-8") as f:
+    with codecs.open(os.path.join(self.config['template_directory'], 'base_css_head.tmpl'), "r", "utf-8") as f:
       css_header = string.Template(f.read().rstrip())
-    css_list = list()
-    for css in self.css_files:
-      if os.path.isfile(os.path.join(self.output_directory, css)) and os.stat(os.path.join(self.output_directory, css)).st_size > 0:
-        css_list.append(css_header.substitute(stylesheet=css))
-    del self.css_files
-    return '\n'.join(css_list)
+    return '\n'.join([css_header.substitute(stylesheet=css) for css in self.config['csss'] \
+                      if os.path.isfile(os.path.join(self.config['output_directory'], css)) and os.stat(os.path.join(self.config['output_directory'], css)).st_size > 0])
 
   def _load_templates(self):
     start_time = time.time()
     self.t_engine = dict()
     for x in ('stats_usage_row', 'latest_posts_row', 'stats_boards_row', 'news'):
-      template_file = os.path.join(self.template_directory, '%s.tmpl' % x)
+      template_file = os.path.join(self.config['template_directory'], '%s.tmpl' % x)
       try:
         f = codecs.open(template_file, "r", "utf-8")
         self.t_engine[x] = string.Template(f.read())
@@ -227,7 +210,7 @@ class main(threading.Thread):
     template_brick = dict()
     for x in ('help', 'base_pagelist', 'base_postform', 'base_footer', 'dummy_postform', 'message_child_quickreply', 'message_root_quickreply', 'stats_usage', \
       'latest_posts', 'stats_boards', 'base_help', 'base_js_head'):
-      template_file = os.path.join(self.template_directory, '%s.tmpl' % x)
+      template_file = os.path.join(self.config['template_directory'], '%s.tmpl' % x)
       try:
         f = codecs.open(template_file, "r", "utf-8")
         template_brick[x] = f.read()
@@ -238,24 +221,24 @@ class main(threading.Thread):
     evil_cmd = self._load_evil_commands()
     css_headers = self._css_headers_construct()
     for target, evil_inject in (('message_root', 'root'), ('message_child_pic', 'child_pic'), ('message_child_nopic', 'child_nopic')):
-      with codecs.open(os.path.join(self.template_directory, '{}.tmpl'.format(target)), "r", "utf-8") as f:
+      with codecs.open(os.path.join(self.config['template_directory'], '{}.tmpl'.format(target)), "r", "utf-8") as f:
         template_brick[target] = string.Template(f.read()).safe_substitute(
           {'evil_{}'.format(evil_inject): evil_cmd.get(evil_inject, 'Internal error')}
         )
-    with codecs.open(os.path.join(self.template_directory, 'base_head.tmpl'), "r", "utf-8") as f:
+    with codecs.open(os.path.join(self.config['template_directory'], 'base_head.tmpl'), "r", "utf-8") as f:
       template_brick['base_head'] = string.Template(f.read()).safe_substitute(
         stylesheet=css_headers,
-        title = self.html_title
+        title = self.config['title']
       )
     template_brick['base_head_prep'] = string.Template(template_brick['base_head']).safe_substitute(
-      head_title=string.Template('${title} :: ${board}').safe_substitute(title=self.html_title),
+      head_title=string.Template('${title} :: ${board}').safe_substitute(title=self.config['title']),
       javascript=template_brick['base_js_head']
     )
-    f = codecs.open(os.path.join(self.template_directory, 'thread_single.tmpl'), "r", "utf-8")
+    f = codecs.open(os.path.join(self.config['template_directory'], 'thread_single.tmpl'), "r", "utf-8")
     template_brick['thread_single'] = string.Template(
       string.Template(f.read()).safe_substitute(
         head_single=string.Template(template_brick['base_head']).safe_substitute(
-          head_title=string.Template('${title} :: ${board} :: ${subject}').safe_substitute(title=self.html_title),
+          head_title=string.Template('${title} :: ${board} :: ${subject}').safe_substitute(title=self.config['title']),
           javascript=template_brick['base_js_head']
         ),
         base_help=template_brick['base_help']
@@ -263,7 +246,7 @@ class main(threading.Thread):
     )
     f.close()
     # template_engines
-    f = codecs.open(os.path.join(self.template_directory, 'board.tmpl'), "r", "utf-8")
+    f = codecs.open(os.path.join(self.config['template_directory'], 'board.tmpl'), "r", "utf-8")
     self.t_engine['board'] = string.Template(
       string.Template(f.read()).safe_substitute(
         base_head=template_brick['base_head_prep'],
@@ -291,43 +274,43 @@ class main(threading.Thread):
         single_postform=template_brick['dummy_postform']
       )
     )
-    f = codecs.open(os.path.join(self.template_directory, 'index.tmpl'), "r", "utf-8")
+    f = codecs.open(os.path.join(self.config['template_directory'], 'index.tmpl'), "r", "utf-8")
     self.t_engine['index'] = string.Template(
       string.Template(f.read()).safe_substitute(
-        title=self.html_title
+        title=self.config['title']
       )
     )
     f.close()
-    f = codecs.open(os.path.join(self.template_directory, 'menu.tmpl'), "r", "utf-8")
+    f = codecs.open(os.path.join(self.config['template_directory'], 'menu.tmpl'), "r", "utf-8")
     self.t_engine['menu'] = string.Template(
       string.Template(f.read()).safe_substitute(
-        title=self.html_title,
+        title=self.config['title'],
         stylesheet=css_headers,
         site_url=self.config['site_url'],
         local_dest=self.config['local_dest']
       )
     )
     f.close()
-    f = codecs.open(os.path.join(self.template_directory, 'menu_entry.tmpl'), "r", "utf-8")
+    f = codecs.open(os.path.join(self.config['template_directory'], 'menu_entry.tmpl'), "r", "utf-8")
     self.t_engine['menu_entry'] = string.Template(f.read())
     f.close()
-    f = codecs.open(os.path.join(self.template_directory, 'overview.tmpl'), "r", "utf-8")
+    f = codecs.open(os.path.join(self.config['template_directory'], 'overview.tmpl'), "r", "utf-8")
     self.t_engine['overview'] = string.Template(
       string.Template(f.read()).safe_substitute(
         stats_usage=template_brick['stats_usage'],
         latest_posts=template_brick['latest_posts'],
         stats_boards=template_brick['stats_boards'],
         head_overview=string.Template(template_brick['base_head']).safe_substitute(
-          head_title='{} :: Overview'.format(self.html_title),
+          head_title='{} :: Overview'.format(self.config['title']),
           javascript=''
         )
       )
     )
     f.close()
-    f = codecs.open(os.path.join(self.template_directory, 'board_threads.tmpl'), "r", "utf-8")
+    f = codecs.open(os.path.join(self.config['template_directory'], 'board_threads.tmpl'), "r", "utf-8")
     self.t_engine['board_threads'] = string.Template(f.read())
     f.close()
-    f = codecs.open(os.path.join(self.template_directory, 'archive_threads.tmpl'), "r", "utf-8")
+    f = codecs.open(os.path.join(self.config['template_directory'], 'archive_threads.tmpl'), "r", "utf-8")
     self.t_engine['archive_threads'] = string.Template(f.read())
     f.close()
     self.t_engine['message_root'] = string.Template(
@@ -362,10 +345,10 @@ class main(threading.Thread):
         child_quickreply='${article_id}'
       )
     )
-    f = codecs.open(os.path.join(self.template_directory, 'signed.tmpl'), "r", "utf-8")
+    f = codecs.open(os.path.join(self.config['template_directory'], 'signed.tmpl'), "r", "utf-8")
     self.t_engine['signed'] = string.Template(f.read())
     f.close()
-    f = codecs.open(os.path.join(self.template_directory, 'help_page.tmpl'), "r", "utf-8")
+    f = codecs.open(os.path.join(self.config['template_directory'], 'help_page.tmpl'), "r", "utf-8")
     self.t_engine['help_page'] = string.Template(
       string.Template(f.read()).safe_substitute(
         base_head=string.Template(template_brick['base_head_prep']).safe_substitute(board='help'),
@@ -374,7 +357,7 @@ class main(threading.Thread):
       )
     )
     f.close()
-    if self.minify_html:
+    if self.config['minify_html']:
       self.html_minifer()
     self.log(self.logger.INFO, 'Templates loaded at {} seconds'.format(int(time.time() - start_time)))
 
@@ -382,7 +365,7 @@ class main(threading.Thread):
     self.log(self.logger.INFO, 'initializing as plugin..')
     try:
       # load required imports for PIL
-      something = Image.open(os.path.join(self.template_directory, self.thumbnail_files['no_file']))
+      something = Image.open(os.path.join(self.config['template_directory'], self.config['thumbs']['no_file']))
       modifier = float(180) / something.size[0]
       x = int(something.size[0] * modifier)
       y = int(something.size[1] * modifier)
@@ -392,7 +375,7 @@ class main(threading.Thread):
         something = something.convert('RGB')
         thumb_name = 'nope_loading_PIL.jpg'
       something = something.resize((x, y), Image.ANTIALIAS)
-      out = os.path.join(self.template_directory, thumb_name)
+      out = os.path.join(self.config['template_directory'], thumb_name)
       something.save(out, optimize=True)
       del something
       os.remove(out)
@@ -406,7 +389,7 @@ class main(threading.Thread):
     self.log(self.logger.INFO, 'initializing as standalone..')
     signal.signal(signal.SIGIO, self.signal_handler)
     try:
-      fd = os.open(self.watching, os.O_RDONLY)
+      fd = os.open(self.config['watching'], os.O_RDONLY)
     except OSError as e:
       if e.errno == 2:
         self.die(e)
@@ -421,10 +404,10 @@ class main(threading.Thread):
 
   def gen_template_thumbs(self, sources):
     for source in sources:
-      link = os.path.join(self.output_directory, 'thumbs', source)
+      link = os.path.join(self.config['output_directory'], 'thumbs', source)
       if not os.path.exists(link):
         try:
-          something = Image.open(os.path.join(self.template_directory, source))
+          something = Image.open(os.path.join(self.config['template_directory'], source))
           modifier = float(180) / something.size[0]
           x = int(something.size[0] * modifier)
           y = int(something.size[1] * modifier)
@@ -439,9 +422,9 @@ class main(threading.Thread):
   def copy_out(self, css, sources):
     for source, target in sources:
       try:
-        i = open(os.path.join(self.template_directory, source), 'r')
-        o = open(os.path.join(self.output_directory, target), 'w')
-        if css and self.minify_css:
+        i = open(os.path.join(self.config['template_directory'], source), 'r')
+        o = open(os.path.join(self.config['output_directory'], target), 'w')
+        if css and self.config['minify_css']:
           read_css = i.read()
           old_size = len(read_css)
           read_css = self.css_minifer(read_css)
@@ -458,7 +441,7 @@ class main(threading.Thread):
         self.log(self.logger.ERROR, 'can\'t copy %s: %s' % (source, e))
 
   def _load_evil_commands(self, evil_conf='evil_cmd.json'):
-    with codecs.open(os.path.join(self.template_directory, evil_conf), 'r', 'UTF-8') as f:
+    with codecs.open(os.path.join(self.config['template_directory'], evil_conf), 'r', 'UTF-8') as f:
       evil_cmd = json.load(f)
     # Load only enabled commands
     # FIXME: first start table maybe not created. What check it? Re-load templates if values changed?
@@ -482,12 +465,12 @@ class main(threading.Thread):
 
   def past_init(self):
     required_dirs = list()
-    required_dirs.append(self.output_directory)
-    required_dirs.append(os.path.join(self.output_directory, '..', 'spamprotector'))
-    required_dirs.append(os.path.join(self.output_directory, 'img'))
-    required_dirs.append(os.path.join(self.output_directory, 'thumbs'))
-    required_dirs.append(self.database_directory)
-    required_dirs.append(self.temp_directory)
+    required_dirs.append(self.config['output_directory'])
+    required_dirs.append(os.path.join(self.config['output_directory'], '..', 'spamprotector'))
+    required_dirs.append(os.path.join(self.config['output_directory'], 'img'))
+    required_dirs.append(os.path.join(self.config['output_directory'], 'thumbs'))
+    required_dirs.append(self.config['database_directory'])
+    required_dirs.append(self.config['temp_directory'])
     for directory in required_dirs:
       if not os.path.exists(directory):
         os.mkdir(directory)
@@ -496,11 +479,11 @@ class main(threading.Thread):
     # ^ hardlinks not gonna work because of remote filesystems
     # ^ softlinks not gonna work because of nginx chroot
     # ^ => cp
-    self.copy_out(css=False, sources=((self.thumbnail_files['no_file'], os.path.join('img', self.thumbnail_files['no_file'])), ('suicide.txt', os.path.join('img', 'suicide.txt')), \
+    self.copy_out(css=False, sources=((self.config['thumbs']['no_file'], os.path.join('img', self.config['thumbs']['no_file'])), ('suicide.txt', os.path.join('img', 'suicide.txt')), \
       ('playbutton.png', os.path.join('img', 'playbutton.png')),))
-    self.copy_out(css=True,  sources=([(self.censor_css, 'censor.css'),] + [(x, x if self.css_files[0] != x else 'styles.css') for x in self.css_files]))
-    self.css_files[0] = 'styles.css'
-    self.gen_template_thumbs([self.thumbnail_files[target] for target in self.thumbnail_files])
+    self.copy_out(css=True,  sources=([(self.config['censor_css'], 'censor.css'),] + [(x, x if self.config['csss'][0] != x else 'styles.css') for x in self.config['csss']]))
+    self.config['csss'][0] = 'styles.css'
+    self.gen_template_thumbs(self.config['thumbs'].values())
 
     self.regenerate_boards = set()
     self.regenerate_threads = set()
@@ -519,9 +502,9 @@ class main(threading.Thread):
     self.censordb = self.sqlite_censor_conn.cursor()
     self.sqlite_hasher_conn = sqlite3.connect('hashes.db3')
     self.db_hasher = self.sqlite_hasher_conn.cursor()
-    self.sqlite_conn = sqlite3.connect(os.path.join(self.database_directory, 'overchan.db3'))
+    self.sqlite_conn = sqlite3.connect(os.path.join(self.config['database_directory'], 'overchan.db3'))
     self.sqlite = self.sqlite_conn.cursor()
-    if not self.sqlite_synchronous:
+    if not self.config['sqlite_synchronous']:
         self.sqlite.execute("PRAGMA synchronous = OFF")
     # FIXME use config table with current db version + def update_db(db_version) like in censor plugin
     self.sqlite.execute('''CREATE TABLE IF NOT EXISTS groups
@@ -578,7 +561,7 @@ class main(threading.Thread):
     self._load_templates()
     self.cache_init()
 
-    if self.regenerate_html_on_startup:
+    if self.config['generate_all']:
       self.regenerate_all_html()
 
   def regenerate_all_html(self):
@@ -653,7 +636,7 @@ class main(threading.Thread):
           self.log(self.logger.INFO, 'deleting root message_id %s' % message_id)
         self.sqlite.execute('DELETE FROM articles WHERE article_uid = ?', (message_id,))
         try:
-          os.unlink(os.path.join(self.output_directory, "thread-%s.html" % sha1(message_id).hexdigest()[:10]))
+          os.unlink(os.path.join(self.config['output_directory'], "thread-%s.html" % sha1(message_id).hexdigest()[:10]))
         except Exception as e:
           self.log(self.logger.WARNING, 'could not delete thread for message_id %s: %s' % (message_id, e))
       else:
@@ -680,8 +663,8 @@ class main(threading.Thread):
       self.delete_orphan_attach(child_image, child_thumb)
 
   def delete_orphan_attach(self, image, thumb):
-    image_link = os.path.join(self.output_directory, 'img', image)
-    thumb_link = os.path.join(self.output_directory, 'thumbs', thumb)
+    image_link = os.path.join(self.config['output_directory'], 'img', image)
+    thumb_link = os.path.join(self.config['output_directory'], 'thumbs', thumb)
     for imagename, imagepath, imagetype in ((image, image_link, 'imagelink'), (thumb, thumb_link, 'thumblink'),):
       if len(imagename) > 40 and os.path.exists(imagepath):
         caringbear = self.sqlite.execute('SELECT article_uid FROM articles WHERE %s = ?' % imagetype, (imagename,)).fetchone()
@@ -695,8 +678,8 @@ class main(threading.Thread):
             self.log(self.logger.WARNING, 'could not delete %s: %s' % (imagepath, e))
 
   def censored_attach_processing(self, image, thumb):
-    image_link = os.path.join(self.output_directory, 'img', image)
-    thumb_link = os.path.join(self.output_directory, 'thumbs', thumb)
+    image_link = os.path.join(self.config['output_directory'], 'img', image)
+    thumb_link = os.path.join(self.config['output_directory'], 'thumbs', thumb)
     for imagename, imagepath in ((image, image_link), (thumb, thumb_link),):
       if len(imagename) > 40 and os.path.exists(imagepath):
         os.unlink(imagepath)
@@ -821,10 +804,10 @@ class main(threading.Thread):
 
   def signal_handler(self, signum, frame):
     # FIXME use try: except: around open(), also check for duplicate here
-    for item in os.listdir(self.watching):
-      link = os.path.join(self.watching, item)
+    for item in os.listdir(self.config['watching']):
+      link = os.path.join(self.config['watching'], item)
       f = open(link, 'r')
-      if not self.parse_message(message_id, f):
+      if not self.parse_message(item, f):
         f.close()
       os.remove(link)
     if len(self.regenerate_boards) > 0:
@@ -875,27 +858,27 @@ class main(threading.Thread):
         else:
           self.log(self.logger.ERROR, 'found article with unknown source: %s' % ret[0])
 
-        if self.queue.qsize() > self.sleep_threshold:
-          time.sleep(self.sleep_time)
+        if self.queue.qsize() > self.config['sleep_threshold']:
+          time.sleep(self.config['sleep_time'])
       except Queue.Empty:
         if len(self.delete_messages) > 0:
           self.handle_overchan_massdelete()
         if len(self.regenerate_boards) > 0:
-          do_sleep = len(self.regenerate_boards) > self.sleep_threshold
+          do_sleep = len(self.regenerate_boards) > self.config['sleep_threshold']
           if do_sleep:
             self.log(self.logger.DEBUG, 'boards: should sleep')
           for board in self.regenerate_boards:
             self.generate_board(board)
-            if do_sleep: time.sleep(self.sleep_time)
+            if do_sleep: time.sleep(self.config['sleep_time'])
           self.regenerate_boards.clear()
           regen_overview = True
         if len(self.regenerate_threads) > 0:
-          do_sleep = len(self.regenerate_threads) > self.sleep_threshold
+          do_sleep = len(self.regenerate_threads) > self.config['sleep_threshold']
           if do_sleep:
             self.log(self.logger.DEBUG, 'threads: should sleep')
           for thread in self.regenerate_threads:
             self.generate_thread(thread)
-            if do_sleep: time.sleep(self.sleep_time)
+            if do_sleep: time.sleep(self.config['sleep_time'])
           self.regenerate_threads.clear()
           regen_overview = True
         if regen_overview:
@@ -972,7 +955,7 @@ class main(threading.Thread):
       another_board = u' [%s]' % self.get_board_data(int(parent_row[1]), 'board')[:20]
     else:
       another_board = ''
-    if self.fake_id:
+    if self.config['fake_id']:
       article_name = self.message_uid_to_fake_id(message_id)
     else:
       article_name = rematch.group(2)
@@ -1084,17 +1067,17 @@ class main(threading.Thread):
     css = re.sub( r':\s*0(\.\d+([cm]m|e[mx]|in|p[ctx]))\s*;', r':\1;', css )
     for rule in re.findall( r'([^{]+){([^}]*)}', css ):
       # we don't need spaces around operators
-      selectors = [re.sub( r'(?<=[\[\(>+=])\s+|\s+(?=[=~^$*|>+\]\)])', r'', selector.strip() ) for selector in rule[0].split( ',' )]
+      selectors = [re.sub( r'(?<=[\[\(>+=])\s+|\s+(?=[=~^$*|>+\]\)])', r'', selector.strip()) for selector in rule[0].split(',')]
       # order is important, but we still want to discard repetitions
       properties = {}
       porder = []
       for prop in re.findall( '(.*?):(.*?)(;|$)', rule[1] ):
-        key = prop[0].strip().lower()
-        if key not in porder: porder.append( key )
-        properties[ key ] = prop[1].strip()
+        css_key = prop[0].strip().lower()
+        if css_key not in porder: porder.append(css_key)
+        properties[css_key] = prop[1].strip()
       # output rule if it contains any declarations
       if properties:
-        minifed_css.append("%s{%s}" % ( ','.join( selectors ), ''.join(['%s:%s;' % (key, properties[key]) for key in porder])[:-1] ))
+        minifed_css.append("%s{%s}" % ( ','.join( selectors ), ''.join(['%s:%s;' % (x, properties[x]) for x in porder])[:-1] ))
     return '\n'.join(minifed_css)
 
   def move_censored_article(self, message_id):
@@ -1118,7 +1101,7 @@ class main(threading.Thread):
   def gen_thumb_from_video(self, target, imagehash):
     if os.path.getsize(target) == 0:
       return 'invalid'
-    tmp_image = os.path.join(self.temp_directory, imagehash + '.jpg')
+    tmp_image = os.path.join(self.config['temp_directory'], imagehash + '.jpg')
     image_entropy = -1.1
     try:
       video_capture = cv2.VideoCapture(target)
@@ -1131,7 +1114,7 @@ class main(threading.Thread):
       tmp_video_frame = video_frame
       current_frame = 0
       start_time = time.time()
-      while self.create_best_video_thumbnail and readable and current_frame < video_length and time.time() - start_time < 30:
+      while self.config['create_best_video_thumbnail'] and readable and current_frame < video_length and time.time() - start_time < 30:
         histogram = cv2.calcHist(tmp_video_frame, [42], None, [256], [0, 256])
         histogram_length = sum(histogram)
         samples_probability = [float(h) / histogram_length for h in histogram]
@@ -1161,7 +1144,7 @@ class main(threading.Thread):
       return 'invalid'
     if target.split('.')[-1].lower() == 'gif' and os.path.getsize(target) < (128 * 1024 + 1):
       thumb_name = imagehash + '.gif'
-      thumb_link = os.path.join(self.output_directory, 'thumbs', thumb_name)
+      thumb_link = os.path.join(self.config['output_directory'], 'thumbs', thumb_name)
       o = open(thumb_link, 'w')
       i = open(target, 'r')
       o.write(i.read())
@@ -1179,14 +1162,14 @@ class main(threading.Thread):
     else:
       thumb_name = imagehash + '.jpg'
       thumb = thumb.convert('RGB')
-    thumb_link = os.path.join(self.output_directory, 'thumbs', thumb_name)
+    thumb_link = os.path.join(self.config['output_directory'], 'thumbs', thumb_name)
     thumb = thumb.resize((x, y), Image.ANTIALIAS)
     thumb.save(thumb_link, optimize=True)
     return thumb_name
 
   def _get_exist_thumb_name(self, image_name):
     result = self.sqlite.execute('SELECT thumblink FROM articles WHERE imagelink = ? LIMIT 1', (image_name,)).fetchone()
-    if result and len(result[0]) > 40 and os.path.isfile(os.path.join(self.output_directory, 'thumbs', result[0])):
+    if result and len(result[0]) > 40 and os.path.isfile(os.path.join(self.config['output_directory'], 'thumbs', result[0])):
       return result[0]
     return None
 
@@ -1324,7 +1307,7 @@ class main(threading.Thread):
           image_name = 'suicide.txt'
           del file_data
           continue
-        out_link = os.path.join(self.output_directory, 'img', image_name)
+        out_link = os.path.join(self.config['output_directory'], 'img', image_name)
         if os.path.isfile(out_link):
           exist_thumb_name = self._get_exist_thumb_name(image_name)
         else:
@@ -1425,7 +1408,7 @@ class main(threading.Thread):
         last_update = sent - 10
       else:
         if parent_result is not None:
-          if self.bump_limit == 0 or self.sqlite.execute('SELECT count(article_uid) FROM articles WHERE parent = ? AND parent != article_uid ', (parent,)).fetchone()[0] < self.bump_limit:
+          if self.config['bump_limit'] == 0 or self.sqlite.execute('SELECT count(article_uid) FROM articles WHERE parent = ? AND parent != article_uid ', (parent,)).fetchone()[0] < self.config['bump_limit']:
             self.sqlite.execute('UPDATE articles SET last_update=? WHERE article_uid=?', (sent, parent))
             self.sqlite_conn.commit()
           else:
@@ -1472,7 +1455,7 @@ class main(threading.Thread):
           # attach has been censored and not restored. Censoring and this attach
           self.log(self.logger.INFO, 'Message %s contain attach censoring in %s message. %s has been continue censoring' % (message_id, check_article[0], image_name))
           thumb_name = 'censored'
-          censored_attach_path = os.path.join(self.output_directory, 'img', image_name)
+          censored_attach_path = os.path.join(self.config['output_directory'], 'img', image_name)
           if os.path.exists(censored_attach_path):
             os.remove(censored_attach_path)
         else:
@@ -1480,7 +1463,7 @@ class main(threading.Thread):
           self.log(self.logger.INFO, 'Attach %s restored. Restore %s thumblinks for this attach' % (image_name, censored_count))
           self.sqlite.execute('UPDATE articles SET thumblink = ? WHERE imagelink = ?', (thumb_name, image_name))
 
-    if image_name == '' and thumb_name == '' and self.replace_root_nope and (parent == '' or parent == message_id) and len(group_ids) > 0:
+    if image_name == '' and thumb_name == '' and self.config['replace_root_nope'] and (parent == '' or parent == message_id) and len(group_ids) > 0:
       # Get random image for root post
       result = self.sqlite.execute('SELECT imagelink, thumblink FROM articles WHERE group_id = ? AND length(thumblink) > 40 ORDER BY RANDOM() LIMIT 1', (group_ids[0],)).fetchone()
       if result:
@@ -1514,12 +1497,12 @@ class main(threading.Thread):
     return pages
 
   def generate_board(self, group_id):
-    threads_per_page = self.threads_per_page
-    pages_per_board = self.pages_per_board
+    threads_per_page = self.config['threads_per_page']
+    pages_per_board = self.config['pages_per_board']
     board_data = self._get_board_root_posts(group_id, threads_per_page * pages_per_board)
     thread_count = len(board_data)
     pages = self._get_page_count(thread_count, threads_per_page)
-    if self.enable_archive and ((int(self.sqlite.execute("SELECT flags FROM groups WHERE group_id=?", (group_id,)).fetchone()[0]) & self.cache['flags']['no-archive']) == 0) and \
+    if self.config['enable_archive'] and ((int(self.sqlite.execute("SELECT flags FROM groups WHERE group_id=?", (group_id,)).fetchone()[0]) & self.cache['flags']['no-archive']) == 0) and \
         int(self.sqlite.execute('SELECT count(group_id) FROM (SELECT group_id FROM articles WHERE group_id = ? AND (parent = "" OR parent = article_uid))', (group_id,)).fetchone()[0]) > thread_count:
       generate_archive = True
     else:
@@ -1538,7 +1521,7 @@ class main(threading.Thread):
     for board, page_data in self._board_root_post_iter(board_data, group_id, pages, threads_per_page):
       isgenerated = True
       threads = list()
-      self.log(self.logger.INFO, 'generating %s/%s-%s.html' % (self.output_directory, board_name_unquoted, board))
+      self.log(self.logger.INFO, 'generating %s/%s-%s.html' % (self.config['output_directory'], board_name_unquoted, board))
       for root_row in page_data:
         root_message_id_hash = sha1(root_row[0]).hexdigest()
         threads.append(
@@ -1550,7 +1533,7 @@ class main(threading.Thread):
       t_engine_mapper_board['pagelist'] = self.generate_pagelist(pages, board, board_name_unquoted, generate_archive)
       t_engine_mapper_board['target'] = "{0}-1.html".format(board_name_unquoted)
 
-      f = codecs.open(os.path.join(self.output_directory, '{0}-{1}.html'.format(board_name_unquoted, board)), 'w', 'UTF-8')
+      f = codecs.open(os.path.join(self.config['output_directory'], '{0}-{1}.html'.format(board_name_unquoted, board)), 'w', 'UTF-8')
       f.write(prepared_template.substitute(t_engine_mapper_board))
       f.close()
     last_root_message = board_data[-1][0] if thread_count > 0 else None
@@ -1558,7 +1541,7 @@ class main(threading.Thread):
     if generate_archive and (self.cache['page_stamp'][group_id].get(0, '') != last_root_message or (not isgenerated and len(self.regenerate_threads) > 0)):
       self.cache['page_stamp'][group_id][0] = last_root_message
       self.generate_archive(group_id)
-    if isgenerated and self.enable_recent:
+    if isgenerated and self.config['enable_recent']:
       self.generate_recent(group_id)
 
   def get_base_thread(self, root_row, root_message_id_hash, group_id, child_count=4, single=False):
@@ -1619,14 +1602,14 @@ class main(threading.Thread):
     parsed_data = dict()
     if data[6] != '':
         imagelink = data[6]
-        if data[7] in self.thumbnail_files:
-          thumblink = self.thumbnail_files[data[7]]
+        if data[7] in self.config['thumbs']:
+          thumblink = self.config['thumbs'][data[7]]
         else:
           thumblink = data[7]
           if data[6] != data[7] and data[6].rsplit('.', 1)[-1] in ('gif', 'webm', 'mp4'):
             is_playable = True
     else:
-      imagelink = thumblink = self.thumbnail_files['no_file']
+      imagelink = thumblink = self.config['thumbs'].get('no_file', 'error')
     if data[8] != '':
       parsed_data['signed'] = self.t_engine['signed'].substitute(
         articlehash=message_id_hash[:10],
@@ -1653,7 +1636,7 @@ class main(threading.Thread):
     message = self.markup_parser(message, group_id)
     if father == '':
       child_count = int(self.sqlite.execute('SELECT count(article_uid) FROM articles WHERE parent = ? AND parent != article_uid AND group_id = ?', (data[0], group_id)).fetchone()[0])
-      if self.bump_limit > 0 and child_count >= self.bump_limit:
+      if self.config['bump_limit'] > 0 and child_count >= self.config['bump_limit']:
         parsed_data['thread_status'] = '[fat]'
       else:
         parsed_data['thread_status'] = ''
@@ -1678,14 +1661,14 @@ class main(threading.Thread):
       parsed_data['subject'] = ''
     else:
       parsed_data['subject'] = data[2]
-    parsed_data['sent'] = datetime.utcfromtimestamp(data[3] + self.utc_time_offset).strftime(self.datetime_format)
+    parsed_data['sent'] = datetime.utcfromtimestamp(data[3] + self.config['utc_time_offset']).strftime(self.config['datetime_format'])
     parsed_data['imagelink'] = imagelink
     parsed_data['thumblink'] = thumblink
     parsed_data['imagename'] = data[5]
     if father != '':
       parsed_data['parenthash'] = father[:10]
       parsed_data['parenthash_full'] = father
-    if self.fake_id:
+    if self.config['fake_id']:
       parsed_data['article_id'] = self.message_uid_to_fake_id(data[0])
     else:
       parsed_data['article_id'] = message_id_hash[:10]
@@ -1696,9 +1679,9 @@ class main(threading.Thread):
     return parsed_data
 
   def generate_archive(self, group_id):
-    threads_per_page = self.archive_threads_per_page
-    pages_per_board = self.archive_pages_per_board
-    board_data = self._get_board_root_posts(group_id, threads_per_page * pages_per_board, self.threads_per_page * self.pages_per_board)
+    threads_per_page = self.config['archive_threads_per_page']
+    pages_per_board = self.config['archive_pages_per_board']
+    board_data = self._get_board_root_posts(group_id, threads_per_page * pages_per_board, self.config['threads_per_page'] * self.config['pages_per_board'])
     thread_count = len(board_data)
     if thread_count == 0: return
     pages = self._get_page_count(thread_count, threads_per_page)
@@ -1714,7 +1697,7 @@ class main(threading.Thread):
     t_engine_mapper_board = dict()
     for board, page_data in self._board_root_post_iter(board_data, group_id, pages, threads_per_page, 'page_stamp_archiv'):
       threads = list()
-      self.log(self.logger.INFO, 'generating %s/%s-archive-%s.html' % (self.output_directory, board_name_unquoted, board))
+      self.log(self.logger.INFO, 'generating %s/%s-archive-%s.html' % (self.config['output_directory'], board_name_unquoted, board))
       for root_row in page_data:
         threads.append(
           self.t_engine['archive_threads'].substitute(
@@ -1725,7 +1708,7 @@ class main(threading.Thread):
       t_engine_mapper_board['pagelist'] = self.generate_pagelist(pages, board, board_name_unquoted+'-archive')
       t_engine_mapper_board['target'] = "{0}-archive-1.html".format(board_name_unquoted)
 
-      f = codecs.open(os.path.join(self.output_directory, '{0}-archive-{1}.html'.format(board_name_unquoted, board)), 'w', 'UTF-8')
+      f = codecs.open(os.path.join(self.config['output_directory'], '{0}-archive-{1}.html'.format(board_name_unquoted, board)), 'w', 'UTF-8')
       f.write(prepared_template.substitute(t_engine_mapper_board))
       f.close()
 
@@ -1740,7 +1723,7 @@ class main(threading.Thread):
     board_name_unquoted, \
     t_engine_mapper_board_recent['board'], \
     t_engine_mapper_board_recent['board_description'] = self.get_board_data(group_id)
-    self.log(self.logger.INFO, 'generating %s/%s-recent.html' % (self.output_directory, board_name_unquoted))
+    self.log(self.logger.INFO, 'generating %s/%s-recent.html' % (self.config['output_directory'], board_name_unquoted))
     for root_row in self.sqlite.execute('SELECT article_uid, sender, subject, sent, message, imagename, imagelink, thumblink, public_key, last_update, closed, sticky \
         FROM articles WHERE group_id = ? AND (parent = "" OR parent = article_uid) AND last_update > ? ORDER BY sticky DESC, last_update DESC', (group_id, timestamp)).fetchall():
       root_message_id_hash = sha1(root_row[0]).hexdigest()
@@ -1753,7 +1736,7 @@ class main(threading.Thread):
     t_engine_mapper_board_recent['target'] = "{0}-recent.html".format(board_name_unquoted)
     t_engine_mapper_board_recent['pagelist'] = ''
 
-    f = codecs.open(os.path.join(self.output_directory, '{0}-recent.html'.format(board_name_unquoted)), 'w', 'UTF-8')
+    f = codecs.open(os.path.join(self.config['output_directory'], '{0}-recent.html'.format(board_name_unquoted)), 'w', 'UTF-8')
     f.write(self.t_engine['board'].substitute(t_engine_mapper_board_recent))
     f.close()
 
@@ -1786,14 +1769,14 @@ class main(threading.Thread):
     # FIXME: benchmark sha1() vs hasher_db_query
     child_count = int(self.sqlite.execute('SELECT count(article_uid) FROM articles WHERE parent = ? AND parent != article_uid AND group_id = ?', (root_row[0], group_id)).fetchone()[0])
     isblocked_board = self.check_board_flags(group_id, 'blocked')
-    thread_path = os.path.join(self.output_directory, 'thread-%s.html' % (root_message_id_hash[:10],))
+    thread_path = os.path.join(self.config['output_directory'], 'thread-%s.html' % (root_message_id_hash[:10],))
     if isblocked_board:
       self.delete_thread_page(thread_path)
     else:
       self.create_thread_page(root_row[:-1], thread_path, 10000, root_message_id_hash, group_id)
     if child_count > 80:
       for max_child_view in range(50, child_count, 100):
-        thread_path = os.path.join(self.output_directory, 'thread-%s-%s.html' % (root_message_id_hash[:10], max_child_view))
+        thread_path = os.path.join(self.config['output_directory'], 'thread-%s-%s.html' % (root_message_id_hash[:10], max_child_view))
         if isblocked_board:
           self.delete_thread_page(thread_path)
         else:
@@ -1820,13 +1803,13 @@ class main(threading.Thread):
     f.close()
 
   def generate_index(self):
-    self.log(self.logger.INFO, 'generating %s/index.html' % self.output_directory)
-    f = codecs.open(os.path.join(self.output_directory, 'index.html'), 'w', 'UTF-8')
+    self.log(self.logger.INFO, 'generating %s/index.html' % self.config['output_directory'])
+    f = codecs.open(os.path.join(self.config['output_directory'], 'index.html'), 'w', 'UTF-8')
     f.write(self.t_engine['index'].substitute())
     f.close()
 
   def generate_menu(self):
-    self.log(self.logger.INFO, 'generating %s/menu.html' % self.output_directory)
+    self.log(self.logger.INFO, 'generating %s/menu.html' % self.config['output_directory'])
     menu_entry = dict()
     menu_entries = list()
     exclude_flags = self.cache['flags']['hidden'] | self.cache['flags']['blocked']
@@ -1835,12 +1818,12 @@ class main(threading.Thread):
     for group_row in self.sqlite.execute('SELECT group_name, group_id, ph_name, link FROM groups WHERE \
       (cast(groups.flags as integer) & ?) = 0 ORDER by group_name ASC', (exclude_flags,)).fetchall():
       menu_entry['group_name'] = group_row[0].split('.', 1)[-1].replace('"', '').replace('/', '')
-      menu_entry['group_link'] = group_row[3] if self.use_unsecure_aliases and group_row[3] != '' else '%s-1.html' % menu_entry['group_name']
+      menu_entry['group_link'] = group_row[3] if self.config['use_unsecure_aliases'] and group_row[3] != '' else '%s-1.html' % menu_entry['group_name']
       menu_entry['group_name_encoded'] = group_row[2] if group_row[2] != '' else self.basicHTMLencode(menu_entry['group_name'])
       menu_entry['postcount'] = self.sqlite.execute('SELECT count(article_uid) FROM articles WHERE group_id = ? AND sent > ?', (group_row[1], timestamp)).fetchone()[0]
       menu_entries.append(self.t_engine['menu_entry'].substitute(menu_entry))
 
-    f = codecs.open(os.path.join(self.output_directory, 'menu.html'), 'w', 'UTF-8')
+    f = codecs.open(os.path.join(self.config['output_directory'], 'menu.html'), 'w', 'UTF-8')
     f.write(self.t_engine['menu'].substitute(menu_entries='\n'.join(menu_entries)))
     f.close()
 
@@ -1908,7 +1891,7 @@ class main(threading.Thread):
         current_group_name_encoded = group_row[3]
       else:
         current_group_name_encoded = self.basicHTMLencode(current_group_name)
-      if self.use_unsecure_aliases and group_row[4] != '':
+      if self.config['use_unsecure_aliases'] and group_row[4] != '':
         board_link = group_row[4]
       else:
         board_link = '%s-1.html' % current_group_name
@@ -1925,13 +1908,13 @@ class main(threading.Thread):
           board_name = group_row[2]
         else:
           board_name = full_board_name.split('.', 1)[-1]
-    if not self.use_unsecure_aliases:
+    if not self.config['use_unsecure_aliases']:
       board_description = self.markup_parser(self.basicHTMLencode(board_description))
     if boardlist: boardlist[-1] = boardlist[-1][:-1]
     return ''.join(boardlist), full_board_name_unquoted, board_name_unquoted, board_name, board_description
 
   def generate_overview(self):
-    self.log(self.logger.INFO, 'generating %s/overview.html' % self.output_directory)
+    self.log(self.logger.INFO, 'generating %s/overview.html' % self.config['output_directory'])
     t_engine_mappings_overview = dict()
     t_engine_mappings_overview['boardlist'] = self.get_board_list()
     t_engine_mappings_overview['news'] = self.generate_news_data()
@@ -1941,7 +1924,7 @@ class main(threading.Thread):
     stats = list()
     bar_length = 20
     days = 30
-    utc_offset = str(self.utc_time_offset) + ' seconds'
+    utc_offset = str(self.config['utc_time_offset']) + ' seconds'
     totals = int(self.sqlite.execute('SELECT count(1) FROM articles WHERE sent > strftime("%s", "now", "-' + str(days) + ' days")').fetchone()[0])
     stats.append(self.t_engine['stats_usage_row'].substitute({'postcount': totals, 'date': 'all posts', 'weekday': '', 'bar': 'since %s days' % days}))
     datarow = list()
@@ -1963,7 +1946,7 @@ class main(threading.Thread):
       groups.group_id = articles.group_id AND (cast(groups.flags as integer) & ?) = 0 AND \
       (articles.parent = "" OR articles.parent = articles.article_uid) ORDER BY articles.last_update DESC LIMIT ?', (exclude_flags, str(postcount))).fetchall():
       latest_posts_row = dict()
-      latest_posts_row['last_update'] = datetime.utcfromtimestamp(row[0] + self.utc_time_offset).strftime(self.datetime_format)
+      latest_posts_row['last_update'] = datetime.utcfromtimestamp(row[0] + self.config['utc_time_offset']).strftime(self.config['datetime_format'])
       latest_posts_row['board'] = row[5] if row[5] != '' else self.basicHTMLencode(row[1].split('.', 1)[-1].replace('"', ''))
       latest_posts_row['articlehash'] = sha1(row[4]).hexdigest()[:10]
       latest_posts_row['subject'] = row[2] if row[2] not in ('', 'None') else row[3]
@@ -1979,13 +1962,13 @@ class main(threading.Thread):
       board = row[2] if row[2] != '' else self.basicHTMLencode(row[1].replace('"', ''))
       stats.append(self.t_engine['stats_boards_row'].substitute({'postcount': row[0], 'board': board}))
     t_engine_mappings_overview['stats_boards_rows'] = '\n'.join(stats)
-    f = codecs.open(os.path.join(self.output_directory, 'overview.html'), 'w', 'UTF-8')
+    f = codecs.open(os.path.join(self.config['output_directory'], 'overview.html'), 'w', 'UTF-8')
     f.write(self.t_engine['overview'].substitute(t_engine_mappings_overview))
     f.close()
     self.generate_help(t_engine_mappings_overview['news'])
 
   def generate_help(self, news_data):
-    f = codecs.open(os.path.join(self.output_directory, 'help.html'), 'w', 'UTF-8')
+    f = codecs.open(os.path.join(self.config['output_directory'], 'help.html'), 'w', 'UTF-8')
     f.write(self.t_engine['help_page'].substitute({'boardlist': self.get_board_list(), 'news': news_data}))
     f.close()
 
@@ -2012,7 +1995,7 @@ class main(threading.Thread):
         message = row[1]
       message = self.markup_parser(message)
       t_engine_mappings_news['subject'] = 'Breaking news' if row[0] == 'None' or row[0] == '' else row[0]
-      t_engine_mappings_news['sent'] = datetime.utcfromtimestamp(row[2] + self.utc_time_offset).strftime(self.datetime_format)
+      t_engine_mappings_news['sent'] = datetime.utcfromtimestamp(row[2] + self.config['utc_time_offset']).strftime(self.config['datetime_format'])
       if row[3] != '':
           t_engine_mappings_news['pubkey_short'] = self.generate_pubkey_short_utf_8(row[3])
           moder_name = self.pubkey_to_name(row[3])
@@ -2028,18 +2011,14 @@ class main(threading.Thread):
 
 if __name__ == '__main__':
   # FIXME fix this shit
-  overchan = main('overchan', args)
+  overchan = main('overchan', None, {'watching': 'test-articles'})
   while True:
     try:
       print "signal.pause()"
       signal.pause()
     except KeyboardInterrupt as e:
-      print
-      self.sqlite_conn.close()
-      self.log('bye', 2)
+      print 'bye'
       exit(0)
     except Exception as e:
       print "Exception:", e
-      self.sqlite_conn.close()
-      self.log('bye', 2)
       exit(0)
