@@ -1959,7 +1959,7 @@ class main(threading.Thread):
       latest_posts_row['board'] = row[5] if row[5] != '' else self.basicHTMLencode(row[1].split('.', 1)[-1].replace('"', ''))
       latest_posts_row['articlehash'] = sha1(row[4]).hexdigest()[:10]
       latest_posts_row['subject'] = row[2] if row[2] not in ('', 'None') else row[3]
-      latest_posts_row['subject'] = 'None' if latest_posts_row['subject'] == '' else latest_posts_row['subject'].replace('\n', ' ')[:55]
+      latest_posts_row['subject'] = latest_posts_row['articlehash'] if latest_posts_row['subject'] == '' else latest_posts_row['subject'].replace('\n', ' ')[:55]
       stats.append(self.t_engine['latest_posts_row'].substitute(latest_posts_row))
     t_engine_mappings_overview['latest_posts_rows'] = '\n'.join(stats)
 
