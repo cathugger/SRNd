@@ -1988,7 +1988,7 @@ class main(threading.Thread):
     if news_board:
       t_engine_mappings_news['allnews_link'] = '{0}-1.html'.format(news_board[1].split('.', 1)[-1].replace('"', '').replace('/', ''))
       row = self.sqlite.execute('SELECT subject, message, sent, public_key, article_uid, sender FROM articles \
-          WHERE (parent = "" OR parent = article_uid) AND group_id = ? ORDER BY last_update DESC', (news_board[0],)).fetchone()
+          WHERE (parent = "" OR parent = article_uid) AND group_id = ? ORDER BY sticky DESC, last_update DESC', (news_board[0],)).fetchone()
     else:
       t_engine_mappings_news['allnews_link'] = 'overview.html'
     if not (news_board and row):
