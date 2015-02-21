@@ -12,6 +12,7 @@ import math
 import mimetypes
 mimetypes.init()
 import json
+from srnd.utils import basicHTMLencode, generate_pubkey_short_utf_8, html_minifer, css_minifer
 from binascii import unhexlify
 from calendar import timegm
 from datetime import datetime, timedelta
@@ -358,7 +359,8 @@ class main(threading.Thread):
     )
     f.close()
     if self.config['minify_html']:
-      self.html_minifer()
+      self.t_engine, msg = html_minifer(self.t_engine, ('help_page',))
+      self.log(self.logger.INFO, msg)
     self.log(self.logger.INFO, 'Templates loaded at {} seconds'.format(int(time.time() - start_time)))
 
   def init_plugin(self):
@@ -427,7 +429,7 @@ class main(threading.Thread):
         if css and self.config['minify_css']:
           read_css = i.read()
           old_size = len(read_css)
-          read_css = self.css_minifer(read_css)
+          read_css = css_minifer(read_css)
           new_size = len(read_css)
           if new_size > 0:
             diff = -int(float(old_size-new_size)/old_size * 100) if old_size > 0 else 0
@@ -731,8 +733,8 @@ class main(threading.Thread):
     except:
       self.log(self.logger.WARNING, 'get corrupt data for %s' % group_name)
       return
-    ph_name = self.basicHTMLencode(ph_name)
-    ph_shortname = self.basicHTMLencode(ph_shortname)
+    ph_name = basicHTMLencode(ph_name)
+    ph_shortname = basicHTMLencode(ph_shortname)
     self.sqlite.execute('UPDATE groups SET ph_name= ?, ph_shortname = ?, link = ?, tag = ?, description = ? \
         WHERE group_name = ?', (ph_name.decode('UTF-8')[:42], ph_shortname.decode('UTF-8')[:42], link.decode('UTF-8')[:1000], tag.decode('UTF-8')[:42], description.decode('UTF-8')[:25000], group_name))
 
@@ -897,21 +899,6 @@ class main(threading.Thread):
     self.sqlite_dropper_conn.close()
     self.log(self.logger.INFO, 'bye')
 
-  def basicHTMLencode(self, inputString):
-    html_escape_table = (("&", "&amp;"), ('"', "&quot;"), ("'", "&apos;"), (">", "&gt;"), ("<", "&lt;"),)
-    for x in html_escape_table:
-      inputString = inputString.replace(x[0], x[1])
-    return inputString.strip(' \t\n\r')
-
-  def generate_pubkey_short_utf_8(self, full_pubkey_hex, length=6):
-    pub_short = ''
-    for x in range(0, length / 2):
-      pub_short += '&#%i;' % (9600 + int(full_pubkey_hex[x*2:x*2+2], 16))
-    length -= length / 2
-    for x in range(0, length):
-      pub_short += '&#%i;' % (9600 + int(full_pubkey_hex[-(length*2):][x*2:x*2+2], 16))
-    return pub_short
-
   def message_uid_to_fake_id(self, message_uid):
     fake_id = self.dropperdb.execute('SELECT article_id FROM articles WHERE message_id = ?', (message_uid,)).fetchone()
     if fake_id:
@@ -1037,58 +1024,6 @@ class main(threading.Thread):
         (re.compile("(http://|https://|ftp://|mailto:|news:|irc:|magnet:\?|maggot://)([^\s\[\]<>'\"]*)"), self.clickit)
     )
 
-  def html_minifer(self):
-    old_size, new_size, count = 0, 0, 0
-    ignored_templates = ('help_page',)
-    for target in self.t_engine:
-      if target not in ignored_templates:
-        count += 1
-        html = self.t_engine[target].safe_substitute()
-        old_size += len(html)
-        html = self._html_minifer(html)
-        new_size += len(html)
-        self.t_engine[target] = string.Template(html)
-    diff = -int(float(old_size-new_size)/old_size * 100) if old_size > 0 else 0
-    self.log(self.logger.INFO, 'Minify {} html templates: old size={}, new size={}, difference={}%'.format(count, old_size, new_size, diff))
-
-  def _html_minifer(self, html):
-    # TODO: Improve this
-    html = re.sub(r'\s+', ' ', html)
-    return html
-
-  def css_minifer(self, css):
-    """
-    Thanks for Borgar
-    https://stackoverflow.com/questions/222581/python-script-for-minifying-css
-    """
-    minifed_css = list()
-    # remove comments - this will break a lot of hacks :-P
-    css = re.sub( r'\s*/\*\s*\*/', "$$HACK1$$", css ) # preserve IE<6 comment hack
-    css = re.sub( r'/\*[\s\S]*?\*/', "", css )
-    css = css.replace( "$$HACK1$$", '/**/' ) # preserve IE<6 comment hack
-    # url() doesn't need quotes
-    css = re.sub( r'url\((["\'])([^)]*)\1\)', r'url(\2)', css )
-    # spaces may be safely collapsed as generated content will collapse them anyway
-    css = re.sub( r'\s+', ' ', css )
-    # shorten collapsable colors: #aabbcc to #abc
-    css = re.sub( r'#([0-9a-f])\1([0-9a-f])\2([0-9a-f])\3(\s|;)', r'#\1\2\3\4', css )
-    # fragment values can loose zeros
-    css = re.sub( r':\s*0(\.\d+([cm]m|e[mx]|in|p[ctx]))\s*;', r':\1;', css )
-    for rule in re.findall( r'([^{]+){([^}]*)}', css ):
-      # we don't need spaces around operators
-      selectors = [re.sub( r'(?<=[\[\(>+=])\s+|\s+(?=[=~^$*|>+\]\)])', r'', selector.strip()) for selector in rule[0].split(',')]
-      # order is important, but we still want to discard repetitions
-      properties = {}
-      porder = []
-      for prop in re.findall( '(.*?):(.*?)(;|$)', rule[1] ):
-        css_key = prop[0].strip().lower()
-        if css_key not in porder: porder.append(css_key)
-        properties[css_key] = prop[1].strip()
-      # output rule if it contains any declarations
-      if properties:
-        minifed_css.append("%s{%s}" % ( ','.join( selectors ), ''.join(['%s:%s;' % (x, properties[x]) for x in porder])[:-1] ))
-    return '\n'.join(minifed_css)
-
   def move_censored_article(self, message_id):
     if os.path.exists(os.path.join('articles', 'censored', message_id)):
       self.log(self.logger.DEBUG, "already move, still handing over to redistribute further")
@@ -1201,7 +1136,7 @@ class main(threading.Thread):
       lower_line = line.lower()
       if lower_line.startswith('subject:'):
         subject = line.split(' ', 1)[-1][:-1]
-        subject = self.basicHTMLencode(subject[4:]) if subject.lower().startswith('re: ') else self.basicHTMLencode(subject)
+        subject = basicHTMLencode(subject[4:]) if subject.lower().startswith('re: ') else basicHTMLencode(subject)
       elif lower_line.startswith('date:'):
         sent = line.split(' ', 1)[1][:-1]
         sent_tz = parsedate_tz(sent)
@@ -1212,9 +1147,9 @@ class main(threading.Thread):
         else:
           sent = int(time.time())
       elif lower_line.startswith('from:'):
-        sender = self.basicHTMLencode(line.split(' ', 1)[1][:-1].split(' <', 1)[0])
+        sender = basicHTMLencode(line.split(' ', 1)[1][:-1].split(' <', 1)[0])
         try:
-          email = self.basicHTMLencode(line.split(' ', 1)[1][:-1].split(' <', 1)[1].replace('>', ''))
+          email = basicHTMLencode(line.split(' ', 1)[1][:-1].split(' <', 1)[1].replace('>', ''))
         except:
           pass
       elif lower_line.startswith('references:'):
@@ -1296,7 +1231,7 @@ class main(threading.Thread):
         deny_extensions = ('.html', '.php', '.phtml', '.php3', '.php4', '.js')
         file_data = part.get_payload(decode=True)
         imagehash = sha1(file_data).hexdigest()
-        image_name_original = 'empty_file_name.empty' if part.get_filename() is None or part.get_filename().strip() == '' else self.basicHTMLencode(part.get_filename().replace('/', '_').replace('"', '_'))
+        image_name_original = 'empty_file_name.empty' if part.get_filename() is None or part.get_filename().strip() == '' else basicHTMLencode(part.get_filename().replace('/', '_').replace('"', '_'))
         image_extension = '.' + image_name_original.split('.')[-1].lower()
         if len(image_name_original) > 512: image_name_original = image_name_original[:512] + '...'
         local_mime_type = mimetypes.types_map.get(image_extension, '/')
@@ -1356,7 +1291,7 @@ class main(threading.Thread):
         message += 'invalid content type\n'
         message += '-----' + result.get_content_type() + '-----\n\n'
     del result
-    message = self.basicHTMLencode(message)
+    message = basicHTMLencode(message)
 
     if (not subject or subject == 'None') and (message == image_name == public_key == '') and (parent and parent != message_id) and (not sender or sender == 'Anonymous'):
       self.log(self.logger.INFO, 'censored empty child message  %s' % message_id)
@@ -1623,7 +1558,7 @@ class main(threading.Thread):
       parsed_data['signed'] = self.t_engine['signed'].substitute(
         articlehash=message_id_hash[:10],
         pubkey=data[8],
-        pubkey_short=self.generate_pubkey_short_utf_8(data[8])
+        pubkey_short=generate_pubkey_short_utf_8(data[8])
       )
       author = self.pubkey_to_name(data[8], father_pubkey, data[1])
       if author == '': author = data[1]
@@ -1828,7 +1763,7 @@ class main(threading.Thread):
       (cast(groups.flags as integer) & ?) = 0 ORDER by group_name ASC', (exclude_flags,)).fetchall():
       menu_entry['group_name'] = group_row[0].split('.', 1)[-1].replace('"', '').replace('/', '')
       menu_entry['group_link'] = group_row[3] if self.config['use_unsecure_aliases'] and group_row[3] != '' else '%s-1.html' % menu_entry['group_name']
-      menu_entry['group_name_encoded'] = group_row[2] if group_row[2] != '' else self.basicHTMLencode(menu_entry['group_name'])
+      menu_entry['group_name_encoded'] = group_row[2] if group_row[2] != '' else basicHTMLencode(menu_entry['group_name'])
       menu_entry['postcount'] = self.sqlite.execute('SELECT count(article_uid) FROM articles WHERE group_id = ? AND sent > ?', (group_row[1], timestamp)).fetchone()[0]
       menu_entries.append(self.t_engine['menu_entry'].substitute(menu_entry))
 
@@ -1899,7 +1834,7 @@ class main(threading.Thread):
       if group_row[3] != '':
         current_group_name_encoded = group_row[3]
       else:
-        current_group_name_encoded = self.basicHTMLencode(current_group_name)
+        current_group_name_encoded = basicHTMLencode(current_group_name)
       if self.config['use_unsecure_aliases'] and group_row[4] != '':
         board_link = group_row[4]
       else:
@@ -1910,7 +1845,7 @@ class main(threading.Thread):
         boardlist.append(' ' + current_group_name_encoded + '&nbsp;/')
       if group_row[1] == group_id:
         full_board_name_unquoted = group_row[0].replace('"', '').replace('/', '')
-        full_board_name = self.basicHTMLencode(full_board_name_unquoted)
+        full_board_name = basicHTMLencode(full_board_name_unquoted)
         board_name_unquoted = full_board_name_unquoted.split('.', 1)[-1]
         board_description = group_row[5]
         if group_row[2] != '':
@@ -1918,7 +1853,7 @@ class main(threading.Thread):
         else:
           board_name = full_board_name.split('.', 1)[-1]
     if not self.config['use_unsecure_aliases']:
-      board_description = self.markup_parser(self.basicHTMLencode(board_description))
+      board_description = self.markup_parser(basicHTMLencode(board_description))
     if boardlist: boardlist[-1] = boardlist[-1][:-1]
     return ''.join(boardlist), full_board_name_unquoted, board_name_unquoted, board_name, board_description
 
@@ -1956,7 +1891,7 @@ class main(threading.Thread):
       (articles.parent = "" OR articles.parent = articles.article_uid) ORDER BY articles.last_update DESC LIMIT ?', (exclude_flags, str(postcount))).fetchall():
       latest_posts_row = dict()
       latest_posts_row['last_update'] = datetime.utcfromtimestamp(row[0] + self.config['utc_time_offset']).strftime(self.config['datetime_format'])
-      latest_posts_row['board'] = row[5] if row[5] != '' else self.basicHTMLencode(row[1].split('.', 1)[-1].replace('"', ''))
+      latest_posts_row['board'] = row[5] if row[5] != '' else basicHTMLencode(row[1].split('.', 1)[-1].replace('"', ''))
       latest_posts_row['articlehash'] = sha1(row[4]).hexdigest()[:10]
       latest_posts_row['subject'] = row[2] if row[2] not in ('', 'None') else row[3]
       latest_posts_row['subject'] = latest_posts_row['articlehash'] if latest_posts_row['subject'] == '' else latest_posts_row['subject'].replace('\n', ' ')[:55]
@@ -1968,7 +1903,7 @@ class main(threading.Thread):
     for row in self.sqlite.execute('SELECT count(1) as counter, group_name, ph_name FROM groups, articles WHERE \
       groups.group_id = articles.group_id AND (cast(groups.flags as integer) & ?) = 0 GROUP BY \
       groups.group_id ORDER BY counter DESC', (exclude_flags,)).fetchall():
-      board = row[2] if row[2] != '' else self.basicHTMLencode(row[1].replace('"', ''))
+      board = row[2] if row[2] != '' else basicHTMLencode(row[1].replace('"', ''))
       stats.append(self.t_engine['stats_boards_row'].substitute({'postcount': row[0], 'board': board}))
     t_engine_mappings_overview['stats_boards_rows'] = '\n'.join(stats)
     f = codecs.open(os.path.join(self.config['output_directory'], 'overview.html'), 'w', 'UTF-8')
@@ -2006,7 +1941,7 @@ class main(threading.Thread):
       t_engine_mappings_news['subject'] = 'Breaking news' if row[0] == 'None' or row[0] == '' else row[0]
       t_engine_mappings_news['sent'] = datetime.utcfromtimestamp(row[2] + self.config['utc_time_offset']).strftime(self.config['datetime_format'])
       if row[3] != '':
-          t_engine_mappings_news['pubkey_short'] = self.generate_pubkey_short_utf_8(row[3])
+          t_engine_mappings_news['pubkey_short'] = generate_pubkey_short_utf_8(row[3])
           moder_name = self.pubkey_to_name(row[3])
       else:
           moder_name = ''

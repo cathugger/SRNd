@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 from email.feedparser import FeedParser
 from email.utils import parsedate_tz
 from hashlib import sha1, sha512
+from srnd.utils import basicHTMLencode, generate_pubkey_short_utf_8
 
 if __name__ == '__main__':
   import signal
@@ -532,20 +533,6 @@ class main(threading.Thread):
     self.sqlite_hasher_conn.close()
     self.log(self.logger.INFO, 'bye')
 
-  def basicHTMLencode(self, inputString):
-    return inputString.replace('<', '&lt;').replace('>', '&gt;')
-  
-  def generate_pubkey_short_utf_8(self, full_pubkey_hex, length=6):
-    pub_short = ''
-    if len(full_pubkey_hex) == 0:
-      return pub_short
-    for x in range(0, length / 2):
-      pub_short +=  '&#%i;' % (9600 + int(full_pubkey_hex[x*2:x*2+2], 16))
-    length -= length / 2
-    for x in range(0, length):
-      pub_short += '&#%i;' % (9600 + int(full_pubkey_hex[-(length*2):][x*2:x*2+2], 16))
-    return pub_short
-
   def upp_it(self, data):
     if data[-1] not in self.upper_table:
       return data
@@ -597,7 +584,7 @@ class main(threading.Thread):
       parser.feed(line)
       lower_line = line.lower()
       if lower_line.startswith('subject:'):
-        subject = self.basicHTMLencode(line.split(' ', 1)[1][:-1])
+        subject = basicHTMLencode(line.split(' ', 1)[1][:-1])
       elif lower_line.startswith('date:'):
         sent = line.split(' ', 1)[1][:-1]
         sent_tz = parsedate_tz(sent)
@@ -608,9 +595,9 @@ class main(threading.Thread):
         else:
           sent = int(time.time())
       elif lower_line.startswith('from:'):
-        sender = self.basicHTMLencode(line.split(' ', 1)[1][:-1].split(' <', 1)[0])
+        sender = basicHTMLencode(line.split(' ', 1)[1][:-1].split(' <', 1)[0])
         try:
-          email = self.basicHTMLencode(line.split(' ', 1)[1][:-1].split(' <', 1)[1].replace('>', ''))
+          email = basicHTMLencode(line.split(' ', 1)[1][:-1].split(' <', 1)[1].replace('>', ''))
         except:
           pass
       elif lower_line.startswith('references:'):
@@ -744,7 +731,7 @@ class main(threading.Thread):
           f.close()
           # get hash for filename
           f = open(tmp_link, 'r')
-          image_name_original = self.basicHTMLencode(part.get_filename().replace('/', '_').replace('"', '_'))
+          image_name_original = basicHTMLencode(part.get_filename().replace('/', '_').replace('"', '_'))
           # FIXME read line by line and use hasher.update(line)
           imagehash = sha1(f.read()).hexdigest()
           image_name = image_name_original.split('.')[-1].lower()
@@ -805,7 +792,7 @@ class main(threading.Thread):
           f.close()
           # get hash for filename
           f = open(tmp_link, 'r')
-          image_name_original = self.basicHTMLencode(part.get_filename().replace('/', '_').replace('"', '_'))
+          image_name_original = basicHTMLencode(part.get_filename().replace('/', '_').replace('"', '_'))
           imagehash = sha1(f.read()).hexdigest()
           image_name = image_name_original.split('.')[-1].lower()
           if image_name in ('html', 'php'):
@@ -835,7 +822,7 @@ class main(threading.Thread):
         message += 'invalid content type\n'
         message += '----' + result.get_content_type() + '----\n\n'
     del result
-    message = self.basicHTMLencode(message)
+    message = basicHTMLencode(message)
     if self.sqlite.execute('SELECT article_uid FROM articles WHERE article_uid=?', (message_id,)).fetchone():
       # post has been censored and is now being restored. just delete post for all groups so it can be reinserted
       self.log(self.logger.INFO, 'post has been censored and is now being restored: %s' % message_id) 
@@ -856,7 +843,7 @@ class main(threading.Thread):
     for row in self.sqlite.execute('SELECT group_name, group_id, article_count FROM groups WHERE blocked = 0 ORDER by group_name ASC').fetchall():
       #current_group_name = row['group_name'].split('.', 1)[-1].replace('"', '').replace('/', '')
       current_group_name = row[0].replace('"', '').replace('/', '')
-      current_group_name_encoded = self.basicHTMLencode(current_group_name)
+      current_group_name_encoded = basicHTMLencode(current_group_name)
       mapper['board_link']   = '%s.html' % current_group_name
       mapper['board_name']   = current_group_name_encoded
       mapper['thread_count'] = str(self.sqlite.execute('SELECT count(1) FROM articles WHERE group_id = ? AND (parent = "" OR parent = article_uid)', (row[0],)).fetchone()[0])
@@ -923,7 +910,7 @@ class main(threading.Thread):
       return
     mapper['anchor']  = root_sha
     mapper['sender']  = root_post[1]
-    mapper['trip']    = self.generate_pubkey_short_utf_8(root_post[5])
+    mapper['trip']    = generate_pubkey_short_utf_8(root_post[5])
     mapper['subject'] = root_post[2]
     mapper['date']    = datetime.utcfromtimestamp(root_post[3]).strftime('%Y/%m/%d %H:%M')
     mapper['message'] = root_post[4]
@@ -941,7 +928,7 @@ class main(threading.Thread):
     for child_post in self.sqlite.execute('SELECT article_uid, sender, subject, sent, message, public_key, imagename, imagelink, thumblink FROM articles WHERE parent = ? ORDER BY sent ASC', (root_uid,)).fetchall():
       mapper['anchor']  = sha1(child_post[0]).hexdigest()[:10]
       mapper['sender']  = child_post[1]
-      mapper['trip']    = self.generate_pubkey_short_utf_8(child_post[5])
+      mapper['trip']    = generate_pubkey_short_utf_8(child_post[5])
       mapper['subject'] = child_post[2]
       mapper['date']    = datetime.utcfromtimestamp(child_post[3]).strftime('%Y/%m/%d %H:%M')
       
@@ -1002,7 +989,7 @@ class main(threading.Thread):
     # FIXME: cache this shit somewhere
     for group_row in self.sqlite.execute('SELECT group_name, group_id FROM groups WHERE blocked = 0 ORDER by group_name ASC').fetchall():
       current_group_name = group_row[0].split('.', 1)[1].replace('"', '').replace('/', '')
-      current_group_name_encoded = self.basicHTMLencode(current_group_name)
+      current_group_name_encoded = basicHTMLencode(current_group_name)
       boardlist.append('&nbsp;<a href="%s-1.html">%s</a>&nbsp;|' % (current_group_name, current_group_name_encoded))
     boardlist[-1] = boardlist[-1][:-1]
     t_engine_mappings_overview['boardlist'] = ''.join(boardlist)
@@ -1031,7 +1018,7 @@ class main(threading.Thread):
       t_engine_mappings_overview['subject'] = row[0]
       t_engine_mappings_overview['sent'] = datetime.utcfromtimestamp(row[2]).strftime('%Y/%m/%d %H:%M')
       t_engine_mappings_overview['author'] = row[5]
-      t_engine_mappings_overview['pubkey_short'] = self.generate_pubkey_short_utf_8(row[3])
+      t_engine_mappings_overview['pubkey_short'] = generate_pubkey_short_utf_8(row[3])
       t_engine_mappings_overview['pubkey'] = row[3]
       t_engine_mappings_overview['postid'] = postid
       t_engine_mappings_overview['parent'] = parent
@@ -1063,7 +1050,7 @@ class main(threading.Thread):
     postcount = 23
     for row in self.sqlite.execute('SELECT sent, group_name, sender, subject, article_uid, parent FROM articles, groups WHERE groups.blocked = 0 AND articles.group_id = groups.group_id ORDER BY sent DESC LIMIT ' + str(postcount)).fetchall():
       sent = datetime.utcfromtimestamp(row[0]).strftime('%Y/%m/%d %H:%M UTC')
-      board = self.basicHTMLencode(row[1].replace('"', '')).split('.', 1)[1]
+      board = basicHTMLencode(row[1].replace('"', '')).split('.', 1)[1]
       author = row[2]
       articlehash = sha1(row[4]).hexdigest()[:10]
       if row[5] == '' or row[5] == row[4]:
@@ -1083,7 +1070,7 @@ class main(threading.Thread):
       stats.append(self.template_latest_posts_row.replace('%%sent%%', sent).replace('%%board%%', board).replace('%%parent%%', parent).replace('%%articlehash%%', articlehash).replace('%%author%%', author).replace('%%subject%%', subject))
     #for row in self.sqlite.execute('SELECT articles.last_update, group_name, sender, subject, article_uid FROM articles, groups WHERE (parent = "" or parent = article_uid) AND articles.group_id = groups.group_id ORDER BY articles.last_update DESC LIMIT ' + str(postcount)).fetchall():
     #  last_update = datetime.utcfromtimestamp(row[0]).strftime('%Y/%m/%d %H:%M UTC')
-    #  board = self.basicHTMLencode(row[1].replace('"', '')).split('.', 1)[1]
+    #  board = basicHTMLencode(row[1].replace('"', '')).split('.', 1)[1]
     #  subject = row[3]
     #  parent = sha1(row[4]).hexdigest()[:10]
     #  try:
@@ -1100,7 +1087,7 @@ class main(threading.Thread):
     del stats[:]
 
     for row in self.sqlite.execute('SELECT count(1) as counter, group_name FROM articles, groups WHERE groups.blocked = 0 AND articles.group_id = groups.group_id GROUP BY articles.group_id ORDER BY counter DESC').fetchall():
-      stats.append(self.template_stats_boards_row.replace('%%postcount%%', str(row[0])).replace('%%board%%', self.basicHTMLencode(row[1])))
+      stats.append(self.template_stats_boards_row.replace('%%postcount%%', str(row[0])).replace('%%board%%', basicHTMLencode(row[1])))
     overview_stats_boards = self.template_stats_boards
     overview_stats_boards = overview_stats_boards.replace('%%stats_boards_rows%%', ''.join(stats))
     t_engine_mappings_overview['stats_boards'] = overview_stats_boards

@@ -62,6 +62,8 @@ class SRNd(threading.Thread):
             # FIXME: exit might not allow logger to actually output the message.
             self.log(self.logger.CRITICAL, "trying to chown plugin directory %s failed: %s" % (os.path.join(self.data_dir, 'plugins', directory), e))
             exit(1)
+    #add data_dir in syspath
+    sys.path.append(os.path.abspath(self.data_dir))
 
     # start listening
     if self.ipv6:

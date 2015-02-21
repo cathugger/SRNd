@@ -9,6 +9,7 @@ from calendar import timegm
 from datetime import datetime, timedelta
 from email.utils import parsedate_tz
 from hashlib import sha1
+from srnd.utils import basicHTMLencode
 
 if __name__ == '__main__':
   import fcntl
@@ -221,9 +222,6 @@ class main(threading.Thread):
     self.sqlite_conn.close()
     self.log(self.logger.INFO, 'bye')
 
-  def basicHTMLencode(self, input):
-    return input.replace('<', '&lt;').replace('>', '&gt;')
-
   def generate_paste(self, identifier, paste_content, subject, sender, sent):
     self.log(self.logger.INFO, 'new paste: %s' % subject)
     self.log(self.logger.INFO, 'generating %s' % os.path.join(self.outputDirectory, identifier + '.txt'))
@@ -283,7 +281,7 @@ class main(threading.Thread):
     email = 'non@giv.en'
     for index in xrange(0, len(message_content)):
       if message_content[index].lower().startswith('subject:'):
-        subject = self.basicHTMLencode(message_content[index].split(' ', 1)[1][:-1])
+        subject = basicHTMLencode(message_content[index].split(' ', 1)[1][:-1])
       elif message_content[index].lower().startswith('date:'):
         sent = message_content[index].split(' ', 1)[1][:-1]
         sent_tz = parsedate_tz(sent)
@@ -294,9 +292,9 @@ class main(threading.Thread):
         else:
           sent = int(time.time())
       elif message_content[index].lower().startswith('from:'):
-        sender = self.basicHTMLencode(message_content[index].split(' ', 1)[1][:-1].split(' <', 1)[0])
+        sender = basicHTMLencode(message_content[index].split(' ', 1)[1][:-1].split(' <', 1)[0])
         try:
-          email = self.basicHTMLencode(message_content[index].split(' ', 1)[1][:-1].split(' <', 1)[1].replace('>', ''))
+          email = basicHTMLencode(message_content[index].split(' ', 1)[1][:-1].split(' <', 1)[1].replace('>', ''))
         except:
           pass
       elif message_content[index] == '\n':

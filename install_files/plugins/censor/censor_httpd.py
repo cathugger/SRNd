@@ -17,6 +17,7 @@ from datetime import datetime
 from hashlib import sha1, sha512
 from urllib import unquote
 from urlparse import urlparse, parse_qs
+from srnd.utils import basicHTMLencode
 
 import nacl.signing
 
@@ -174,12 +175,6 @@ class censor(BaseHTTPRequestHandler):
     else:
       return public
 
-  def basicHTMLencode(self, inputString):
-    html_escape_table = (("&", "&amp;"), ('"', "&quot;"), ("'", "&apos;"), (">", "&gt;"), ("<", "&lt;"),)
-    for x in html_escape_table:
-      inputString = inputString.replace(x[0], x[1])
-    return inputString.strip(' \t\n\r')
-
   def __check_legal_access(self, flag_name):
     flags_available = int(self.origin.sqlite_censor.execute('SELECT flags FROM keys WHERE key = ?', (self.origin.sessions[self.session][1],)).fetchone()[0])
     flag_required = int(self.origin.sqlite_censor.execute('SELECT flag FROM commands WHERE command = ?', (flag_name,)).fetchone()[0])
@@ -203,7 +198,7 @@ class censor(BaseHTTPRequestHandler):
   def handle_update_key(self, post_vars, public, secret, key):
     flags = post_vars.getlist("flags")
     if 'local_nick' in post_vars:
-      local_nick = self.basicHTMLencode(post_vars['local_nick'].value.replace("#", ""))
+      local_nick = basicHTMLencode(post_vars['local_nick'].value.replace("#", ""))
     else:
       local_nick = ''
     result = sum([int(flag) for flag in flags])
@@ -543,7 +538,7 @@ class censor(BaseHTTPRequestHandler):
         (log_accepted, (page-1)*pagecount, pagecount)).fetchall():
       log_row = dict()
       if row[1] != '':
-        log_row['key_or_nick'] = self.basicHTMLencode(self.hidden_line(row[1], 30))
+        log_row['key_or_nick'] = basicHTMLencode(self.hidden_line(row[1], 30))
       else:
         log_row['key_or_nick'] = self.hidden_line(row[0])
       log_row['key'] = row[0]
@@ -551,7 +546,7 @@ class censor(BaseHTTPRequestHandler):
       log_row['reason'] = row[4]
       log_row['comment'] = row[5][:60]
       log_row['date'] = datetime.utcfromtimestamp(row[6]).strftime('%d.%m.%y %H:%M')
-      data = self.basicHTMLencode(self.hidden_line(row[3], 64))
+      data = basicHTMLencode(self.hidden_line(row[3], 64))
       if row[2] in ('delete', 'overchan-delete-attachment', 'overchan-sticky', 'overchan-close'):
         message_id = row[3].replace("<", "&lt;").replace(">", "&gt;")
         try:
@@ -590,7 +585,7 @@ class censor(BaseHTTPRequestHandler):
         elif row[2] == 'handle-srnd-cmd':
           log_row['restore_link'] = '<a href="commands?%s">modify command</a>' % row[3]
         elif row[2] in ('overchan-board-mod', 'overchan-board-add', 'overchan-board-del'):
-          log_row['restore_link'] = '<a href="settings?name=%s">modify board</a>' % self.basicHTMLencode(row[3])
+          log_row['restore_link'] = '<a href="settings?name=%s">modify board</a>' % basicHTMLencode(row[3])
         else:
           log_row['restore_link'] = ''
       if log_accepted == 1:

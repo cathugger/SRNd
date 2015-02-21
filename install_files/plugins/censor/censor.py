@@ -12,6 +12,7 @@ from calendar import timegm
 from datetime import datetime, timedelta
 from email.utils import parsedate_tz
 from hashlib import sha512
+from srnd.utils import basicHTMLencode
 
 import nacl.signing
 
@@ -248,12 +249,6 @@ class main(threading.Thread):
     self.sqlite_dropper_conn.close()
     self.log(self.logger.INFO, 'bye')
 
-  def basicHTMLencode(self, inputString):
-    html_escape_table = (("&", "&amp;"), ('"', "&quot;"), ("'", "&apos;"), (">", "&gt;"), ("<", "&lt;"),)
-    for x in html_escape_table:
-      inputString = inputString.replace(x[0], x[1])
-    return inputString.strip(' \t\n\r')
-
   def allowed(self, key_id, command, is_replay, is_local):
     accepted, reason_id = self.command_reason(command, is_replay, is_local)
     if not self.allowed_key(key_id, command):
@@ -476,7 +471,7 @@ class main(threading.Thread):
       self.log(self.logger.DEBUG, "not authorized for '%s': %i" % (command, key_id))
     try:
       self.censordb.execute('INSERT INTO log (accepted, command_id, data, key_id, reason_id, comment, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)', \
-        (accepted, command_id, data, key_id, reason_id, self.basicHTMLencode(comment), int(time.time())))
+        (accepted, command_id, data, key_id, reason_id, basicHTMLencode(comment), int(time.time())))
       self.sqlite_censor_conn.commit()
     except Exception as e:
       pass
@@ -509,7 +504,7 @@ class main(threading.Thread):
     except:
       self.log(self.logger.WARNING, 'get corrupted data for %s' % userkey)
       return (userkey, None)
-    local_name = self.basicHTMLencode(local_name[:20])
+    local_name = basicHTMLencode(local_name[:20])
     try:
       allow = int(allow)
     except ValueError:
