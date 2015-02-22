@@ -414,36 +414,13 @@ class main(threading.Thread):
     article_fd.close()
 
   def redistribute_command(self, group, line, comment, timestamp):
-    # FIXME needs a hooks cache dict with key group => list hooks
-
-    hooks = dict()
-    # whitelist
-    for group_item in self.SRNd.hooks:
-      if (group_item[-1] == '*' and group.startswith(group_item[:-1])) or group == group_item:
-        for hook in self.SRNd.hooks[group_item]:
-          hooks[hook] = (line, timestamp)
-    # blacklist
-    for group_item in self.SRNd.hook_blacklist:
-      if (group_item[-1] == '*' and group.startswith(group_item[:-1])) or group == group_item:
-        for hook in self.SRNd.hook_blacklist[group_item]:
-          if hook in hooks:
-            del hooks[hook]
-
-    # FIXME 1) crossposting may match multiple times and thus deliver same hook multiple times
-    # FIXME 2) if doing this block after group loop blacklist may filter valid hook from another group
-    # FIXME currently doing the second variant
-
-    for hook in hooks:
-      if hook.startswith('plugins-'):
-        name = 'plugin-' + hook[8:]
-        if name in self.SRNd.plugins:
-          self.SRNd.plugins[name].add_article(hooks[hook][0], source="control", timestamp=hooks[hook][1])
+    # TODO add universal redistributor? Add SRNd queue? Currents methods thread-safe?
+    for hook in self.SRNd.get_allow_hooks(group):
+      if hook.startswith('plugin-'):
+        if hook in self.SRNd.plugins:
+          self.SRNd.plugins[hook].add_article(line, source="control", timestamp=timestamp)
         else:
-          self.log(self.logger.ERROR, "unknown plugin hook detected. wtf? %s" % name)
-      elif hook.startswith('outfeeds-'):
-        continue
-      else:
-        self.log(self.logger.ERROR, "unknown hook detected. wtf? %s" % hook)
+          self.log(self.logger.ERROR, 'unknown plugin hook detected. wtf? {}'.format(hook))
 
   def handle_line(self, line, key_id, timestamp, is_replay, is_local):
     command = line.lower().split(" ", 1)[0]

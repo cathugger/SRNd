@@ -345,13 +345,17 @@ class SRNd(threading.Thread):
     self.hooks = dict()
     self.hook_blacklist = dict()
     total = 0
-    for hook_type in ('filesystem', 'outfeeds', 'plugins'):
+    for hook_type, hook_name in (('filesystem', 'filesystem'), ('outfeeds', 'outfeed'), ('plugins', 'plugin')):
       directory = os.path.join('config', 'hooks', hook_type)
       found = 0
       for hook in os.listdir(directory):
         link = os.path.join(directory, hook)
         if not os.path.isfile(link):
           continue
+        if hook_name != 'outfeed':
+          name = '{0}-{1}'.format(hook_name, hook)
+        else:
+          name = 'outfeed-%s-%s' % self._extract_outfeed_data(hook)
         # FIXME ignore new plugin hooks after startup, needs a boolean somewhere
         # FIXME if hook_type == "plugins" and "plugin-{0}".format(hook) not in self.
         # read hooks into self.hooks[group_name] = hook_name
@@ -373,18 +377,16 @@ class SRNd(threading.Thread):
               line = f.readline()
               continue
             if not line in self.hook_blacklist:
-              self.hook_blacklist[line] = list()
-            name = '{0}-{1}'.format(hook_type, hook)
+              self.hook_blacklist[line] = set()
             if not name in self.hook_blacklist[line]:
-              self.hook_blacklist[line].append(name)
+              self.hook_blacklist[line].add(name)
               found += 1
           else:
             # whitelist
             if not line in self.hooks:
-              self.hooks[line] = list()
-            name = '{0}-{1}'.format(hook_type, hook)
+              self.hooks[line] = set()
             if not name in self.hooks[line]:
-              self.hooks[line].append(name)
+              self.hooks[line].add(name)
               found += 1
           line = f.readline()
         f.close()
@@ -462,6 +464,16 @@ class SRNd(threading.Thread):
     self.log(self.logger.INFO, 'added %i new plugins' % len(new_plugins))
     # TODO: stop and remove plugins not listed at config/plugins anymore
 
+  def _extract_outfeed_data(self, outfeed):
+    if ':' in outfeed:
+      host = ':'.join(outfeed.split(':')[:-1])
+      port = int(outfeed.split(':')[-1])
+    else:
+      # FIXME: how to deal with ipv6 and no default port?
+      host = outfeed
+      port = 119
+    return host, port
+
   def update_outfeeds(self):
     self.log(self.logger.INFO, 'reading outfeeds..')
     counter_new = 0
@@ -493,14 +505,8 @@ class SRNd(threading.Thread):
             elif lowerline.startswith('#start_param proxy_port='):
               proxy_port = lowerline.split('=', 1)[1].rstrip()
         f.close()
-        if ':' in outfeed:
-          host = ':'.join(outfeed.split(':')[:-1])
-          port = int(outfeed.split(':')[-1])
-        else:
-          # FIXME: how to deal with ipv6 and no default port?
-          host = outfeed
-          port = 119
-        name = "outfeed-{0}-{1}".format(host, port)
+        host, port = self._extract_outfeed_data(outfeed)
+        name = 'outfeed-{}-{}'.format(host, port)
         # open track db here, read, close
         if sync_on_startup:
           self.feed_db[name] = set()
@@ -658,6 +664,70 @@ class SRNd(threading.Thread):
       message_list.append(message_id)
     return message_list
 
+  def get_allow_hooks(self, group_name):
+    targets = set()
+    for white_group in self.hooks:
+      if white_group == group_name or white_group[-1] == '*' and group_name.startswith(white_group[:-1]):
+        # hook found, extend
+        targets |= self.hooks[white_group]
+    if len(targets) > 0:
+      # remove blacklisted elements
+      for black_group in self.hook_blacklist:
+        if black_group == group_name or black_group[-1] == '*' and group_name.startswith(black_group[:-1]):
+          targets -= self.hook_blacklist[black_group]
+    return targets
+
+  def _sync_on_startup(self):
+    groups = [x for x in os.listdir('groups') if os.path.isdir(os.path.join('groups', x))]
+    synclist = dict()
+    # sync groups in random order
+    random.shuffle(groups)
+    for group in groups:
+      self.log(self.logger.DEBUG, 'startup sync, checking {}..'.format(group))
+      current_sync_targets = set()
+      for sync_target in self.get_allow_hooks(group):
+        if sync_target.startswith('outfeed-'):
+          if sync_target in self.feeds:
+            if self.feeds[sync_target].sync_on_startup:
+              self.log(self.logger.DEBUG, 'startup sync, adding {}'.format(sync_target))
+              current_sync_targets.add(sync_target)
+          else:
+            self.log(self.logger.WARNING, 'unknown outfeed detected. wtf? {}'.format(sync_target))
+        elif sync_target.startswith('plugin-'):
+          if sync_target in self.plugins:
+            if self.plugins[sync_target].sync_on_startup:
+              self.log(self.logger.DEBUG, 'startup sync, adding {}'.format(sync_target))
+              current_sync_targets.add(sync_target)
+          else:
+            self.log(self.logger.WARNING, 'unknown plugin detected. wtf? {}'.format(sync_target))
+        elif sync_target.startswith('filesystem-'):
+          pass
+        else:
+          self.log(self.logger.WARNING, 'unknown hook detected. wtf? {}'.format(sync_target))
+      if len(current_sync_targets) > 0:
+        synclist[group] = {'targets': current_sync_targets, 'file_list': self.get_message_list_by_group(group)}
+
+    while len(synclist) > 0:
+      empty_sync_group = list()
+      for group in synclist:
+        if len(synclist[group]['file_list']) == 0:
+          empty_sync_group.append(group)
+        else:
+          for message_id in synclist[group]['file_list'][:500]:
+            for current_hook in synclist[group]['targets']:
+              if current_hook.startswith('outfeed-'):
+                if message_id not in self.feed_db[current_hook]:
+                  self.feeds[current_hook].add_article(message_id)
+              elif current_hook.startswith('plugin-'):
+                self.plugins[current_hook].add_article(message_id)
+          del synclist[group]['file_list'][:500]
+      for group in empty_sync_group:
+        del synclist[group]
+
+    self.log(self.logger.DEBUG, 'startup_sync done. hopefully.')
+    del current_sync_targets
+    del self.feed_db
+
   def run(self):
     self.running = True
     self.feeds = dict()
@@ -669,90 +739,7 @@ class SRNd(threading.Thread):
       time.sleep(0.1)
     self.update_hooks()
 
-    current_sync_targets = list()
-    synclist = dict()
-    groups = os.listdir('groups')
-    # sync groups in random order
-    random.shuffle(groups)
-    for group in groups:
-      group_dir = os.path.join('groups', group)
-      if os.path.isdir(group_dir):
-        self.log(self.logger.DEBUG, 'startup sync, checking %s..' % group)
-        current_sync_targets = list()
-        for group_item in self.hooks:
-          if (group_item[-1] == '*' and group.startswith(group_item[:-1])) or group == group_item:
-            # group matches whitelist
-            for current_hook in self.hooks[group_item]:
-              if current_hook.startswith('filesystem-'):
-                continue
-              # loop through matching hooks in whitelist
-              current_hook_blacklisted = False
-              for blacklist_group_item in self.hook_blacklist:
-                # loop through blacklist
-                if (blacklist_group_item[-1] == '*' and group.startswith(blacklist_group_item[:-1])) or group == blacklist_group_item:
-                  # group matches blacklist
-                  if current_hook in self.hook_blacklist[blacklist_group_item]:
-                    # current hook is blacklisted, don't add and try next whitelist_hook 
-                    current_hook_blacklisted = True
-                    break
-              if not current_hook_blacklisted:
-                if current_hook.startswith('outfeeds-'):
-                  # FIXME this doesn't look like its working with ipv6?
-                  if current_hook[9:].find(':') == -1:
-                    self.log(self.logger.ERROR, 'outfeed filename should be in host:port format')
-                    break
-                  parts = current_hook[9:].split(':')
-                  name = 'outfeed-' + ':'.join(parts[:-1]) + '-' + parts[-1]
-                  if name in self.feeds:
-                    if self.feeds[name].sync_on_startup and name not in current_sync_targets:
-                      self.log(self.logger.DEBUG, 'startup sync, adding %s' % name)
-                      current_sync_targets.append(name)
-                  else:
-                    self.log(self.logger.WARNING, 'unknown outfeed detected. wtf? %s' % name)
-                elif current_hook.startswith('plugins-'):
-                  name = 'plugin-' + current_hook[8:]
-                  if name in self.plugins:
-                    if self.plugins[name].sync_on_startup and name not in current_sync_targets:
-                      self.log(self.logger.DEBUG, 'startup sync, adding %s' % name)
-                      current_sync_targets.append(name)
-                  else:
-                    self.log(self.logger.WARNING, 'unknown plugin detected. wtf? %s' % name)
-                else:
-                  self.log(self.logger.WARNING, 'unknown hook detected. wtf? %s' % current_hook)
-        # got all whitelist matching hooks for current group which are not matched by blacklist as well in current_sync_targets. hopefully.
-        if len(current_sync_targets) > 0:
-          synclist[group] = {'targets': current_sync_targets, 'file_list': self.get_message_list_by_group(group) }
-    while len(synclist) > 0:
-      empty_sync_group = list()
-      for group in synclist:
-        if len(synclist[group]['file_list']) == 0:
-          empty_sync_group.append(group)
-        else:
-          sync_chunk = synclist[group]['file_list'][:500]
-          for message_id in sync_chunk:
-            for current_hook in synclist[group]['targets']:
-              if current_hook.startswith('outfeed-'):
-                if message_id not in self.feed_db[current_hook]:
-                  self.feeds[current_hook].add_article(message_id)
-              elif current_hook.startswith('plugin-'):
-                self.plugins[current_hook].add_article(message_id)
-              else:
-                self.log(self.logger.WARNING, 'unknown sync_hook detected. wtf? %s' % current_hook)
-          del synclist[group]['file_list'][:500]
-      for group in empty_sync_group:
-        del synclist[group]
-
-    self.log(self.logger.DEBUG, 'startup_sync done. hopefully.')
-    del current_sync_targets
-    del self.feed_db
-    
-    #files = filter(lambda f: os.stat(os.path.join(group_dir, f)).st_size > 0, os.listdir(group_dir)
-    #files = filter(lambda f: os.path.isfile(os.path.join('articles', f)), os.listdir('articles'))
-    #files.sort(key=lambda f: os.path.getmtime(os.path.join('articles', f)))
-    #for name in self.feeds:
-    #  if name.startswith('outfeed-127.0.0.1'):
-    #    for item in files:
-    #      self.feeds[name].add_article(item)
+    self._sync_on_startup()
 
     self.dropper.start()
 

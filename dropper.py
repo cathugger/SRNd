@@ -246,44 +246,27 @@ class dropper(threading.Thread):
         target = os.path.basename(os.readlink(group_link))
         if target != message_id:
           print "ERROR: [dropper] found a strange group link which should point to '%s' but instead points to '%s'. Won't overwrite this link." % (message_id, target)
+      self.redistribute_command(group, message_id, article_link)
 
-      # whitelist
-      for group_item in self.SRNd.hooks:
-        if (group_item[-1] == '*' and group.startswith(group_item[:-1])) or group == group_item:
-          for hook in self.SRNd.hooks[group_item]:
-            hooks[hook] = message_id
-      #for hook in self.hooks['*']:
-      #  links[os.path.join('hooks', hook, message_id)] = True
-      # blacklist
-      for group_item in self.SRNd.hook_blacklist:
-        if (group_item[-1] == '*' and group.startswith(group_item[:-1])) or group == group_item:
-          for hook in self.SRNd.hook_blacklist[group_item]:
-            if hook in hooks:
-              del hooks[hook]
-
-    # FIXME 1) crossposting may match multiple times and thus deliver same hook multiple times
-    # FIXME 2) if doing this block after group loop blacklist may filter valid hook from another group
-    # FIXME currently doing the second variant
-    for hook in hooks:
-      if hook.startswith('filesystem-'):
-        link = os.path.join('hooks', hook[11:], hooks[hook])
+  def redistribute_command(self, group, message_id, article_link):
+    # TODO add universal redistributor? Add SRNd queue? Currents methods thread-safe?
+    for hook in self.SRNd.get_allow_hooks(group):
+      if hook.startswith('plugin-'):
+        if hook in self.SRNd.plugins:
+          self.SRNd.plugins[hook].add_article(message_id)
+        else:
+          print '[dropper] unknown plugin hook detected. wtf? {}'.format(hook)
+      elif hook.startswith('outfeed-'):
+        if hook in self.SRNd.feeds:
+          self.SRNd.feeds[hook].add_article(message_id)
+        else:
+          print '[dropper] unknown outfeed detected. wtf? {}'.format(hook)
+      elif hook.startswith('filesystem-'):
+        link = os.path.join('hooks', hook[11:], message_id)
         if not os.path.exists(link):
           os.symlink(article_link, link)
-      elif hook.startswith('outfeeds-'):
-        parts = hook[9:].split(':')
-        name = 'outfeed-' + ':'.join(parts[:-1]) + '-' + parts[-1]
-        if name in self.SRNd.feeds:
-          self.SRNd.feeds[name].add_article(hooks[hook])
-        else:
-          print "[dropper] unknown outfeed detected. wtf? {0}".format(name)
-      elif hook.startswith('plugins-'):
-        name = 'plugin-' + hook[8:]
-        if name in self.SRNd.plugins:
-          self.SRNd.plugins[name].add_article(hooks[hook])
-        else:
-          print "[dropper] unknown plugin detected. wtf? {0}".format(name)
       else:
-        print "[dropper] unknown hook detected. wtf? {0}".format(hook)
+        print '[dropper] unknown hook detected. wtf? {}'.format(hook)
 
   def __article_path_up(self, article_path):
     article_path = article_path.split('!')
