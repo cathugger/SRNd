@@ -1,0 +1,11 @@
+
+
+#start_param database_directory=plugins/overchan
+#start_param allow_request=*
+#start_param request_limit=5
+#start_param bind_ip=127.0.0.1
+#start_param bind_port=6500
+#start_param bind_use_ipv6=false
+#start_param ensure_ascii=true
+#start_param pretty=false
+#start_param running=true
