@@ -9,9 +9,23 @@ import sys
 from hashlib import sha1
 
 class dropper(threading.Thread):
-  def __init__(self, listener, master, debug=3):
-    self.SRNd = master
-    self.socket = listener
+
+  def log(self, loglevel, message):
+    if loglevel >= self.loglevel:
+      self.logger.log(self.name, message, loglevel)
+
+  def __init__(self, **kwargs):
+    threading.Thread.__init__(self)
+    self.name = kwargs.get('thread_name', 'SRNd-dropper')
+    self.loglevel = kwargs.get('debug', 2)
+    self.socket = kwargs.get('listener', None)
+    self.SRNd = kwargs.get('master', None)
+    self.logger = kwargs.get('logger', None)
+    if self.SRNd is None:
+      raise Exception('[dropper] init error: value master is None')
+    if self.logger is None:
+      raise Exception('[dropper] init error: value logger is None')
+
     self.db_version = 2
     self.watching = os.path.join(os.getcwd(), "incoming")
     self.sqlite_conn = sqlite3.connect('dropper.db3')
@@ -29,20 +43,17 @@ class dropper(threading.Thread):
     self.sqlite_hasher.execute('CREATE INDEX IF NOT EXISTS article_hash_idx ON article_hashes(message_id_hash);')
     self.sqlite_hasher_conn.commit()
     self.reqs = ['message-id', 'newsgroups', 'date', 'subject', 'from', 'path']
-    threading.Thread.__init__(self)
-    self.name = "SRNd-dropper"
-    self.debug = debug
     try:
       db_version = int(self.sqlite.execute("SELECT value FROM config WHERE key = ?", ("db_version",)).fetchone()[0])
     except Exception as e:
       db_version = 0
-      if self.debug > 3: print "[dropper] error while fetching db_version: %s" % e
+      self.log(self.logger.ERROR, 'error while fetching db_version: {}'.format(e))
     if db_version < self.db_version:
       self.update_db(db_version)
     self.running = False
 
   def update_db(self, current_version):
-    if self.debug > 4: print "[dropper] should update db from version %i" % current_version
+    self.log(self.logger.INFO, 'should update db from version {}'.format(current_version))
     if current_version == 0:
       self.sqlite.execute("CREATE TABLE config (key text PRIMARY KEY, value text)")
       self.sqlite.execute('INSERT INTO config VALUES ("db_version","1")')
@@ -71,7 +82,7 @@ class dropper(threading.Thread):
     for item in os.listdir('incoming'):
       link = os.path.join('incoming', item)
       if os.path.isfile(link):
-        if self.debug > 2: print "[dropper] processing new article: {0}".format(link)
+        self.log(self.logger.DEBUG, 'processing new article: {}'.format(link))
         # TODO read line by line in validate and sanitize, combine them into single def. likely self.write() as well.
         # TODO ^ read and write headers directly, fixing them on the fly. write rest of article line by line.
         f = open(link, 'r')
@@ -81,20 +92,20 @@ class dropper(threading.Thread):
           self.validate(article)
           desthash, message_id, groups, additional_headers, article_path = self.sanitize(article)
         except Exception as e:
-          if self.debug > -1: print '[dropper] article is invalid. %s: %s' % (item, e)
+          self.log(self.logger.WARNING, 'article is invalid. {}: {}'.format(item, e))
           os.rename(link, os.path.join('articles', 'invalid', item))
           continue
         if os.path.isfile(os.path.join('articles', message_id)):
-          if self.debug > 2: print "[dropper] article is duplicate: %s, deleting." % item
+          self.log(self.logger.WARNING, 'article is duplicate: {}, deleting.'.format(item))
           os.remove(link)
           continue
         elif os.path.isfile(os.path.join('articles', 'censored', message_id)):
-          if self.debug > 0: print "[dropper] article is blacklisted: %s, deleting. this should not happen. at all." % message_id
+          self.log(self.logger.ERROR, 'article is blacklisted: {}, deleting. this should not happen. at all.'.format(message_id))
           os.remove(link)
           continue
-        elif self.debug > 1:
+        elif self.loglevel < self.logger.WARNING:
           if int(self.sqlite.execute('SELECT count(message_id) FROM articles WHERE message_id = ?', (message_id,)).fetchone()[0]) != 0:
-            print '[dropper] article \'%s\' was blacklisted and is moved back into incoming/. processing again' % message_id
+            self.log(self.logger.INFO, 'article \'{}\' was blacklisted and is moved back into incoming/. processing again'.format(message_id))
         self.write(desthash, message_id, groups, additional_headers, article, article_path)
         os.remove(link)
     self.busy = False
@@ -107,7 +118,7 @@ class dropper(threading.Thread):
     # check for header / body part exists in message
     # check if newsgroup exists in message
     # read required headers into self.dict
-    if self.debug > 3: print "[dropper] validating article.."
+    self.log(self.logger.DEBUG, 'validating article..')
     if not '\n' in article:
       raise Exception("no header or body in article")
     for index in xrange(0, len(article)):
@@ -127,7 +138,7 @@ class dropper(threading.Thread):
   def sanitize(self, article):
     # change required if necessary
     # don't read vars at all
-    if self.debug > 3: print "[dropper] sanitizing article.."
+    self.log(self.logger.DEBUG, 'sanitizing article..')
     found = dict()
     vals = dict()
     desthash = ''
@@ -158,26 +169,26 @@ class dropper(threading.Thread):
     additional_headers = list()
     for req in found:
       if not found[req]:
-        if self.debug > 3: print '[dropper] {0} missing'.format(req)
+        self.log(self.logger.DEBUG, '{} missing'.format(req))
         if req == 'message-id':
-          if self.debug > 2: print "[dropper] should generate message-id.."
+          self.log(self.logger.VERBOSE, 'should generate message-id..')
           rnd = ''.join(random.choice(string.ascii_lowercase) for x in range(10))
           vals[req] = '{0}{1}@POSTED_dropper.SRNd'.format(rnd, int(time.time()))
           additional_headers.append('Message-ID: {0}\n'.format(vals[req]))
         elif req == 'newsgroups':
           vals[req] = list()
         elif req == 'date':
-          if self.debug > 2: print "[dropper] should generate date.."
+          self.log(self.logger.VERBOSE, 'should generate date..')
           #additional_headers.append('Date: {0}\n'.format(date format blah blah)
           # FIXME add current date in list, index 0 ?
         elif req == 'subject':
-          if self.debug > 2: print "[dropper] should generate subject.."
+          self.log(self.logger.VERBOSE, 'should generate subject..')
           additional_headers.append('Subject: None\n')
         elif req == 'from':
-          if self.debug > 2: print "[dropper] should generate sender.."
+          self.log(self.logger.VERBOSE, 'should generate sender..')
           additional_headers.append('From: Anonymous Coward <nobody@no.where>\n')
         elif req == 'path':
-          if self.debug > 2: print "[dropper] should generate path.."
+          self.log(self.logger.VERBOSE, 'should generate path..')
           additional_headers.append('Path: ' + self.SRNd.instance_name + '\n')
       else:
         if req == 'newsgroups':
@@ -187,13 +198,12 @@ class dropper(threading.Thread):
     return (desthash, vals['message-id'], vals['newsgroups'], additional_headers, article_path)
 
   def write(self, desthash, message_id, groups, additional_headers, article, article_path):
-    if self.debug > 3: print "[dropper] writing article.."
     link = os.path.join('articles', message_id)
+    self.log(self.logger.DEBUG, 'writing article {}'.format(link))
     if os.path.exists(link):
-      if self.debug > 0: print "[dropper] got duplicate: {0} which is not in database, this should not happen.".format(message_id)
-      if self.debug > 0: print "[dropper] trying to fix by moving old file to articles/invalid so new article can be processed correctly."
+      self.log(self.logger.ERROR, 'got duplicate: {} which is not in database, this should not happen.'.format(message_id))
+      self.log(self.logger.ERROR, 'trying to fix by moving old file to articles/invalid so new article can be processed correctly.')
       os.rename(link, os.path.join('articles', 'invalid', message_id))
-    if self.debug > 3: print "[dropper] writing to", link
     f = open(link, 'w')
     for index in xrange(0, len(additional_headers)):
       f.write(additional_headers[index])
@@ -208,7 +218,7 @@ class dropper(threading.Thread):
     self.__article_path_up(article_path)
     hooks = dict()
     for group in groups:
-      if self.debug > 3: print "[dropper] creating link for", group
+      self.log(self.logger.DEBUG, 'creating link for {}'.format(group))
       article_link = '../../' + link
       group_dir = os.path.join('groups', group)
       if not os.path.exists(group_dir):
@@ -221,15 +231,15 @@ class dropper(threading.Thread):
         try: self.sqlite.execute('INSERT INTO articles VALUES (?, ?, ?, ?)', (message_id, group_id, article_id, int(time.time())))
         except: pass
         self.sqlite_conn.commit()
-        if self.debug > 3: print "[dropper] creating directory", group_dir
+        self.log(self.logger.DEBUG, 'creating directory {}'.format(group_dir))
         os.mkdir(group_dir)
       else:
         # FIXME don't rely on exists(group_dir) if directory is out of sync with database
         try:
             group_id = int(self.sqlite.execute('SELECT group_id FROM groups WHERE group_name = ?', (group,)).fetchone()[0])
         except TypeError, e:
-            if self.debug > 1:
-                print "[dropper] unable to get group_id for group", group
+            if self.loglevel < self.logger.CRITICAL:
+                self.log(self.logger.ERROR, 'unable to get group_id for group {}'.format(group))
                 sys.exit(1)
         try:
           article_id = int(self.sqlite.execute('SELECT article_id FROM articles WHERE message_id = ? AND group_id = ?', (message_id, group_id)).fetchone()[0])
@@ -245,7 +255,7 @@ class dropper(threading.Thread):
         # FIXME: except os.error as e; e.errno == 17 (file already exists). errno portable?
         target = os.path.basename(os.readlink(group_link))
         if target != message_id:
-          print "ERROR: [dropper] found a strange group link which should point to '%s' but instead points to '%s'. Won't overwrite this link." % (message_id, target)
+          self.log(self.logger.ERROR, 'found a strange group link which should point to "{}" but instead points to "{}". Won\'t overwrite this link.'.format(message_id, target))
       self.redistribute_command(group, message_id, article_link)
 
   def redistribute_command(self, group, message_id, article_link):
@@ -255,18 +265,18 @@ class dropper(threading.Thread):
         if hook in self.SRNd.plugins:
           self.SRNd.plugins[hook].add_article(message_id)
         else:
-          print '[dropper] unknown plugin hook detected. wtf? {}'.format(hook)
+          self.log(self.logger.ERROR, 'unknown plugin hook detected. wtf? {}'.format(hook))
       elif hook.startswith('outfeed-'):
         if hook in self.SRNd.feeds:
           self.SRNd.feeds[hook].add_article(message_id)
         else:
-          print '[dropper] unknown outfeed detected. wtf? {}'.format(hook)
+          self.log(self.logger.ERROR, 'unknown outfeed detected. wtf? {}'.format(hook))
       elif hook.startswith('filesystem-'):
         link = os.path.join('hooks', hook[11:], message_id)
         if not os.path.exists(link):
           os.symlink(article_link, link)
       else:
-        print '[dropper] unknown hook detected. wtf? {}'.format(hook)
+        self.log(self.logger.ERROR, 'unknown hook detected. wtf? {}'.format(hook))
 
   def __article_path_up(self, article_path):
     article_path = article_path.split('!')
@@ -285,3 +295,4 @@ class dropper(threading.Thread):
     self.running = True
     while self.running:
       time.sleep(5)
+    self.log(self.logger.INFO, 'bye')

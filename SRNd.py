@@ -151,7 +151,7 @@ class SRNd(threading.Thread):
     threading.Thread.__init__(self)
     self.name = "SRNd-listener"
     # FIXME add config var for dropper_debug
-    self.dropper = dropper.dropper(self.socket, self, self.dropper_debug)
+    self.dropper = dropper.dropper(thread_name='SRNd-dropper', logger=self.logger, listener=self.socket, master=self, debug=self.dropper_debug)
 
   def read_and_parse_config(self):
     # read configuration
