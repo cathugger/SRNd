@@ -554,10 +554,27 @@ class main(threading.Thread):
       self.sqlite.execute('ALTER TABLE articles ADD COLUMN sticky INTEGER DEFAULT 0')
     except:
       pass
+    try:
+      self.sqlite.execute('ALTER TABLE articles ADD COLUMN article_hash text')
+      update_db_1 = True
+    except:
+      update_db_1 = False
+    if update_db_1:
+      self.log(self.logger.WARNING, 'Start db update...')
+      try:
+        for row in self.sqlite.execute('SELECT article_uid FROM articles').fetchall():
+          article_hash = sha1(row[0]).hexdigest()
+          self.sqlite.execute('UPDATE articles SET article_hash = ? WHERE article_uid = ?', (article_hash, row[0]))
+        self.sqlite_conn.commit()
+      except Exception as e:
+        self.die('DB update status - FAIL. You need fix this error manually. If this firs start SRNd - ignore and restart SRNd. See overchan.py:562 for details. Error: {}'.format(e))
+      else:
+        self.log(self.logger.WARNING, 'DB update status - OK.')
     self.sqlite.execute('CREATE INDEX IF NOT EXISTS articles_group_idx ON articles(group_id);')
     self.sqlite.execute('CREATE INDEX IF NOT EXISTS articles_parent_idx ON articles(parent);')
     self.sqlite.execute('CREATE INDEX IF NOT EXISTS articles_article_idx ON articles(article_uid);')
     self.sqlite.execute('CREATE INDEX IF NOT EXISTS articles_last_update_idx ON articles(group_id, parent, last_update);')
+    self.sqlite.execute('CREATE INDEX IF NOT EXISTS articles_article_hash_idx ON articles(article_hash);')
     self.sqlite_conn.commit()
 
     self._load_templates()
@@ -928,18 +945,13 @@ class main(threading.Thread):
     return data[:-1] + self.upper_table[data[-1]]
 
   def linkit(self, rematch):
-    row = self.db_hasher.execute("SELECT message_id FROM article_hashes WHERE message_id_hash >= ? and message_id_hash < ?", (rematch.group(2), self.upp_it(rematch.group(2)))).fetchall()
+    row = self.sqlite.execute("SELECT article_uid, parent, group_id FROM articles WHERE article_hash >= ? and article_hash < ?", (rematch.group(2), self.upp_it(rematch.group(2)))).fetchall()
     if not row or len(row) > 1:
       # hash not found or multiple matches for that 10 char hash
       return rematch.group(0)
-    message_id = row[0][0]
-    parent_row = self.sqlite.execute("SELECT parent, group_id FROM articles WHERE article_uid = ?", (message_id,)).fetchone()
-    if not parent_row:
-      # not an overchan article (anymore)
-      return rematch.group(0)
-    parent_id = parent_row[0]
-    if self.__current_markup_parser_group_id is not None and parent_row[1] != self.__current_markup_parser_group_id:
-      another_board = u' [%s]' % self.get_board_data(int(parent_row[1]), 'board')[:20]
+    message_id, parent_id, group_id = row[0]
+    if self.__current_markup_parser_group_id is not None and group_id != self.__current_markup_parser_group_id:
+      another_board = u' [%s]' % self.get_board_data(int(group_id), 'board')[:20]
     else:
       another_board = ''
     if self.config['fake_id']:
@@ -1414,8 +1426,26 @@ class main(threading.Thread):
         image_name, thumb_name = result
         image_name_original = 'pic unrelated'
 
+    insert_list = [\
+        ('article_uid',  message_id),
+        ('sender',       sender.decode('UTF-8')),
+        ('email',        email.decode('UTF-8')),
+        ('subject',      subject.decode('UTF-8')),
+        ('sent',         sent),
+        ('parent',       parent),
+        ('message',      message.decode('UTF-8')),
+        ('imagename',    image_name_original.decode('UTF-8')),
+        ('imagelink',    image_name),
+        ('thumblink',    thumb_name),
+        ('last_update',  last_update),
+        ('public_key',   public_key),
+        ('received',     int(time.time())),
+        ('article_hash', sha1(message_id).hexdigest()),
+        ('group_id',     'dummy')]
+    insert_request = 'INSERT INTO articles({}) VALUES ({})'.format(', '.join([x[0] for x in insert_list]), ','.join(['?'] * len(insert_list)))
+    del insert_list[-1]
     for group_id in group_ids:
-      self.sqlite.execute('INSERT INTO articles(article_uid, group_id, sender, email, subject, sent, parent, message, imagename, imagelink, thumblink, last_update, public_key, received) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)', (message_id, group_id, sender.decode('UTF-8'), email.decode('UTF-8'), subject.decode('UTF-8'), sent, parent, message.decode('UTF-8'), image_name_original.decode('UTF-8'), image_name, thumb_name, last_update, public_key, int(time.time())))
+      self.sqlite.execute(insert_request, [x[1] for x in insert_list] + [group_id,])
       self.sqlite.execute('UPDATE groups SET last_update=?, article_count = (SELECT count(article_uid) FROM articles WHERE group_id = ?) WHERE group_id = ?', (int(time.time()), group_id, group_id))
     self.sqlite_conn.commit()
     return True
