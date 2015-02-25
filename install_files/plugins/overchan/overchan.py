@@ -502,8 +502,6 @@ class main(threading.Thread):
     self.dropperdb = self.sqlite_dropper_conn.cursor()
     self.sqlite_censor_conn = sqlite3.connect('censor.db3')
     self.censordb = self.sqlite_censor_conn.cursor()
-    self.sqlite_hasher_conn = sqlite3.connect('hashes.db3')
-    self.db_hasher = self.sqlite_hasher_conn.cursor()
     self.sqlite_conn = sqlite3.connect(os.path.join(self.config['database_directory'], 'overchan.db3'))
     self.sqlite = self.sqlite_conn.cursor()
     if not self.config['sqlite_synchronous']:
@@ -912,7 +910,6 @@ class main(threading.Thread):
           got_control = False
     self.sqlite_censor_conn.close()
     self.sqlite_conn.close()
-    self.sqlite_hasher_conn.close()
     self.sqlite_dropper_conn.close()
     self.log(self.logger.INFO, 'bye')
 
