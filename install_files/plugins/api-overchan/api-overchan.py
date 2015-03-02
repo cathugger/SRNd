@@ -102,11 +102,12 @@ class main(threading.Thread):
         'cache_reply': False,
         'cache_life': 5,
         'cache_max': 10,
-        'cache_allow': '*'}
+        'cache_allow': '*',
+        'cache_disallow': 'error;info'}
     for target in args:
       if target in cfg_def:
         try:
-          if type(cfg_def[target]) is bool and args[target].lower() in ('false', 'no', '0', 'disable'):
+          if isinstance(cfg_def[target], bool) and args[target].lower() in ('false', 'no', '0', 'disable'):
             cfg_new[target] = False
           else:
             cfg_new[target] = type(cfg_def[target])(args[target])

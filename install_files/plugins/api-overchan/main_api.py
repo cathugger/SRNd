@@ -21,40 +21,34 @@ class MainAPIHandler(object):
         5: 'incorrect data in {key}'}
     for up_error in args.get('errors', {}):
       self.errors[up_error] = args['errors'][up_error]
-    self.cmd_cache = self._init_cmd_cache(self.config['cache_allow'].split(';'))
+    self.cmd_cache = self._init_cmd_cache(self.config['cache_allow'].split(';'), self.config['cache_disallow'].split(';'))
 
-  def _init_cmd_cache(self, cmd_list):
+  def _init_cmd_cache(self, allows, disallows):
     cmd_cache = dict()
-    if self.config['cache_reply']:
+    if self.config['cache_reply'] and self.config['cache_max'] > 0:
       for cmd in self.requests:
-        for allow in cmd_list:
-          if cmd == allow or allow == '*' or (allow.endswith('*') and cmd.startswith(allow[:-1])):
-            cmd_cache[cmd] = dict()
-            break
+        if self._check_for_in(cmd, allows) and not self._check_for_in(cmd, disallows):
+          cmd_cache[cmd] = dict()
     return cmd_cache
 
   def _get_all_handles(self, allows, disallows):
     request_handles = dict()
     for method in [xxx for xxx in dir(self) if xxx.startswith('_handle_')]:
       handle_name = method[8:]
-      add_this = False
-      # add allowed requests
-      for allow in allows:
-        if handle_name == allow or allow == '*' or (allow.endswith('*') and handle_name.startswith(allow[:-1])):
-          add_this = True
-          break
-      # remove sisallowe requests
-      for disallow in disallows:
-        if handle_name == disallow or disallow == '*' or (disallow.endswith('*') and handle_name.startswith(disallow[:-1])):
-          add_this = False
-          break
-      if add_this:
+      if self._check_for_in(handle_name, allows) and not self._check_for_in(handle_name, disallows):
         request_handles[handle_name] = getattr(self, method)
         # add missing attr
         for add_attr in ('keys', 'requ'):
           if add_attr not in request_handles[handle_name].__dict__:
             request_handles[handle_name].__dict__[add_attr] = None
     return request_handles
+
+  @staticmethod
+  def _check_for_in(target, regex_list):
+    for regex in regex_list:
+      if target == regex or regex == '*' or (regex.endswith('*') and target.startswith(regex[:-1])):
+        return True
+    return False
 
   def send_as_json(self, data):
     if self.config['pretty']:
@@ -82,6 +76,7 @@ class MainAPIHandler(object):
       self.request_count = 0
     else:
       self.request_count += 1
+    return self.request_count <= self.config['request_limit']
 
   def _cleaned_keys(self, cmd, request_data):
     if self.requests[cmd].keys is None:
@@ -91,7 +86,7 @@ class MainAPIHandler(object):
       if c_key in request_data:
         if self.requests[cmd].keys[c_key] is None:
           requ[c_key] = request_data[c_key]
-        elif type(self.requests[cmd].keys[c_key]) is bool:
+        elif isinstance(self.requests[cmd].keys[c_key], bool):
           requ[c_key] = False if request_data[c_key].lower() in ('false', 'no', '0', 'disable') else True
         else:
           try:
@@ -103,18 +98,17 @@ class MainAPIHandler(object):
   def go(self, cmd, request_data):
     if cmd not in self.requests:
       return False, self.send_as_json(self.send_error(1, cmd=cmd))
-
-    curent_time = int(time.time())
     requ = self._cleaned_keys(cmd, request_data)
     misskey = self._missing_request_key(cmd, requ)
-    if misskey:
+    if misskey is not False:
       return False, self.send_as_json(misskey)
-    if self.request_count > self.config['request_limit']:
-      data = (False, self.send_as_json(self.send_error(2)))
-    elif cmd in self.cmd_cache:
+
+    curent_time = int(time.time())
+    if cmd in self.cmd_cache:
       data = self._get_from_cache(cmd, requ, curent_time)
+    elif not self._request_counter(curent_time):
+      data = (False, self.send_as_json(self.send_error(2)))
     else:
-      self._request_counter(curent_time)
       data = (False, self.send_as_json(self.requests[cmd](requ)))
     return data
 
@@ -122,9 +116,10 @@ class MainAPIHandler(object):
     hashkey = hash(str(request_data))
     if hashkey in self.cmd_cache[cmd] and self.cmd_cache[cmd][hashkey][0] + self.config['cache_life'] > curent_time:
       return True, self.cmd_cache[cmd][hashkey][1]
+    if not self._request_counter(curent_time):
+      return False, self.send_as_json(self.send_error(2))
     if len(self.cmd_cache[cmd]) >= self.config['cache_max']:
       self._clearnup_cache(cmd, curent_time)
-    self._request_counter(curent_time)
     self.cmd_cache[cmd][hashkey] = (curent_time, self.send_as_json(self.requests[cmd](request_data)))
     return False, self.cmd_cache[cmd][hashkey][1]
 
@@ -136,5 +131,5 @@ class MainAPIHandler(object):
       self.cmd_cache[cmd].pop(random.choice(self.cmd_cache[cmd].keys()))
 
   def info(self):
-    return 'API {}: allowed API command: {}. Cached reply: {}.'.format(self.version, ', '.join([x for x in self.requests]), ', '.join([x for x in self.cmd_cache]))
+    return 'API {0} allows request: {1}.\nAPI {0} cached replies: {2}.'.format(self.version, ', '.join([x for x in self.requests]), ', '.join([x for x in self.cmd_cache]))
 
