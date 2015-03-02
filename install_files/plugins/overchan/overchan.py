@@ -58,6 +58,7 @@ class main(threading.Thread):
 
     self.config = dict()
     self._init_config(args)
+    self.config['top_counter'] = self.config['top_step']
 
     error = ['{} not in arguments'.format(arg) for arg in ('template_directory', 'output_directory', 'database_directory', 'temp_directory') if not arg in self.config]
     if len(error) > 0:
@@ -137,7 +138,10 @@ class main(threading.Thread):
                'minify_html': False,
                'replace_root_nope': False,
                'utc_time_offset': 0.0,
-               'tz_name': 'UTC'
+               'tz_name': 'UTC',
+               'enable_top': False,
+               'top_step': 10,
+               'top_count': 100
     }
     # (to self.config['thumbs'], from args, default)
     thumbnail_files = (('no_file', 'no_file', 'nope.png'), ('document', 'document_file', 'document.png'), ('invalid', 'invalid_file', 'invalid.png'), ('audio', 'audio_file', 'audio.png'), \
@@ -890,18 +894,15 @@ class main(threading.Thread):
           self.regenerate_boards.clear()
           regen_overview = True
         if len(self.regenerate_threads) > 0:
-          do_sleep = len(self.regenerate_threads) > self.config['sleep_threshold']
-          if do_sleep:
-            self.log(self.logger.DEBUG, 'threads: should sleep')
-          for thread in self.regenerate_threads:
-            self.generate_thread(thread)
-            if do_sleep: time.sleep(self.config['sleep_time'])
+          self._generate_threads()
           self.regenerate_threads.clear()
           regen_overview = True
         if regen_overview:
           self.generate_overview()
           # generate menu.html simultaneously with overview
           self.generate_menu()
+          if self.config['enable_top']:
+            self.generate_top_page()
           regen_overview = False
         if got_control:
           self.sqlite_conn.commit()
@@ -912,6 +913,40 @@ class main(threading.Thread):
     self.sqlite_conn.close()
     self.sqlite_dropper_conn.close()
     self.log(self.logger.INFO, 'bye')
+
+  def _generate_threads(self):
+    step_say = 5 * self.config['sleep_threshold'] if self.config['sleep_threshold'] > 0 else 10
+    silence = len(self.regenerate_threads) >= step_say
+    do_sleep = len(self.regenerate_threads) > self.config['sleep_threshold']
+    if do_sleep:
+      self.log(self.logger.DEBUG, 'threads: should sleep')
+    start_time = time.time()
+    result_time = 0.0
+    result_counter = 0
+    counter = 0
+    for thread in self.regenerate_threads:
+      self.generate_thread(thread, silence)
+      if do_sleep: time.sleep(self.config['sleep_time'])
+      counter += 1
+      result_counter += 1
+      if silence and counter >= step_say:
+        all_time = time.time() - start_time
+        result_time += all_time
+        sleep_time = self.config['sleep_time'] * counter if do_sleep else 0
+        self.log(self.logger.INFO, 'generating {} threads at {:0.4f}s [work:{:0.4f}s, sleep:{:0.4f}s]'.format(counter, all_time, (all_time - sleep_time), sleep_time))
+        start_time = time.time()
+        counter = 0
+    if silence and counter > 0:
+      all_time = time.time() - start_time
+      result_time += all_time
+      sleep_time = self.config['sleep_time'] * counter if do_sleep else 0
+      self.log(self.logger.INFO, 'generating {} threads at {:0.4f}s [work:{:0.4f}s, sleep:{:0.4f}s]'.format(counter, all_time, (all_time - sleep_time), sleep_time))
+    if silence:
+      sleep_time = self.config['sleep_time'] * result_counter if do_sleep else 0
+      work_time = result_time - sleep_time
+      self.log(self.logger.INFO, 'result generating {} threads {:0.4f}s [work:{:0.4f}s, sleep:{:0.4f}s]'.format(result_counter, result_time, work_time, sleep_time))
+      self.log(self.logger.INFO, 'average generating 1 thread {:0.4f}s [work:{:0.4f}s, sleep:{:0.4f}s]'.format(result_time/result_counter, work_time/result_counter, sleep_time/result_counter))
+    self.regenerate_threads.clear()
 
   def message_uid_to_fake_id(self, message_uid):
     fake_id = self.dropperdb.execute('SELECT article_id FROM articles WHERE message_id = ?', (message_uid,)).fetchone()
@@ -1477,6 +1512,7 @@ class main(threading.Thread):
     return pages
 
   def generate_board(self, group_id):
+    start_time = time.time()
     threads_per_page = self.config['threads_per_page']
     pages_per_board = self.config['pages_per_board']
     board_data = self._get_board_root_posts(group_id, threads_per_page * pages_per_board)
@@ -1488,6 +1524,7 @@ class main(threading.Thread):
     else:
       generate_archive = False
 
+    generation = list()
     basic_board = dict()
     basic_board['board_subtype'] = ''
     basic_board['boardlist'] = self.get_board_list(group_id)
@@ -1501,7 +1538,7 @@ class main(threading.Thread):
     for board, page_data in self._board_root_post_iter(board_data, group_id, pages, threads_per_page):
       isgenerated = True
       threads = list()
-      self.log(self.logger.INFO, 'generating %s/%s-%s.html' % (self.config['output_directory'], board_name_unquoted, board))
+      generation.append(str(board))
       for root_row in page_data:
         root_message_id_hash = sha1(root_row[0]).hexdigest()
         threads.append(
@@ -1518,6 +1555,8 @@ class main(threading.Thread):
       f.close()
     last_root_message = board_data[-1][0] if thread_count > 0 else None
     del board_data, t_engine_mapper_board, prepared_template
+    if len(generation) > 0:
+      self.log(self.logger.INFO, 'generating {}/{}-({}).html at {:0.4f}s'.format(self.config['output_directory'], board_name_unquoted, ','.join(generation), (time.time() - start_time)))
     if generate_archive and (self.cache['page_stamp'][group_id].get(0, '') != last_root_message or (not isgenerated and len(self.regenerate_threads) > 0)):
       self.cache['page_stamp'][group_id][0] = last_root_message
       self.generate_archive(group_id)
@@ -1616,7 +1655,7 @@ class main(threading.Thread):
       message = data[4]
     message = self.markup_parser(message, group_id)
     if father == '':
-      child_count = int(self.sqlite.execute('SELECT count(article_uid) FROM articles WHERE parent = ? AND parent != article_uid AND group_id = ?', (data[0], group_id)).fetchone()[0])
+      child_count = int(self.sqlite.execute('SELECT count(article_uid) FROM articles WHERE parent = ? AND parent != article_uid', (data[0],)).fetchone()[0])
       if self.config['bump_limit'] > 0 and child_count >= self.config['bump_limit']:
         parsed_data['thread_status'] = '[fat]'
       else:
@@ -1660,6 +1699,7 @@ class main(threading.Thread):
     return parsed_data
 
   def generate_archive(self, group_id):
+    start_time = time.time()
     threads_per_page = self.config['archive_threads_per_page']
     pages_per_board = self.config['archive_pages_per_board']
     board_data = self._get_board_root_posts(group_id, threads_per_page * pages_per_board, self.config['threads_per_page'] * self.config['pages_per_board'])
@@ -1667,6 +1707,7 @@ class main(threading.Thread):
     if thread_count == 0: return
     pages = self._get_page_count(thread_count, threads_per_page)
 
+    generation = list()
     basic_board = dict()
     basic_board['board_subtype'] = ' :: archive'
     basic_board['boardlist'] = self.get_board_list()
@@ -1678,7 +1719,7 @@ class main(threading.Thread):
     t_engine_mapper_board = dict()
     for board, page_data in self._board_root_post_iter(board_data, group_id, pages, threads_per_page, 'page_stamp_archiv'):
       threads = list()
-      self.log(self.logger.INFO, 'generating %s/%s-archive-%s.html' % (self.config['output_directory'], board_name_unquoted, board))
+      generation.append(str(board))
       for root_row in page_data:
         threads.append(
           self.t_engine['archive_threads'].substitute(
@@ -1692,6 +1733,8 @@ class main(threading.Thread):
       f = codecs.open(os.path.join(self.config['output_directory'], '{0}-archive-{1}.html'.format(board_name_unquoted, board)), 'w', 'UTF-8')
       f.write(prepared_template.substitute(t_engine_mapper_board))
       f.close()
+    if len(generation) > 0:
+      self.log(self.logger.INFO, 'generating {}/{}-archive-({}).html at {:0.4f}s'.format(self.config['output_directory'], board_name_unquoted, ','.join(generation), (time.time() - start_time)))
 
   def generate_recent(self, group_id):
     # get only freshly updated threads
@@ -1737,7 +1780,7 @@ class main(threading.Thread):
       except Exception as e:
         self.log(self.logger.ERROR, 'could not delete %s: %s' % (thread_path, e))
 
-  def generate_thread(self, root_uid):
+  def generate_thread(self, root_uid, silence):
     root_row = self.sqlite.execute('SELECT article_uid, sender, subject, sent, message, imagename, imagelink, thumblink, public_key, last_update, closed, sticky, group_id \
         FROM articles WHERE article_uid = ?', (root_uid,)).fetchone()
     if not root_row:
@@ -1755,17 +1798,18 @@ class main(threading.Thread):
     if isblocked_board:
       self.delete_thread_page(thread_path)
     else:
-      self.create_thread_page(root_row[:-1], thread_path, 10000, root_message_id_hash, group_id)
+      self.create_thread_page(root_row[:-1], thread_path, 10000, root_message_id_hash, group_id, silence)
     if child_count > 80:
       for max_child_view in range(50, child_count, 100):
         thread_path = os.path.join(self.config['output_directory'], 'thread-%s-%s.html' % (root_message_id_hash[:10], max_child_view))
         if isblocked_board:
           self.delete_thread_page(thread_path)
         else:
-          self.create_thread_page(root_row[:-1], thread_path, max_child_view, root_message_id_hash, group_id)
+          self.create_thread_page(root_row[:-1], thread_path, max_child_view, root_message_id_hash, group_id, silence)
 
-  def create_thread_page(self, root_row, thread_path, max_child_view, root_message_id_hash, group_id):
-    self.log(self.logger.INFO, 'generating %s' % (thread_path,))
+  def create_thread_page(self, root_row, thread_path, max_child_view, root_message_id_hash, group_id, silence):
+    if not silence:
+      self.log(self.logger.INFO, 'generating %s' % (thread_path,))
     t_engine_mappings_thread_single = dict()
     t_engine_mappings_thread_single['thread_single'] = self.t_engine['board_threads'].substitute(self.get_base_thread(root_row, root_message_id_hash, group_id, max_child_view, True))
     t_engine_mappings_thread_single['boardlist'] = self.get_board_list()
@@ -1990,6 +2034,40 @@ class main(threading.Thread):
       t_engine_mappings_news['comment_count'] = self.sqlite.execute('SELECT count(article_uid) FROM articles WHERE \
           parent = ? AND parent != article_uid AND group_id = ?', (row[4], news_board[0])).fetchone()[0]
     return self.t_engine['news'].substitute(t_engine_mappings_news)
+
+  def generate_top_page(self):
+    if self.config['top_counter'] >= self.config['top_step']:
+      self.config['top_counter'] = 0
+    else:
+      self.config['top_counter'] += 1
+      return
+
+    start_time = time.time()
+    top_list = list()
+    exclude_flags = self.cache['flags']['hidden'] | self.cache['flags']['blocked']
+    for row in self.sqlite.execute('SELECT article_uid, sender, subject, sent, message, imagename, imagelink, thumblink, public_key, parent, article_hash, articles.group_id \
+        FROM groups, articles WHERE groups.group_id = articles.group_id AND (cast(groups.flags as integer) & ?) = 0 ORDER BY sent DESC LIMIT ?', (exclude_flags, self.config['top_count'])).fetchall():
+      if row[9] in ('', row[0]):
+        # root
+        data = self.get_preparse_post(row[:9], row[10], -1, 15, 2000, 0)
+        data['parenthash_full'] = row[10]
+        data['parenthash'] = row[10][:10]
+      else:
+        data = self.get_preparse_post(row[:9], row[10], -1, 15, 2000, 0, sha1(row[9]).hexdigest())
+      data['frontend'] = u'{} => {}'.format(data['frontend'], self.get_board_data(row[11], 'board')[:20])
+      nopic = '' if row[7] != '' else 'no'
+      top_list.append(self.t_engine['message_'+ nopic +'pic_closed'].substitute(data))
+
+    t_engine_mapper_top = {\
+       'thread_single': ''.join(top_list),
+       'subject': self.config['top_count'],
+       'boardlist': self.get_board_list(),
+       'board': 'top ',
+       'board_description': '',
+       'target': ''}
+    with codecs.open(os.path.join(self.config['output_directory'], 'top.html'), 'w', 'UTF-8') as f:
+      f.write(self.t_engine['thread_single_closed'].substitute(t_engine_mapper_top))
+    self.log(self.logger.INFO, 'generating {}/top.html at {:0.4f}s'.format(self.config['output_directory'], (time.time() - start_time)))
 
 if __name__ == '__main__':
   # FIXME fix this shit
