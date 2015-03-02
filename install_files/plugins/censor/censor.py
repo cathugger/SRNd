@@ -471,7 +471,7 @@ class main(threading.Thread):
       self.allowed_cache = dict()
     except Exception as e:
       self.log(self.logger.WARNING, "could not handle srnd-acl-mod: %s, line = '%s'" % (e, line))
-    return (key, None)
+    return key, None
 
   def handle_postman_mod(self, line):
     self.log(self.logger.DEBUG, "handle postman-mod: %s" % line)
@@ -480,7 +480,7 @@ class main(threading.Thread):
       local_name, allow, expires, logout = [base64.urlsafe_b64decode(x) for x in base64_blob.split(':')]
     except:
       self.log(self.logger.WARNING, 'get corrupted data for %s' % userkey)
-      return (userkey, None)
+      return userkey, None
     local_name = basicHTMLencode(local_name[:20])
     try:
       allow = int(allow)
@@ -507,7 +507,7 @@ class main(threading.Thread):
       self.postmandb_conn.commit()
     except Exception as e:
       self.log(self.logger.WARNING, "could not handle postman-mod: %s, line = '%s'" % (e, line))
-    return (userkey, None)
+    return userkey, None
 
   def handle_srnd_cmd(self, line):
     self.log(self.logger.DEBUG, "handle srnd-cmd: %s" % line)
@@ -517,13 +517,13 @@ class main(threading.Thread):
       send, received, replayable = int(send), int(received), int(replayable)
     except:
       self.log(self.logger.WARNING, 'handle srnd-cmd: get corrupted data for %s' % command)
-      return (command, None)
+      return command, None
     if send not in (-1, 0, 1) or received not in (-1, 0, 1) or replayable not in (0, 1):
       self.log(self.logger.WARNING, 'handle srnd-cmd: get invalid value for %s, send=%s, received=%s, replayable=%s' % (command, send, received, replayable))
-      return (command, None)
+      return command, None
     if command == 'handle-srnd-cmd':
       self.log(self.logger.WARNING, 'handle srnd-cmd: modifying self is not allowed. This maybe suicide!')
-      return (command, None)
+      return command, None
 
     try:
       if int(self.censordb.execute('SELECT count(command) FROM cmd_map WHERE command = ?', (command,)).fetchone()[0]) == 1:
@@ -534,7 +534,7 @@ class main(threading.Thread):
         self.log(self.logger.WARNING, "handle srnd-cmd: command %s not found or duplicated" % (command,))
     except Exception as e:
       self.log(self.logger.WARNING, "handle srnd-cmd: db not upgraded: %s, line = '%s'" % (e, line))
-    return (command, None)
+    return command, None
 
   def handle_delete(self, line, debug=False):
     command, message_id = line.split(" ", 1)
@@ -542,7 +542,7 @@ class main(threading.Thread):
 
     if os.path.exists(os.path.join("articles", "restored", message_id)):
       self.log(self.logger.DEBUG, "%s has been restored, ignoring delete" % message_id)
-      return (message_id, None)
+      return message_id, None
     if command == 'delete':
       row = self.overchandb.execute('SELECT parent from articles WHERE article_uid = ?', (message_id,)).fetchone()
       if row != None:
@@ -582,19 +582,20 @@ class main(threading.Thread):
     elif not os.path.exists(censore_path):
       f = open(censore_path, 'w')
       f.close()
-    return (message_id, groups)
+    return message_id, groups
 
-  def handle_overchan_dummy_mod(self, line):
+  @staticmethod
+  def handle_overchan_dummy_mod(line):
     # overchan specific, gets handled at overchan plugin via redistribute_command()
     group_name = line.lower().split(' ')[1]
-    return (group_name, (group_name,))
+    return group_name, (group_name,)
 
   def handle_sticky_close(self, line):
     message_id = line.split(' ')[1]
     groups = list()
     for row in self.overchandb.execute('SELECT groups.group_name from articles, groups WHERE articles.article_uid = ? and groups.group_id = articles.group_id', (message_id,)).fetchall():
       groups.append(row[0])
-    return (message_id, groups)
+    return message_id, groups
 
 if __name__ == '__main__':
   print "[%s] %s" % ("censor", "this plugin can't run as standalone version.")

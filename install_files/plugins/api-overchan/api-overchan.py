@@ -21,7 +21,8 @@ class OverchanAPI(BaseHTTPRequestHandler):
   def log_message(self, _format, *args):
     return
 
-  def do_POST(self):
+  @staticmethod
+  def do_POST():
     return
 
   def do_GET(self):

@@ -38,7 +38,6 @@ class main(threading.Thread):
       exit(1)
     else:
       raise Exception(message)
-      return
 
   def __init__(self, thread_name, logger, args):
     threading.Thread.__init__(self)
@@ -560,10 +559,12 @@ class main(threading.Thread):
     parent = sha1(parent_id).hexdigest()[:10]
     return '%s<a href="thread-%s.html#%s">%s</a>' % (rematch.group(1), parent, rematch.group(2), rematch.group(2))
   
-  def quoteit(self, rematch):
+  @staticmethod
+  def quoteit(rematch):
     return '<span class="quote">%s</span>' % rematch.group(0).rstrip("\r")
 
-  def codeit(self, rematch):
+  @staticmethod
+  def codeit(rematch):
     return '<div class="code">%s</div>' % rematch.group(1)
 
   def parse_message(self, message_id, fd):
@@ -1025,19 +1026,19 @@ class main(threading.Thread):
       t_engine_mappings_overview['message'] = message
     
     weekdays = ('Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday')
-    max = 0
+    max_ = 0
     stats = list()
     bar_length = 20
     days = 21
     totals = int(self.sqlite.execute('SELECT count(1) FROM articles WHERE sent > strftime("%s", "now", "-' + str(days) + ' days")').fetchone()[0])
     stats.append(self.template_stats_usage_row.replace('%%postcount%%', str(totals)).replace('%%date%%', 'all posts').replace('%%weekday%%', '').replace('%%bar%%', 'since %s days' % days))
     for row in self.sqlite.execute('SELECT count(1) as counter, strftime("%Y-%m-%d",  sent, "unixepoch") as day, strftime("%w", sent, "unixepoch") as weekday FROM articles WHERE sent > strftime("%s", "now", "-' + str(days) + ' days") GROUP BY day ORDER BY day DESC').fetchall():
-      if row[0] > max:
-        max = row[0]
+      if row[0] > max_:
+        max_ = row[0]
       stats.append((row[0], row[1], weekdays[int(row[2])]))
     for index in range(1, len(stats)):
       graph = ''
-      for x in range(0, int(float(stats[index][0])/max*bar_length)):
+      for x in range(0, int(float(stats[index][0])/max_*bar_length)):
         graph += '='
       if len(graph) == 0:
         graph = '&nbsp;'

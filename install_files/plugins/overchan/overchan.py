@@ -32,8 +32,8 @@ import nacl.signing
 try:
   import cv2
   cv2_load_result = 'true'
-except ImportError as cv2_load_result:
-  pass
+except ImportError as e:
+  cv2_load_result = e
 
 class main(threading.Thread):
 
@@ -462,7 +462,7 @@ class main(threading.Thread):
           injected_cmd[target].append((formatting_cmd, evil_cmd[cmd]['pos']))
    # sort and join
     for target in injected_cmd:
-      injected_cmd[target] = '\n'.join(y[0] for y in sorted(injected_cmd[target], key=lambda x: x[1]))
+      injected_cmd[target] = '\n'.join(y[0] for y in sorted(injected_cmd[target], key=lambda x_: x_[1]))
     return injected_cmd
 
   def past_init(self):
@@ -963,31 +963,40 @@ class main(threading.Thread):
     parent = sha1(parent_id).hexdigest()[:10]
     return u'<a onclick="return highlight(\'{0}\');" href="thread-{1}.html#{0}">{2}{3}{4}</a>'.format(rematch.group(2), parent, rematch.group(1), article_name, another_board)
 
-  def quoteit(self, rematch):
+  @staticmethod
+  def quoteit(rematch):
     return u'<span class="quote">%s</span>' % rematch.group(0).rstrip("\r")
 
-  def clickit(self, rematch):
+  @staticmethod
+  def clickit(rematch):
     return u'<a href="%s%s">%s%s</a>' % (rematch.group(1), rematch.group(2), rematch.group(1), rematch.group(2))
 
-  def codeit(self, text):
+  @staticmethod
+  def codeit(text):
     return u'<pre class="code">{}</pre>'.format(text)
 
-  def sjisit (self, text):
+  @staticmethod
+  def sjisit (text):
     return u'<pre class="aa">{}</pre>'.format(text)
 
-  def spoilit(self, rematch):
+  @staticmethod
+  def spoilit(rematch):
     return u'<span class="spoiler">%s</span>' % rematch.group(1)
 
-  def boldit(self, rematch):
+  @staticmethod
+  def boldit(rematch):
     return u'<b>%s</b>' % rematch.group(1)
 
-  def italit(self, rematch):
+  @staticmethod
+  def italit(rematch):
     return u'<i>%s</i>' % rematch.group(1)
 
-  def strikeit(self, rematch):
+  @staticmethod
+  def strikeit(rematch):
     return u'<strike>%s</strike>' % rematch.group(1)
 
-  def underlineit(self, rematch):
+  @staticmethod
+  def underlineit(rematch):
     return u'<span style="border-bottom: 1px solid">%s</span>' % rematch.group(1)
 
   def markup_parser(self, message, group_id=None):
@@ -1222,7 +1231,6 @@ class main(threading.Thread):
     fd.close()
     result = parser.close()
     del parser
-    out_link = None
     image_name_original = ''
     image_name = ''
     thumb_name = ''
@@ -1461,7 +1469,8 @@ class main(threading.Thread):
         self.cache[cache_target][group_id][page] = first_last_parent
         yield page, page_data
 
-  def _get_page_count(self, thread_count, threads_per_page):
+  @staticmethod
+  def _get_page_count(thread_count, threads_per_page):
     pages = int(thread_count / threads_per_page)
     if (thread_count % threads_per_page != 0) or pages == 0:
       pages += 1
@@ -1553,7 +1562,8 @@ class main(threading.Thread):
       childs.append(self.t_engine['message_'+ nopic +'pic'+ closed].substitute(childs_message))
     return childs
 
-  def generate_pagelist(self, count, current, board_name_unquoted, archive_link=False):
+  @staticmethod
+  def generate_pagelist(count, current, board_name_unquoted, archive_link=False):
     if count < 2: return ''
     pagelist = list()
     pagelist.append('Pages: ')
@@ -1711,7 +1721,8 @@ class main(threading.Thread):
     f.write(self.t_engine['board'].substitute(t_engine_mapper_board_recent))
     f.close()
 
-  def frontend(self, uid):
+  @staticmethod
+  def frontend(uid):
     if '@' in uid:
       frontend = uid.split('@')[1][:-1]
     else:

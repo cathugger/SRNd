@@ -62,7 +62,8 @@ class logger(threading.Thread):
     self.shut_down = False
     self.name = 'logger'
 
-  def encode_big_endian(self, number, length):
+  @staticmethod
+  def encode_big_endian(number, length):
     if number >= 256**length:
       raise OverflowError("%i can't be represented in %i bytes." % (number, length))
     data = b""

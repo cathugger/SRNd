@@ -35,7 +35,6 @@ class main(threading.Thread):
       exit(1)
     else:
       raise Exception(message)
-      return
 
   def __init__(self, thread_name, logger, args):
     threading.Thread.__init__(self)
@@ -99,7 +98,7 @@ class main(threading.Thread):
       # needed for working inside a chroot to recognize latin1 charset
       try:
         lexer = guess_lexer("svmmsjj".encode('latin1'), encoding='utf-8')
-      except ClassNotFound as e:
+      except ClassNotFound:
         pass
     if 'debug' not in args:
       self.log(self.logger.INFO, 'debuglevel not defined, using default of debug = %i' % self.logger.INFO)

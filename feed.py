@@ -228,7 +228,7 @@ class feed(threading.Thread):
             if len(self.articles_to_send) == 0 and self.queue.qsize() == 0:
               self.log(self.logger.INFO, 'connection broken. no article to send, sleeping')
               self.state = 'nothing_to_send'
-              while(self.running and self.queue.qsize() == 0):
+              while self.running and self.queue.qsize() == 0:
                 time.sleep(2)
             else:
               self.state = 'cooldown'

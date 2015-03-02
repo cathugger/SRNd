@@ -167,7 +167,8 @@ class censor(BaseHTTPRequestHandler):
     except Exception as e:
       self.send_redirect(self.root_path + target, "processing %s failed: %s<br />redirecting you in a moment." % (target, e), 9)
 
-  def key_from_secret(self, secret):
+  @staticmethod
+  def key_from_secret(secret):
     try:
       public = hexlify(nacl.signing.SigningKey(unhexlify(secret)).verify_key.encode())
     except:
@@ -368,7 +369,8 @@ class censor(BaseHTTPRequestHandler):
       return cookie.strip().split('=', 1)[1]
     return ''
 
-  def get_name_by_cookie(self, cookie):
+  @staticmethod
+  def get_name_by_cookie(cookie):
     if cookie != '':
       return 'What you want?'
     return 'Hello $username'
@@ -506,7 +508,8 @@ class censor(BaseHTTPRequestHandler):
     self.end_headers()
     self.wfile.write(out)
 
-  def hidden_line(self, line, max_len=60):
+  @staticmethod
+  def hidden_line(line, max_len=60):
     if 16 < max_len < len(line):
       return '%s[..]%s' % (line[:6], line[-6:])
     else:
@@ -724,9 +727,9 @@ class censor(BaseHTTPRequestHandler):
     data['flag_names'] = '\n'.join((self.origin.template_log_flagnames.replace("%%flag%%", flag[0]) for flag in flags))
     table = list()
     for row in self.origin.sqlite_overchan.execute('SELECT group_name, article_count, group_id, flags FROM groups WHERE group_name != "" ORDER BY abs(article_count) DESC, group_name ASC').fetchall():
-      data_row = dict()
-      data_row = {'board': row[0], 'posts': row[1], 'board_id': row[2]}
-      data_row['flagset'] = self.flaglist_construct(row[3], flags)
+      data_row = {\
+         'board': row[0], 'posts': row[1], 'board_id': row[2],
+         'flagset': self.flaglist_construct(row[3], flags)}
       table.append(self.origin.t_engine_settings_list.substitute(data_row))
     data['board_list'] = '\n'.join(table)
     if board_id:
@@ -849,7 +852,8 @@ class censor(BaseHTTPRequestHandler):
     command_data['replayable'] = self.__selector_construct(data_selector[3], modify_data[3])
     return self.origin.t_engine_modify_commands.substitute(command_data)
 
-  def __selector_construct(self, select_data, checked):
+  @staticmethod
+  def __selector_construct(select_data, checked):
     if checked not in select_data:
       checked = 0
     table = list()
@@ -894,15 +898,15 @@ class censor(BaseHTTPRequestHandler):
   def __write_nntp_article(self, f):
     attachment = re.compile('^[cC]ontent-[tT]ype: ([a-zA-Z0-9/]+).*name="([^"]+)')
     attachment_details = None
-    base64 = False
+    base64_ = False
     writing_base64 = False
     for line in f:
       if line.lower().startswith('content-type:'):
         attachment_details = attachment.match(line)
       elif line.lower().startswith('content-transfer-encoding: base64'):
-        base64 = True
+        base64_ = True
       if len(line) == 1:
-        if base64 == True and attachment_details != None:
+        if base64_ == True and attachment_details != None:
           self.wfile.write('\n<img src="data:%s;base64,' % attachment_details.group(1))
           writing_base64 = True
         else:
@@ -910,7 +914,7 @@ class censor(BaseHTTPRequestHandler):
       elif writing_base64 and line.startswith('--'):
         self.wfile.write('" title="%s" width="100%%" />\n' % attachment_details.group(2).replace('<', '&lt;').replace('>', '&gt;').encode('UTF-8'))
         writing_base64 = False
-        base64 = False
+        base64_ = False
       elif writing_base64:
         self.wfile.write(line.encode('UTF-8'))
       else:
@@ -935,7 +939,8 @@ class censor(BaseHTTPRequestHandler):
         hosts.append((row[0], row[1]))
     return hosts
 
-  def __sizeof_human_readable(self, num, suffix='B'):
+  @staticmethod
+  def __sizeof_human_readable(num, suffix='B'):
     for unit in ('', 'Ki', 'Mi', 'Gi', 'Ti', 'Pi', 'Ei', 'Zi'):
         if abs(num) < 1024.0:
             return "%3.1f%s%s" % (num, unit, suffix)
@@ -967,13 +972,13 @@ class censor(BaseHTTPRequestHandler):
     stats = list()
     totals = int(self.origin.sqlite_overchan.execute('SELECT count(1) FROM articles WHERE sent > strftime("%s", "now", "-' + str(days) + ' days")').fetchone()[0])
     stats.append(('all posts', totals, '&nbsp;', 'in previous %s days' % days))
-    max = 0
+    max_ = 0
     for row in self.origin.sqlite_overchan.execute('SELECT count(1) as counter, strftime("%Y-%m-%d",  sent, "unixepoch") as day, strftime("%w", sent, "unixepoch") as weekday, rtrim(substr(article_uid, instr(article_uid, "@") + 1), ">") as host FROM articles WHERE sent > strftime("%s", "now", "-' + str(days) + ' days") GROUP BY day, host ORDER BY day DESC').fetchall():
-      if row[0] > max: max = row[0]
+      if row[0] > max_: max_ = row[0]
       stats.append((row[0], row[1], self.origin.weekdays[int(row[2])], row[3]))
     for index in range(1, len(stats)):
       graph = ''
-      for x in range(0, int(float(stats[index][0])/max*bar_length)):
+      for x in range(0, int(float(stats[index][0])/max_*bar_length)):
         graph += '='
       if len(graph) == 0:
         graph = '&nbsp;'
@@ -984,13 +989,13 @@ class censor(BaseHTTPRequestHandler):
     stats = list()
     totals = int(self.origin.sqlite_overchan.execute('SELECT count(1) FROM articles WHERE sent > strftime("%s", "now", "-31 days")').fetchone()[0])
     stats.append(('all posts', totals, 'in previous %s days' % 31))
-    max = 0
+    max_ = 0
     for row in self.origin.sqlite_overchan.execute('SELECT count(1) as counter, strftime("%Y-%m-%d",  sent, "unixepoch") as day, strftime("%w", sent, "unixepoch") as weekday FROM articles WHERE sent > strftime("%s", "now", "-31 days") GROUP BY day ORDER BY day DESC').fetchall():
-      if row[0] > max: max = row[0]
+      if row[0] > max_: max_ = row[0]
       stats.append((row[0], row[1], self.origin.weekdays[int(row[2])]))
     for index in range(1, len(stats)):
       graph = ''
-      for x in range(0, int(float(stats[index][0])/max*bar_length)):
+      for x in range(0, int(float(stats[index][0])/max_*bar_length)):
         graph += '='
       if len(graph) == 0:
         graph = '&nbsp;'
@@ -1001,13 +1006,13 @@ class censor(BaseHTTPRequestHandler):
     stats = list()
     totals = int(self.origin.sqlite_overchan.execute('SELECT count(1) FROM articles').fetchone()[0])
     stats.append(('all posts', totals, 'since beginning'))
-    max = 0
+    max_ = 0
     for row in self.origin.sqlite_overchan.execute('SELECT count(1) as counter, strftime("%Y-%m",  sent, "unixepoch") as month FROM articles GROUP BY month ORDER BY month DESC').fetchall():
-      if row[0] > max: max = row[0]
+      if row[0] > max_: max_ = row[0]
       stats.append((row[0], row[1]))
     for index in range(1, len(stats)):
       graph = ''
-      for x in range(0, int(float(stats[index][0])/max*bar_length)):
+      for x in range(0, int(float(stats[index][0])/max_*bar_length)):
         graph += '='
       if len(graph) == 0:
         graph = '&nbsp;'
@@ -1022,18 +1027,18 @@ class censor(BaseHTTPRequestHandler):
     else:
       result = self.origin.sqlite_overchan.execute('SELECT count(1) as counter, strftime("%w",  sent, "unixepoch") as weekday FROM articles GROUP BY weekday ORDER BY weekday ASC').fetchall()
     stats = list()
-    max = 0
+    max_ = 0
     for row in result:
       if days:
         avg = float(row[0]) / (days / 7)
-        if avg > max: max = avg
+        if avg > max_: max_ = avg
         stats.append((avg, self.origin.weekdays[int(row[1])]))
       else:
-        if row[0] > max: max = row[0]
+        if row[0] > max_: max_ = row[0]
         stats.append((row[0], self.origin.weekdays[int(row[1])]))
     for index in range(0, len(stats)):
       graph = ''
-      for x in range(0, int(float(stats[index][0])/max*bar_length + 0.5)):
+      for x in range(0, int(float(stats[index][0])/max_*bar_length + 0.5)):
         graph += '='
       if len(graph) == 0:
         graph = '&nbsp;'
@@ -1044,7 +1049,8 @@ class censor(BaseHTTPRequestHandler):
     stats.append(stats[0])
     return stats[1:]
 
-  def __get_navigation(self, current, add_after=None):
+  @staticmethod
+  def __get_navigation(current, add_after=None):
     out = list()
     #out.append('<div class="navigation">')
     for item in (('key_stats', 'key stats'), ('commands', 'c&c'), ('moderation_log', 'moderation log'), ('pic_log', 'pic log'),
@@ -1054,7 +1060,7 @@ class censor(BaseHTTPRequestHandler):
       else:
         out.append('<a href="%s">%s</a>' % item)
     out = '[&nbsp;%s&nbsp;]' % '&nbsp;|&nbsp;'.join(out)
-    if add_after != None:
+    if add_after is not None:
       out += add_after
     out += '<br /><br />'
     return out
@@ -1066,16 +1072,17 @@ class censor(BaseHTTPRequestHandler):
     else:
       self.send_error('don\'t fuck around here mkay')
 
-  def __get_message_id_by_hash(self, hash):
-    return self.origin.sqlite_hasher.execute("SELECT message_id FROM article_hashes WHERE message_id_hash = ?", (hash,)).fetchone()[0]
+  def __get_message_id_by_hash(self, hash_):
+    return self.origin.sqlite_hasher.execute("SELECT message_id FROM article_hashes WHERE message_id_hash = ?", (hash_,)).fetchone()[0]
 
-  def __get_dest_hash_by_hash(self, hash):
-    return self.origin.sqlite_hasher.execute("SELECT sender_desthash FROM article_hashes WHERE message_id_hash = ?", (hash,)).fetchone()[0]
+  def __get_dest_hash_by_hash(self, hash_):
+    return self.origin.sqlite_hasher.execute("SELECT sender_desthash FROM article_hashes WHERE message_id_hash = ?", (hash_,)).fetchone()[0]
 
   def __get_messages_id_by_dest_hash(self, dest_hash):
     return self.origin.sqlite_hasher.execute("SELECT message_id FROM article_hashes WHERE sender_desthash = ?", (dest_hash,)).fetchall()
 
-  def __breakit(self, rematch):
+  @staticmethod
+  def __breakit(rematch):
     return '%s ' % rematch.group(0)
 
   def handle_moderation_request(self):
@@ -1156,7 +1163,8 @@ class censor(BaseHTTPRequestHandler):
   def send_local_cmd(self, pubkey, lines):
     self.origin.censor.add_article((pubkey, '\n'.join(lines)), "httpd")
 
-  def __remove_cmd__escape(self, line):
+  @staticmethod
+  def __remove_cmd__escape(line):
     return line.replace('\n', '').replace('\t', '').replace('\r', '')
 
   def send_remote_cmd(self, secret, pubkey, lines):
@@ -1193,10 +1201,10 @@ class censor(BaseHTTPRequestHandler):
     del signed
     os.rename(os.path.join('incoming', 'tmp', uid_message_id), os.path.join('incoming', uid_message_id))
 
-  def log_request(self, code):
+  def log_request(self, *kwargs):
     return
 
-  def log_message(self, format):
+  def log_message(self, format_, *args):
     return
 
   def send_something(self, something):

@@ -120,19 +120,19 @@ class postman(BaseHTTPRequestHandler):
     self.end_headers()
     self.wfile.write(self.origin.template_redirect.format(redirect_duration, redirect_target, message))
 
-  def log_request(self, code):
+  def log_request(self, *code):
     return
 
-  def log_message(self, format):
+  def log_message(self, format_, *args):
     return
 
   def get_random_quote(self):
     return random.choice(self.origin.quotes)
 
-  def failCaptcha(self, vars):
+  def failCaptcha(self, vars_):
     msg = self.get_random_quote()
     msg += '<br/><b><font style="color: red;">failed. hard.</font></b>'
-    self.send_captcha(msg, vars)
+    self.send_captcha(msg, vars_)
     
   def handleVerify(self):
     post_vars = FieldStorage(
@@ -937,12 +937,13 @@ class main(threading.Thread):
       self.save_i2p_spamprotect_cache()
     self.log(self.logger.INFO, 'bye')
 
-  def captcha_generate(self, text, secret, expires=300):
+  @staticmethod
+  def captcha_generate(text, secret, expires=300):
     expires += int(time.time())
     if not expires % 3: solution_hash = sha256('%s%s%i' % (text, secret, expires)).hexdigest()
     elif expires % 2: solution_hash = sha256('%i%s%s' % (expires, text, secret)).hexdigest()
     else: solution_hash = sha256('%s%i%s' % (secret, expires, text)).hexdigest()
-    return (expires, solution_hash)
+    return expires, solution_hash
 
   def captcha_check_backlog(self, expires, solution_hash):
     insert_at = len(self.httpd.captcha_backlog)
@@ -976,13 +977,15 @@ class main(threading.Thread):
     if solution_hash != sha256('%s%i%s' % (secret, expires, guess)).hexdigest(): return False
     return self.captcha_check_backlog(expires, solution_hash)
   
-  def get_captcha_font(self, fontdir='plugins/postman/fonts/' ):
+  @staticmethod
+  def get_captcha_font(fontdir='plugins/postman/fonts/' ):
     """ get random font """
     font = random.choice(os.listdir(fontdir))
     font = fontdir+font
     return ImageFont.truetype(font, random.randint(32, 48) )
 
-  def captcha_render_b64(self, guess, tiles, font, filter=None):
+  @staticmethod
+  def captcha_render_b64(guess, tiles, font, filter_=None):
     """ generate captcha """
     #if self.captcha_size is None: size = self.defaultSize
     #img = Image.new("RGB", (256,96))
@@ -1003,15 +1006,16 @@ class main(threading.Thread):
     draw = ImageDraw.Draw(img)
     #draw.text((40,20), guess, font=font, fill='white')
     draw.text((x,y), guess, font=font, fill='black')
-    if filter:
-      img = img.filter(filter)
+    if filter_:
+      img = img.filter(filter_)
     f = cStringIO.StringIO()
     img.save(f, 'PNG')
     content = f.getvalue()
     f.close()
     return content.encode("base64").replace("\n", "")
 
-  def captcha_cache_bump(self):
+  @staticmethod
+  def captcha_cache_bump():
     # TODO: create captcha before query
     return True
 
@@ -1198,14 +1202,15 @@ class new_captcha:
       self.plazma_cache['plazma'][x] = self.__plazma(self.plazma_cache['size'][0], self.plazma_cache['size'][1])
     self.plazma_cache['reusage'] = random.randint(2, 5) * self.plazma_cache_size
 
-  def get_captcha_font(self, fontdir='plugins/postman/fonts/' ):
+  @staticmethod
+  def get_captcha_font(fontdir='plugins/postman/fonts/' ):
     #font = random.choice(os.listdir(fontdir))
     #font = fontdir + font
     font_list = ('FreeSansBold.ttf', 'FreeSerifBold.ttf', 'FreeMonoBold.ttf')
     font = fontdir + font_list[random.randint(0, 2)]
     return ImageFont.truetype(font, random.randint(43, 54) )
 
-  def captcha_render_b64(self, guess, tiles, font, filter=None):
+  def captcha_render_b64(self, guess, tiles, font, filter_=None):
     img_to_str = cStringIO.StringIO()
     self.captcha(guess, font).save(img_to_str, 'PNG')
     content = img_to_str.getvalue()

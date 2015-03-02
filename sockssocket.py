@@ -124,8 +124,8 @@ class socksocket(socket.socket):
   you must specify family=AF_INET, type=SOCK_STREAM and proto=0.
   """
   
-  def __init__(self, family=socket.AF_INET, type=socket.SOCK_STREAM, proto=0, _sock=None):
-    _orgsocket.__init__(self,family,type,proto,_sock)
+  def __init__(self, family=socket.AF_INET, type_=socket.SOCK_STREAM, proto=0, _sock=None):
+    _orgsocket.__init__(self,family,type_,proto,_sock)
     if _defaultproxy != None:
       self.__proxy = _defaultproxy
     else:
@@ -133,14 +133,14 @@ class socksocket(socket.socket):
     self.__proxysockname = None
     self.__proxypeername = None
   
-  def __recvall(self, bytes):
+  def __recvall(self, bytes_):
     """__recvall(bytes) -> data
     Receive EXACTLY the number of bytes requested from the socket.
     Blocks until the required number of bytes have been received.
     """
     data = ""
-    while len(data) < bytes:
-      data = data + self.recv(bytes-len(data))
+    while len(data) < bytes_:
+      data = data + self.recv(bytes_-len(data))
     return data
   
   def setproxy(self,proxytype=None,addr=None,port=None,rdns=True,username=None,password=None):
@@ -198,7 +198,7 @@ class socksocket(socket.socket):
       if authstat[1] != "\x00":
         # Authentication failed
         self.close()
-        raise Socks5AuthError,((3,_socks5autherrors[3]))
+        raise Socks5AuthError,(3,_socks5autherrors[3])
       # Authentication succeeded
     else:
       # Reaching here is always bad

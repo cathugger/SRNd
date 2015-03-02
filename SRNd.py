@@ -40,10 +40,10 @@ class SRNd(threading.Thread):
 
     # create some directories
     for directory in ('filesystem', 'outfeeds', 'plugins'):
-      dir = os.path.join(self.data_dir, 'config', 'hooks', directory)
-      if not os.path.exists(dir):
-        os.makedirs(dir)
-      os.chmod(dir, 0o777) # FIXME think about this, o+r should be enough?
+      dir_ = os.path.join(self.data_dir, 'config', 'hooks', directory)
+      if not os.path.exists(dir_):
+        os.makedirs(dir_)
+      os.chmod(dir_, 0o777) # FIXME think about this, o+r should be enough?
 
     # install / update plugins
     self.log(self.logger.INFO, "installing / updating plugins")
@@ -464,7 +464,8 @@ class SRNd(threading.Thread):
     self.log(self.logger.INFO, 'added %i new plugins' % len(new_plugins))
     # TODO: stop and remove plugins not listed at config/plugins anymore
 
-  def _extract_outfeed_data(self, outfeed):
+  @staticmethod
+  def _extract_outfeed_data(outfeed):
     if ':' in outfeed:
       host = ':'.join(outfeed.split(':')[:-1])
       port = int(outfeed.split(':')[-1])
@@ -527,7 +528,7 @@ class SRNd(threading.Thread):
             try:
               proxy_port = int(proxy_port)
               proxy = (proxy_type, proxy_ip, proxy_port)
-              self.log(self.logger.INFO, "starting outfeed %s using proxy: %s" % (name, str(proxy)), 2)
+              self.log(self.logger.INFO, 'starting outfeed {} using proxy: {}'.format(name, str(proxy)))
             except:
               pass
         if name not in self.feeds:
@@ -555,16 +556,18 @@ class SRNd(threading.Thread):
     self.update_plugins()
     self.update_hooks()
 
-  def encode_big_endian(self, number, length):
+  @staticmethod
+  def encode_big_endian(number, length):
     if number >= 256**length:
       raise OverflowError("%i can't be represented in %i bytes." % (number, length))
     data = b""
     for i in range(0, length):
       data += chr(number >> (8*(length-1-i)))
-      number = number - (ord(data[-1]) << (8*(length -1 -i)))
+      number -= (ord(data[-1]) << (8*(length -1 -i)))
     return data
 
-  def decode_big_endian(self, data, length):
+  @staticmethod
+  def decode_big_endian(data, length):
     if len(data) < length:
       raise IndexError("data length %i lower than given length of %i." % (len(data), length))
     cur_len = 0

@@ -195,7 +195,7 @@ class dropper(threading.Thread):
           vals[req] = vals[req].split(',')
     if len(vals['newsgroups']) == 0:
       raise Exception('Newsgroup is missing or empty')
-    return (desthash, vals['message-id'], vals['newsgroups'], additional_headers, article_path)
+    return desthash, vals['message-id'], vals['newsgroups'], additional_headers, article_path
 
   def write(self, desthash, message_id, groups, additional_headers, article, article_path):
     link = os.path.join('articles', message_id)
