@@ -126,6 +126,10 @@ class feed(threading.Thread):
           self.log(self.logger.ERROR, 'got an unknown socket error at line 124 with error number %i: %s' % (e.errno, e))
           self.con_broken = True
           break
+      except sockssocket.ProxyError as e:
+        self.log(self.logger.ERROR, 'got an unknown proxy error at socket.send(), line 402 with error number %i: %s' % (e.errno, e))
+        self.con_broken = True
+        break
     self.log(self.logger.VERBOSE, 'out: %s' % message[:-2])
 
   def shutdown(self):
@@ -361,74 +365,37 @@ class feed(threading.Thread):
     self.socket.close()
     self.SRNd.terminate_feed(self.name)
 
-  def send_article(self, message_id):
-    # FIXME: what the fuck? rewrite this whole def! waste RAM much.
-    # FIXME: read line, convert, send, read next line. collect x lines before actually sending.
-    self.log(self.logger.INFO, 'sending article %s' % message_id)
-    self.multiline_out = True
-    f = open(os.path.join('articles', message_id), 'r')
-    article = ''
-    read = -1
-    while read != 0:
-      cur_len = len(article)
-      article += f.read()
-      read = len(article) - cur_len
-    f.close()
-    # TODO measure
-    #   article = '\r\n'.join(article.split('\n'))
-    # against
-    #   article = article.replace('\n', '\r\n')
-    add_one = False
-    if article[-1] != '\n':
-      self.log(self.logger.DEBUG, 'need to add a linebreak')
-      add_one = True
-    article = article.split('\n')
-    for index in xrange(0, len(article)):
-      if len(article[index]) > 0:
-        if article[index][0] == '.':
-          article[index] = '.' + article[index]
-      self.log(self.logger.VERBOSE, 'out: %s' % article[index])
-    if add_one:
-      article.append('')
-    article = '\r\n'.join(article)
-    self.state = 'sending'
-    sent = 0
-    length = len(article)
-    while sent != length:
-      if sent > 0:
-        self.log(self.logger.DEBUG, 'resending part of line, starting at %i to %i' % (sent, length))
-      try:
-        sent += self.socket.send(article[sent:])
-      except socket.error as e:
-        if e.errno == 11:
-          # 11 Resource temporarily unavailable
-          time.sleep(0.1)
-        elif e.errno == 32 or e.errno == 104 or e.errno == 110:
-          # 32 Broken pipe
-          # 104 Connection reset by peer
-          # 110 Connection timed out
-          self.con_broken = True
-          break
-        else:
-          self.log(self.logger.ERROR, 'got an unknown socket error at socket.send(), line 398 with error number %i: %s' % (e.errno, e))
-          self.con_broken = True
-          break
-      except sockssocket.ProxyError as e:
-        self.log(self.logger.ERROR, 'got an unknown proxy error at socket.send(), line 402 with error number %i: %s' % (e.errno, e))
-        self.con_broken = True
-        break
+  def _read_and_prepare(self, fd, buffsize):
+    data = ''
+    while True:
+      data_in = fd.read(buffsize)
+      if not data_in: break
+      data += data_in
+      prepare = data.split('\n')
+      data = prepare.pop(-1)
+      for index in range(len(prepare)):
+        if prepare[index].startswith('.'):
+          prepare[index] = '.' + prepare[index]
+      if len(prepare) > 0:
+        yield '\r\n'.join(prepare) + '\r\n'
+    # fix broken article
+    if len(data) > 0:
+      if data[-1] != '\n':
+        data += '\r\n'
+      yield data
 
-    #line = f.readline()
-    #while line != '' and not self.con_broken:
-    #  line = line[:-1] + '\r\n'
-    #  if line[0] == '.':
-    #    line = '.' + line
-    #  self.send(line)
-    #  line = f.readline()
-    #f.close()
+  def send_article(self, message_id):
+    self.log(self.logger.INFO, 'sending article %s' % message_id)
+    buff = 16384
+    self.multiline_out = True
+    self.state = 'sending'
+    with open(os.path.join('articles', message_id), 'rb') as fd:
+      for to_send in self._read_and_prepare(fd, buff):
+        self.send(to_send)
+        if self.con_broken: break
     if not self.con_broken:
       self.send('.\r\n')
-    else:
+    if self.con_broken:
       self.add_article(message_id)
     self.multiline_out = False
 
