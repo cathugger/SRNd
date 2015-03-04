@@ -837,7 +837,7 @@ class main(threading.Thread):
       self.regenerate_boards.clear()
     if len(self.regenerate_threads) > 0:
       for thread in self.regenerate_threads:
-        self.generate_thread(thread)
+        self.generate_thread(thread, False)
       self.regenerate_threads.clear()
 
   def run(self):
@@ -1367,11 +1367,15 @@ class main(threading.Thread):
         self.log(self.logger.INFO, 'Processing group %s error message %s %s' % (group, message_id, e))
 
     parent_result = None
-
     if parent != '' and parent != message_id:
       parent_result = self.sqlite.execute('SELECT closed FROM articles WHERE article_uid = ?', (parent,)).fetchone()
       if parent_result and parent_result[0] != 0:
         self.log(self.logger.INFO, 'censored article %s for closed thread.' % message_id)
+        self.delete_orphan_attach(image_name, thumb_name)
+        return self.move_censored_article(message_id)
+      elif parent_result is None and os.path.isfile(os.path.join("articles", "censored", parent)):
+        # root post censored. Delete child post
+        self.log(self.logger.INFO, 'Thread starting {} deleted. Delete a {}'.format(parent, message_id))
         self.delete_orphan_attach(image_name, thumb_name)
         return self.move_censored_article(message_id)
 
