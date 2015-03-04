@@ -154,7 +154,7 @@ class main(threading.Thread):
             cfg_new[target] = False
           else:
             cfg_new[target] = type(cfg_def[target])(args[target])
-        except:
+        except ValueError:
           if add_default:
             self.log(self.logger.WARNING, 'Config error: #start_param {} {}, need {}. Use default value: {} '.format(target, type(args[target]), type(cfg_def[target]), cfg_def[target]))
           else:
@@ -206,10 +206,11 @@ class main(threading.Thread):
       template_file = os.path.join(self.config['template_directory'], '%s.tmpl' % x)
       try:
         f = codecs.open(template_file, "r", "utf-8")
+      except IOError as e:
+        self.die('Error loading template {0}: {1}'.format(template_file, e))
+      else:
         self.t_engine[x] = string.Template(f.read())
         f.close()
-      except Exception as e:
-        self.die('Error loading template {0}: {1}'.format(template_file, e))
 
     # temporary templates
     template_brick = dict()
@@ -218,10 +219,11 @@ class main(threading.Thread):
       template_file = os.path.join(self.config['template_directory'], '%s.tmpl' % x)
       try:
         f = codecs.open(template_file, "r", "utf-8")
+      except IOError as e:
+        self.die('Error loading template {0}: {1}'.format(template_file, e))
+      else:
         template_brick[x] = f.read()
         f.close()
-      except Exception as e:
-        self.die('Error loading template {0}: {1}'.format(template_file, e))
 
     evil_cmd = self._load_evil_commands()
     css_headers = self._css_headers_construct()
@@ -233,7 +235,7 @@ class main(threading.Thread):
     with codecs.open(os.path.join(self.config['template_directory'], 'base_head.tmpl'), "r", "utf-8") as f:
       template_brick['base_head'] = string.Template(f.read()).safe_substitute(
         stylesheet=css_headers,
-        title = self.config['title']
+        title=self.config['title']
       )
     template_brick['base_head_prep'] = string.Template(template_brick['base_head']).safe_substitute(
       head_title=string.Template('${title} :: ${board}').safe_substitute(title=self.config['title']),
@@ -487,7 +489,7 @@ class main(threading.Thread):
     # ^ => cp
     self.copy_out(css=False, sources=((self.config['thumbs']['no_file'], os.path.join('img', self.config['thumbs']['no_file'])), ('suicide.txt', os.path.join('img', 'suicide.txt')), \
       ('playbutton.png', os.path.join('img', 'playbutton.png')),))
-    self.copy_out(css=True,  sources=([(self.config['censor_css'], 'censor.css'),] + [(x, x if self.config['csss'][0] != x else 'styles.css') for x in self.config['csss']]))
+    self.copy_out(css=True, sources=([(self.config['censor_css'], 'censor.css'),] + [(x, x if self.config['csss'][0] != x else 'styles.css') for x in self.config['csss']]))
     self.config['csss'][0] = 'styles.css'
     self.gen_template_thumbs(self.config['thumbs'].values())
 
@@ -658,7 +660,7 @@ class main(threading.Thread):
         self.sqlite.execute('DELETE FROM articles WHERE article_uid = ?', (message_id,))
         try:
           os.unlink(os.path.join(self.config['output_directory'], "thread-%s.html" % sha1(message_id).hexdigest()[:10]))
-        except Exception as e:
+        except OSError as e:
           self.log(self.logger.WARNING, 'could not delete thread for message_id %s: %s' % (message_id, e))
       else:
         # child post and root not deleting
@@ -695,7 +697,7 @@ class main(threading.Thread):
           self.log(self.logger.DEBUG, 'nobody not use %s, delete it' % (imagename,))
           try:
             os.unlink(imagepath)
-          except Exception as e:
+          except OSError as e:
             self.log(self.logger.WARNING, 'could not delete %s: %s' % (imagepath, e))
 
   def censored_attach_processing(self, image, thumb):
@@ -871,7 +873,7 @@ class main(threading.Thread):
             self.log(self.logger.WARNING, traceback.format_exc())
             try:
               f.close()
-            except:
+            except IOError:
               pass
         elif ret[0] == "control":
           got_control = True
@@ -1011,7 +1013,7 @@ class main(threading.Thread):
     return u'<pre class="code">{}</pre>'.format(text)
 
   @staticmethod
-  def sjisit (text):
+  def sjisit(text):
     return u'<pre class="aa">{}</pre>'.format(text)
 
   @staticmethod
@@ -1088,7 +1090,7 @@ class main(threading.Thread):
         try:
           # FIXME race condition with dropper if currently processing this very article
           os.unlink(os.path.join("groups", str(row[0]), str(row[1])))
-        except Exception as e:
+        except OSError as e:
           self.log(self.logger.WARNING, "could not delete %s: %s" % (os.path.join("groups", str(row[0]), str(row[1])), e))
     elif not os.path.exists(os.path.join('articles', 'censored', message_id)):
       f = open(os.path.join('articles', 'censored', message_id), 'w')
@@ -1132,8 +1134,10 @@ class main(threading.Thread):
         thumbname = self.gen_thumb(tmp_image, imagehash)
       except:
         thumbname = 'invalid'
-    try: os.remove(tmp_image)
-    except: pass
+    try:
+      os.remove(tmp_image)
+    except OSError:
+      pass
     return thumbname
 
   def gen_thumb(self, target, imagehash):
@@ -1353,6 +1357,9 @@ class main(threading.Thread):
     for group in groups:
       try:
         group_flags = int(self.sqlite.execute("SELECT flags FROM groups WHERE group_name=?", (group,)).fetchone()[0])
+      except Exception as e:
+        self.log(self.logger.INFO, 'Processing group %s error message %s %s' % (group, message_id, e))
+      else:
         if (group_flags & self.cache['flags']['spam-fix']) != 0 and len(message) < 5:
           self.log(self.logger.INFO, 'Spamprotect group %s, censored %s' % (group, message_id))
           self.delete_orphan_attach(image_name, thumb_name)
@@ -1363,8 +1370,6 @@ class main(threading.Thread):
           return self.move_censored_article(message_id)
         elif (group_flags & self.cache['flags']['sage']) != 0:
           sage = True
-      except Exception as e:
-        self.log(self.logger.INFO, 'Processing group %s error message %s %s' % (group, message_id, e))
 
     parent_result = None
     if parent != '' and parent != message_id:
@@ -1781,7 +1786,7 @@ class main(threading.Thread):
       self.log(self.logger.INFO, 'this page belongs to some blocked board. deleting %s.' % thread_path)
       try:
         os.unlink(thread_path)
-      except Exception as e:
+      except OSError as e:
         self.log(self.logger.ERROR, 'could not delete %s: %s' % (thread_path, e))
 
   def generate_thread(self, root_uid, silence):
@@ -1860,22 +1865,24 @@ class main(threading.Thread):
   def check_board_flags(self, group_id, *args):
     try:
       flags = int(self.sqlite.execute('SELECT flags FROM groups WHERE group_id = ?', (group_id,)).fetchone()[0])
-      for flag_name in args:
-        if flags & self.cache['flags'][flag_name] == 0:
-          return False
     except Exception as e:
       self.log(self.logger.WARNING, "error board flags check: %s" % e)
       return False
+    else:
+      for flag_name in args:
+        if flags & self.cache['flags'][flag_name] == 0:
+          return False
     return True
 
   def check_moder_flags(self, full_pubkey_hex, *args):
     try:
       flags = int(self.censordb.execute('SELECT flags from keys WHERE key=?', (full_pubkey_hex,)).fetchone()[0])
+    except:
+      return False
+    else:
       for flag_name in args:
         if flags & self.cache['moder_flags'][flag_name] == 0:
           return False
-    except:
-      return False
     return True
 
   def cache_init(self):
