@@ -891,13 +891,13 @@ class main(threading.Thread):
           if do_sleep:
             self.log(self.logger.DEBUG, 'boards: should sleep')
           for board in self.regenerate_boards:
+            if not self.running: break
             self.generate_board(board)
             if do_sleep: time.sleep(self.config['sleep_time'])
           self.regenerate_boards.clear()
           regen_overview = True
         if len(self.regenerate_threads) > 0:
           self._generate_threads()
-          self.regenerate_threads.clear()
           regen_overview = True
         if regen_overview:
           self.generate_overview()
@@ -917,9 +917,10 @@ class main(threading.Thread):
     self.log(self.logger.INFO, 'bye')
 
   def _generate_threads(self):
-    step_say = 5 * self.config['sleep_threshold'] if self.config['sleep_threshold'] > 0 else 10
-    silence = len(self.regenerate_threads) >= step_say
-    do_sleep = len(self.regenerate_threads) > self.config['sleep_threshold']
+    thread_count = len(self.regenerate_threads)
+    step_say = thread_count / 50
+    silence = thread_count >= step_say and thread_count > 100
+    do_sleep = thread_count > self.config['sleep_threshold']
     if do_sleep:
       self.log(self.logger.DEBUG, 'threads: should sleep')
     start_time = time.time()
@@ -927,26 +928,26 @@ class main(threading.Thread):
     result_counter = 0
     counter = 0
     for thread in self.regenerate_threads:
-      self.generate_thread(thread, silence)
-      if do_sleep: time.sleep(self.config['sleep_time'])
-      counter += 1
-      result_counter += 1
-      if silence and counter >= step_say:
+      if self.running:
+        self.generate_thread(thread, silence)
+        if do_sleep: time.sleep(self.config['sleep_time'])
+        counter += 1
+        result_counter += 1
+      if silence and (counter >= step_say or ((not self.running or thread_count == result_counter) and counter > 0)):
         all_time = time.time() - start_time
         result_time += all_time
         sleep_time = self.config['sleep_time'] * counter if do_sleep else 0
-        self.log(self.logger.INFO, 'generating {} threads at {:0.4f}s [work:{:0.4f}s, sleep:{:0.4f}s]'.format(counter, all_time, (all_time - sleep_time), sleep_time))
+        percentage = (100 * result_counter) / thread_count
+        self.log(self.logger.INFO, 'generating {} [{}%] threads at {:0.4f}s [work:{:0.4f}s, sleep:{:0.4f}s]'.format(counter, percentage, all_time, (all_time - sleep_time), sleep_time))
         start_time = time.time()
         counter = 0
-    if silence and counter > 0:
-      all_time = time.time() - start_time
-      result_time += all_time
-      sleep_time = self.config['sleep_time'] * counter if do_sleep else 0
-      self.log(self.logger.INFO, 'generating {} threads at {:0.4f}s [work:{:0.4f}s, sleep:{:0.4f}s]'.format(counter, all_time, (all_time - sleep_time), sleep_time))
-    if silence:
+      if not self.running:
+        break
+    if silence and result_counter > 0:
       sleep_time = self.config['sleep_time'] * result_counter if do_sleep else 0
       work_time = result_time - sleep_time
-      self.log(self.logger.INFO, 'result generating {} threads {:0.4f}s [work:{:0.4f}s, sleep:{:0.4f}s]'.format(result_counter, result_time, work_time, sleep_time))
+      percentage = (100 * result_counter) / thread_count
+      self.log(self.logger.INFO, 'result generating [{}/{}] [{}%] threads {:0.4f}s [work:{:0.4f}s, sleep:{:0.4f}s]'.format(result_counter, thread_count, percentage, result_time, work_time, sleep_time))
       self.log(self.logger.INFO, 'average generating 1 thread {:0.4f}s [work:{:0.4f}s, sleep:{:0.4f}s]'.format(result_time/result_counter, work_time/result_counter, sleep_time/result_counter))
     self.regenerate_threads.clear()
 
