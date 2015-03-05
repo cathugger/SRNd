@@ -17,6 +17,7 @@ from datetime import datetime
 from hashlib import sha1, sha512
 from urllib import unquote
 from urlparse import urlparse, parse_qs
+
 from srnd.utils import basicHTMLencode
 
 import nacl.signing
@@ -47,7 +48,7 @@ class censor(BaseHTTPRequestHandler):
       else:
         self.send_login("totally not")
       return
-    elif self.path =='/moderate?login':
+    elif self.path == '/moderate?login':
       is_success, new_cookie = self.user_login('ananas')
       if is_success:
         self.send_redirect('/', 'Welcome, again!', 3, new_cookie)
@@ -109,12 +110,12 @@ class censor(BaseHTTPRequestHandler):
         self.send_modify_key(path[8:])
       elif path.startswith('/pic_log'):
         try: page = int(path[9:])
-        except: page = 1
+        except ValueError: page = 1
         if page < 1: page = 1
         self.send_piclog(page)
       elif path.startswith('/moderation_log'):
         try:    page = int(path[16:])
-        except: page = 1
+        except ValueError: page = 1
         if page == 0: page = 1
         self.send_log(page)
       elif path.startswith('/message_log'):
@@ -636,7 +637,7 @@ class censor(BaseHTTPRequestHandler):
     query_str = unicode(''.join(query_data.get('q', '')), 'utf-8')
     message_log['count'] = unicode(''.join(query_data.get('c', '100')), 'utf-8')
     try: message_log['count'] = int(message_log['count'])
-    except: message_log['count'] = 100
+    except ValueError: message_log['count'] = 100
     if message_log['count'] < 1: message_log['count'] = 1
     message_log['search_action'] = 'message_log'
     message_log['search_target'] = query_str
@@ -942,9 +943,9 @@ class censor(BaseHTTPRequestHandler):
   @staticmethod
   def __sizeof_human_readable(num, suffix='B'):
     for unit in ('', 'Ki', 'Mi', 'Gi', 'Ti', 'Pi', 'Ei', 'Zi'):
-        if abs(num) < 1024.0:
-            return "%3.1f%s%s" % (num, unit, suffix)
-        num /= 1024.0
+      if abs(num) < 1024.0:
+        return "%3.1f%s%s" % (num, unit, suffix)
+      num /= 1024.0
     return "%.1f%s%s" % (num, 'Yi', suffix)
 
   def __stats_groups(self):

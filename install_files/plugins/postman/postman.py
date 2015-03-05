@@ -47,7 +47,7 @@ class postman(BaseHTTPRequestHandler):
         self.send_header('Content-type', 'text/html')
         self.end_headers()
         self.wfile.write('<html><body>')
-        for y in range(0,100):
+        for y in range(0, 100):
           #self.wfile.write('<img src="/img/%s.png" style="width: 100px;" />' % ''.join(random.choice(self.origin.captcha_alphabet) for x in range(16)))
           self.wfile.write('<iframe src="/incoming/%s"></iframe>' % ''.join(random.choice(self.origin.captcha_alphabet) for x in range(16)))
           #time.sleep(0.1)
@@ -86,7 +86,7 @@ class postman(BaseHTTPRequestHandler):
         self.send_header('Content-type', 'text/html')
         self.end_headers()
         self.wfile.write('<html><body>')
-        for y in range(0,100):
+        for y in range(0, 100):
           #self.wfile.write('<img src="/img/%s.png" style="width: 100px;" />' % ''.join(random.choice(self.origin.captcha_alphabet) for x in range(16)))
           self.wfile.write('<iframe src="/incoming/%s"></iframe>' % ''.join(random.choice(self.origin.captcha_alphabet) for x in range(16)))
           #time.sleep(0.1)
@@ -133,7 +133,7 @@ class postman(BaseHTTPRequestHandler):
     msg = self.get_random_quote()
     msg += '<br/><b><font style="color: red;">failed. hard.</font></b>'
     self.send_captcha(msg, vars_)
-    
+
   def handleVerify(self):
     post_vars = FieldStorage(
       fp=self.rfile,
@@ -169,7 +169,7 @@ class postman(BaseHTTPRequestHandler):
       self.handleNewArticle(post_vars)
       return
     self.failCaptcha(post_vars)
-  
+
   def get_cookie(self, cookie_name):
     cookie = self.headers.get('Cookie')
     if cookie:
@@ -411,7 +411,7 @@ class postman(BaseHTTPRequestHandler):
             del parts
           if name == '':
             name = self.origin.frontends[frontend]['defaults']['name']
-              
+
     if 'email' in post_vars:
       #FIXME add email validation: .+@.+\..+
       if post_vars['email'].value.split('\n')[0] != '':
@@ -424,7 +424,7 @@ class postman(BaseHTTPRequestHandler):
     sage = ''
     if 'allow_sage' in self.origin.frontends[frontend]:
       if self.origin.frontends[frontend]['allow_sage'].lower() in ('true', 'yes'):
-        if (subject.lower().startswith('sage') or subject.lower().startswith('saging') or 
+        if (subject.lower().startswith('sage') or subject.lower().startswith('saging') or
             name.lower().startswith('sage') or name.lower().startswith('saging')):
           sage = "\nX-Sage: True"
 
@@ -556,7 +556,7 @@ class postman(BaseHTTPRequestHandler):
       del self.origin.temp_file_obj[k]
 
 class main(threading.Thread):
-  
+
   def log(self, loglevel, message):
     if loglevel >= self.loglevel:
       self.logger.log(self.name, message, loglevel)
@@ -808,7 +808,7 @@ class main(threading.Thread):
     self.httpd.captcha_require_cookie = False
     self.httpd.captcha_len = 6
     self.httpd.captcha_bypass_after_seconds_reply = 60 * 10
-    self.httpd.captcha_bypass_after_timestamp_reply = int(time.time()) 
+    self.httpd.captcha_bypass_after_timestamp_reply = int(time.time())
     self.httpd.captcha_generate = self.captcha_generate
     if self.new_captcha is not None:
       self.httpd.captcha_filter = ImageFilter.GaussianBlur(4)
@@ -839,7 +839,7 @@ class main(threading.Thread):
     del foobar
     f = open('/dev/urandom', 'r')
     self.httpd.captcha_secret = f.read(32)
-    f.close() 
+    f.close()
     # read captcha quotes from file
     qoutefile = 'plugins/postman/quotes.txt'
     if os.path.exists(qoutefile):
@@ -976,26 +976,26 @@ class main(threading.Thread):
       return self.captcha_check_backlog(expires, solution_hash)
     if solution_hash != sha256('%s%i%s' % (secret, expires, guess)).hexdigest(): return False
     return self.captcha_check_backlog(expires, solution_hash)
-  
+
   @staticmethod
-  def get_captcha_font(fontdir='plugins/postman/fonts/' ):
+  def get_captcha_font(fontdir='plugins/postman/fonts/'):
     """ get random font """
     font = random.choice(os.listdir(fontdir))
-    font = fontdir+font
-    return ImageFont.truetype(font, random.randint(32, 48) )
+    font = fontdir + font
+    return ImageFont.truetype(font, random.randint(32, 48))
 
   @staticmethod
   def captcha_render_b64(guess, tiles, font, filter_=None):
     """ generate captcha """
     #if self.captcha_size is None: size = self.defaultSize
     #img = Image.new("RGB", (256,96))
-    w , h , x , y = 300, 100, 30, 25
+    w, h, x, y = 300, 100, 30, 25
     w += random.randint(4, 50)
     h += random.randint(4, 50)
     x += random.randint(4, 50)
     y += random.randint(4, 50)
     tile = random.choice(tiles)
-    img = Image.new("RGB", (w,h))
+    img = Image.new("RGB", (w, h))
     for n in range(10):
       offset = (random.uniform(0, 1), random.uniform(0, 1))
       for j in xrange(-1, int(img.size[1] / tile.size[1]) + 1):
@@ -1005,7 +1005,7 @@ class main(threading.Thread):
           img.paste(tile, dest)
     draw = ImageDraw.Draw(img)
     #draw.text((40,20), guess, font=font, fill='white')
-    draw.text((x,y), guess, font=font, fill='black')
+    draw.text((x, y), guess, font=font, fill='black')
     if filter_:
       img = img.filter(filter_)
     f = cStringIO.StringIO()
@@ -1178,7 +1178,7 @@ class main(threading.Thread):
       self.httpd.postmandb_conn.commit()
       self.httpd.db_busy = False
 
-class new_captcha:
+class new_captcha(object):
   def __init__(self, diff=2, img_filter=None):
     self.img_filter = img_filter
     self.gauss = diff
@@ -1203,12 +1203,12 @@ class new_captcha:
     self.plazma_cache['reusage'] = random.randint(2, 5) * self.plazma_cache_size
 
   @staticmethod
-  def get_captcha_font(fontdir='plugins/postman/fonts/' ):
+  def get_captcha_font(fontdir='plugins/postman/fonts/'):
     #font = random.choice(os.listdir(fontdir))
     #font = fontdir + font
     font_list = ('FreeSansBold.ttf', 'FreeSerifBold.ttf', 'FreeMonoBold.ttf')
     font = fontdir + font_list[random.randint(0, 2)]
-    return ImageFont.truetype(font, random.randint(43, 54) )
+    return ImageFont.truetype(font, random.randint(43, 54))
 
   def captcha_render_b64(self, guess, tiles, font, filter_=None):
     img_to_str = cStringIO.StringIO()
@@ -1225,7 +1225,7 @@ class new_captcha:
   def captcha(self, guess, font):
     if self.plazma_cache['reusage'] <= -5:
       self.__init_cache()
-    self.plazma_cache['reusage'] -=1
+    self.plazma_cache['reusage'] -= 1
     mask = Image.new('RGBA', (self.plazma_cache['size'][0], self.plazma_cache['size'][1]))
     font_width, font_height = font.getsize(guess)
     font_width /= len(guess)
@@ -1258,11 +1258,11 @@ class new_captcha:
     plazma = Image.new('RGB', (width, height))
     pix = plazma.load()
 
-    for xy in [(0,0), (width-1, 0), (0, height-1), (width-1, height-1)]:
+    for xy in [(0, 0), (width-1, 0), (0, height-1), (width-1, height-1)]:
       rgb = []
       for i in xrange(3):
         rgb.append(int(random.random()*256))
-      pix[xy[0],xy[1]] = (rgb[0], rgb[1], rgb[2])
+      pix[xy[0], xy[1]] = (rgb[0], rgb[1], rgb[2])
 
     self.__plazmaRec(pix, 0, 0, width-1, height-1)
     return plazma
@@ -1279,16 +1279,16 @@ class new_captcha:
 
       tmp = (pix[x1, y1][i] + pix[x1, y2][i] +
              pix[x2, y1][i] + pix[x2, y2][i])/4
-      diagonal =  ((x1-x2)**2 + (y1-y2)**2)**0.5
+      diagonal = ((x1-x2)**2 + (y1-y2)**2)**0.5
       while True:
-        delta = int ( ((random.random() - 0.5)/100 * min(100, diagonal))*255 )
+        delta = int(((random.random() - 0.5) / 100 * min(100, diagonal)) * 255)
         if (tmp + delta >= 0) and (tmp + delta <= 255):
           tmp += delta
           break
       rgb.append(tmp)
 
     pix[x1, (y1 + y2)/2] = (rgb[0], rgb[5], rgb[10])
-    pix[x2, (y1 + y2)/2]= (rgb[1], rgb[6], rgb[11])
+    pix[x2, (y1 + y2)/2] = (rgb[1], rgb[6], rgb[11])
     pix[(x1 + x2)/2, y1] = (rgb[2], rgb[7], rgb[12])
     pix[(x1 + x2)/2, y2] = (rgb[3], rgb[8], rgb[13])
     pix[(x1 + x2)/2, (y1 + y2)/2] = (rgb[4], rgb[9], rgb[14])
@@ -1305,7 +1305,7 @@ if __name__ == '__main__':
   args['bind_use_ipv6'] = "False"
   args['template_directory'] = "plugins/postman/templates"
   args['frontend_directory'] = "plugins/postman/frontends"
-  poster = main("poster", args)
+  poster = main("poster", None, args)
   poster.start()
   try:
     time.sleep(3600)

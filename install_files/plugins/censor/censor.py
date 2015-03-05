@@ -12,9 +12,10 @@ from calendar import timegm
 from datetime import datetime, timedelta
 from email.utils import parsedate_tz
 from hashlib import sha512
-from srnd.utils import basicHTMLencode
 
 import nacl.signing
+
+from srnd.utils import basicHTMLencode
 
 import censor_httpd
 
@@ -428,7 +429,7 @@ class main(threading.Thread):
       line, comment = line.split("#", 1)
       line = line.rstrip(" ")
     else:
-      comment = '' 
+      comment = ''
     if not command in self.command_mapper:
       self.log(self.logger.INFO, "got unknown command: %s" % line)
       return
@@ -527,9 +528,9 @@ class main(threading.Thread):
 
     try:
       if int(self.censordb.execute('SELECT count(command) FROM cmd_map WHERE command = ?', (command,)).fetchone()[0]) == 1:
-         self.censordb.execute('UPDATE cmd_map SET send = ?, received = ?, replayable = ? WHERE command = ?', (send, received, replayable, command))
-         self.sqlite_censor_conn.commit()
-         self.command_cache = dict()
+        self.censordb.execute('UPDATE cmd_map SET send = ?, received = ?, replayable = ? WHERE command = ?', (send, received, replayable, command))
+        self.sqlite_censor_conn.commit()
+        self.command_cache = dict()
       else:
         self.log(self.logger.WARNING, "handle srnd-cmd: command %s not found or duplicated" % (command,))
     except Exception as e:

@@ -243,11 +243,11 @@ class dropper(threading.Thread):
       else:
         # FIXME don't rely on exists(group_dir) if directory is out of sync with database
         try:
-            group_id = int(self.sqlite.execute('SELECT group_id FROM groups WHERE group_name = ?', (group,)).fetchone()[0])
+          group_id = int(self.sqlite.execute('SELECT group_id FROM groups WHERE group_name = ?', (group,)).fetchone()[0])
         except TypeError, e:
-            if self.loglevel < self.logger.CRITICAL:
-                self.log(self.logger.ERROR, 'unable to get group_id for group {}'.format(group))
-                sys.exit(1)
+          if self.loglevel < self.logger.CRITICAL:
+            self.log(self.logger.ERROR, 'unable to get group_id for group {}'.format(group))
+            sys.exit(1)
         try:
           article_id = int(self.sqlite.execute('SELECT article_id FROM articles WHERE message_id = ? AND group_id = ?', (message_id, group_id)).fetchone()[0])
         except:

@@ -78,7 +78,7 @@ class SRNd(threading.Thread):
     except socket.error as e:
       if e.errno == 13:
         # FIXME: exit might not allow logger to actually output the message.
-        self.log(self.logger.CRITICAL,  '''[error] current user account does not have CAP_NET_BIND_SERVICE: %s
+        self.log(self.logger.CRITICAL, '''[error] current user account does not have CAP_NET_BIND_SERVICE: %s
         You have three options:
          - run SRNd as root
          - assign CAP_NET_BIND_SERVICE to the user you intend to use
@@ -591,7 +591,7 @@ class SRNd(threading.Thread):
 
   def ctl_socket_handler_stats(self, data, fd):
     if not 'stats' in self.__dict__:
-      self.stats = { "start_up_timestamp": self.start_up_timestamp }
+      self.stats = {"start_up_timestamp": self.start_up_timestamp}
       self.stats_last_update = 0
       self.ram_usage = 0
       if 'SC_PAGESIZE' in os.sysconf_names:
@@ -636,15 +636,15 @@ class SRNd(threading.Thread):
             "state": self.feeds[name].state,
             "queue": self.feeds[name].qsize
           }
-      return { "infeeds": infeeds, "outfeeds": ret }
+      return {"infeeds": infeeds, "outfeeds": ret}
     if data["data"] == "plugins":
       for name in self.plugins:
         ret[name] = {
           #"queue": self.plugins[name].qsize
         }
-      return { "active": ret }
+      return {"active": ret}
     if data["data"] == "hooks":
-      return { "blacklist": self.hook_blacklist, "whitelist": self.hooks }
+      return {"blacklist": self.hook_blacklist, "whitelist": self.hooks}
     return "obviously all fine in %s" % str(data["data"])
 
   def get_message_list_by_group(self, group):
@@ -814,20 +814,20 @@ class SRNd(threading.Thread):
               continue
             self.log(self.logger.DEBUG, "got something to read from control socket at fd %i: %s" % (fd, data))
             if not "command" in data:
-              self.ctl_socket_send_data(fd, { "type": "response", "status": "failed", "data": "no command given"})
+              self.ctl_socket_send_data(fd, {"type": "response", "status": "failed", "data": "no command given"})
               continue
             if not "data" in data:
               data["data"] = ''
             if data["command"] in self.ctl_socket_handlers:
-              try: self.ctl_socket_send_data(fd, { "type": "response", "status": "success", "command": data["command"], "args": data["data"], "data": self.ctl_socket_handlers[data["command"]](data, fd)})
+              try: self.ctl_socket_send_data(fd, {"type": "response", "status": "success", "command": data["command"], "args": data["data"], "data": self.ctl_socket_handlers[data["command"]](data, fd)})
               except Exception as e:
                 try:
-                  self.ctl_socket_send_data(fd, { "type": "response", "status": "failed", "command": data["command"], "args": data["data"], "data": "internal SRNd handler returned exception: %s" % e })
+                  self.ctl_socket_send_data(fd, {"type": "response", "status": "failed", "command": data["command"], "args": data["data"], "data": "internal SRNd handler returned exception: %s" % e})
                 except Exception as e1:
                   self.log(self.logger.INFO, "can't send exception message to control socket connection using fd %i: %s, original exception was %s" % (fd, e1, e))
                   self.terminate_ctl_socket_connection(fd)
               continue
-            self.ctl_socket_send_data(fd, { "type": "response", "status": "failed", "command": data["command"], "args": data["data"], "data": "no handler for given command '%s'" % data["command"] })
+            self.ctl_socket_send_data(fd, {"type": "response", "status": "failed", "command": data["command"], "args": data["data"], "data": "no handler for given command '%s'" % data["command"]})
           except Exception as e:
             self.log(self.logger.INFO, "unhandled exception while processing control socket request using fd %i: %s" % (fd, e))
             self.terminate_ctl_socket_connection(fd)
@@ -853,7 +853,7 @@ class SRNd(threading.Thread):
     if name in self.feeds:
       del self.feeds[name]
     else:
-      self.log(self.logger.WARNING,  'should remove %s but not in dict. wtf?' % name)
+      self.log(self.logger.WARNING, 'should remove %s but not in dict. wtf?' % name)
 
   def relay_dropper_handler(self, signum, frame):
     #TODO: remove, this is not needed anymore at all?

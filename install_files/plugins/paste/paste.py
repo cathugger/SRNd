@@ -22,7 +22,7 @@ from pygments.formatters import HtmlFormatter
 from pygments.lexers import guess_lexer, guess_lexer_for_filename, get_lexer_by_name, ClassNotFound
 
 class main(threading.Thread):
-  
+
   def log(self, loglevel, message):
     if loglevel >= self.loglevel:
       self.logger.log(self.name, message, loglevel)
@@ -42,7 +42,7 @@ class main(threading.Thread):
     self.logger = logger
     self.should_terminate = False
     self.loglevel = self.logger.INFO
-    # TODO: move sleep stuff to config table    
+    # TODO: move sleep stuff to config table
     self.sleep_threshold = 10
     self.sleep_time = 0.02
     error = ''
@@ -114,7 +114,7 @@ class main(threading.Thread):
         self.loglevel = self.logger.INFO
         self.log(self.logger.WARNING, 'debuglevel not between 0 and 5, using default of debug = %i' % self.logger.INFO)
     if 'generate_all' in args:
-      if args['generate_all'].lower() == 'true': 
+      if args['generate_all'].lower() == 'true':
         self.generate_full_html_on_start = True
       else:
         self.generate_full_html_on_start = False

@@ -25,11 +25,11 @@ import sockssocket
 
 
 class feed(threading.Thread):
-  
+
   def log(self, loglevel, message):
     if loglevel >= self.loglevel:
       self.logger.log(self.name, message, loglevel)
-  
+
   def __init__(self, master, logger, connection=None, outstream=False, host=None, port=None, sync_on_startup=False, proxy=None, debug=2):
     threading.Thread.__init__(self)
     self.outstream = outstream
@@ -39,7 +39,7 @@ class feed(threading.Thread):
     self.state = 'init'
     self.SRNd = master
     self.proxy = proxy
-    if outstream:          
+    if outstream:
       self.host = host
       self.port = port
       self.queue = Queue.LifoQueue()
@@ -103,7 +103,7 @@ class feed(threading.Thread):
     #FIXME: readd message_id if conn_broken
     #FIXME: ^ add message_id as additional argument
     #TODO: do the actual reading and sending here as well, including converting
-    #TODO: ^ provide file FD as argument so reply to remote can be checked first 
+    #TODO: ^ provide file FD as argument so reply to remote can be checked first
     self.state = 'sending'
     sent = 0
     length = len(message)
@@ -116,7 +116,7 @@ class feed(threading.Thread):
         if e.errno == 11:
           # 11 Resource temporarily unavailable
           time.sleep(0.1)
-        elif e.errno == 32 or e.errno == 104 or e.errno == 110:
+        elif e.errno in (32, 104, 110):
           # 32 Broken pipe
           # 104 Connection reset by peer
           # 110 Connection timed out
@@ -138,9 +138,9 @@ class feed(threading.Thread):
     try:
       self.socket.shutdown(socket.SHUT_RDWR)
     except socket.error as e:
-      if e.errno != 9 and e.errno != 107:   # 9 == bad filedescriptor, 107 == not connected
+      if e.errno not in (9, 107):   # 9 == bad filedescriptor, 107 == not connected
         raise e
-      
+
   def cooldown(self, additional_message=''):
     # FIXME write that fuckin self.log() def already!
     if self.cooldown_counter == 0:
@@ -523,8 +523,8 @@ class feed(threading.Thread):
       #TODO 431 message-id   Transfer not possible; try again later
       message_id = line.split(' ', 1)[1]
       if '/' in message_id:
-         self.send('438 {0} illegal message-id\r\n'.format(message_id))
-         return
+        self.send('438 {0} illegal message-id\r\n'.format(message_id))
+        return
       if os.path.exists(os.path.join('articles', message_id)) or os.path.exists(os.path.join('incoming', message_id)):
         self.send('438 {0} i know this article already\r\n'.format(message_id))
         return

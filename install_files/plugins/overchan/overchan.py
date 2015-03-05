@@ -511,7 +511,7 @@ class main(threading.Thread):
     self.sqlite_conn = sqlite3.connect(os.path.join(self.config['database_directory'], 'overchan.db3'))
     self.sqlite = self.sqlite_conn.cursor()
     if not self.config['sqlite_synchronous']:
-        self.sqlite.execute("PRAGMA synchronous = OFF")
+      self.sqlite.execute("PRAGMA synchronous = OFF")
     # FIXME use config table with current db version + def update_db(db_version) like in censor plugin
     self.sqlite.execute('''CREATE TABLE IF NOT EXISTS groups
                (group_id INTEGER PRIMARY KEY AUTOINCREMENT, group_name text UNIQUE, article_count INTEGER, last_update INTEGER)''')
@@ -1630,13 +1630,13 @@ class main(threading.Thread):
     is_playable = False
     parsed_data = dict()
     if data[6] != '':
-        imagelink = data[6]
-        if data[7] in self.config['thumbs']:
-          thumblink = self.config['thumbs'][data[7]]
-        else:
-          thumblink = data[7]
-          if data[6] != data[7] and data[6].rsplit('.', 1)[-1] in ('gif', 'webm', 'mp4'):
-            is_playable = True
+      imagelink = data[6]
+      if data[7] in self.config['thumbs']:
+        thumblink = self.config['thumbs'][data[7]]
+      else:
+        thumblink = data[7]
+        if data[6] != data[7] and data[6].rsplit('.', 1)[-1] in ('gif', 'webm', 'mp4'):
+          is_playable = True
     else:
       imagelink = thumblink = self.config['thumbs'].get('no_file', 'error')
     if data[8] != '':
@@ -2034,10 +2034,10 @@ class main(threading.Thread):
       t_engine_mappings_news['subject'] = 'Breaking news' if row[0] == 'None' or row[0] == '' else row[0]
       t_engine_mappings_news['sent'] = datetime.utcfromtimestamp(row[2] + self.config['utc_time_offset']).strftime(self.config['datetime_format'])
       if row[3] != '':
-          t_engine_mappings_news['pubkey_short'] = generate_pubkey_short_utf_8(row[3])
-          moder_name = self.pubkey_to_name(row[3])
+        t_engine_mappings_news['pubkey_short'] = generate_pubkey_short_utf_8(row[3])
+        moder_name = self.pubkey_to_name(row[3])
       else:
-          moder_name = ''
+        moder_name = ''
       t_engine_mappings_news['author'] = moder_name if moder_name else row[5]
       t_engine_mappings_news['pubkey'] = row[3]
       t_engine_mappings_news['parent'] = parent

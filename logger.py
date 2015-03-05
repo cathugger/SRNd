@@ -91,7 +91,7 @@ class logger(threading.Thread):
           if loglevel == 'all':
             target_loglevels = loglevel_all
             break
-          if loglevel.upper() in self.level: 
+          if loglevel.upper() in self.level:
             target_loglevels.append(self.level[loglevel.upper()])
           else:
             sys.stderr.write('unknown loglevel: \'%s\'\n' % loglevel)
@@ -153,7 +153,7 @@ class logger(threading.Thread):
       if loglevel not in loglevels: continue
       for line in ('%s' % message).split('\n'):
         if json_framing_4:
-          data = json.dumps({ "type": "log", "status": loglevel_names[loglevel], "source": source, "date": time.time(), "data": line })
+          data = json.dumps({"type": "log", "status": loglevel_names[loglevel], "source": source, "date": time.time(), "data": line})
           data = self.encode_big_endian(len(data), 4) + data
         else:
           date = datetime.utcfromtimestamp(time.time()).strftime(date_fmt)
@@ -164,7 +164,7 @@ class logger(threading.Thread):
           pass
       try:    target_file.flush()
       except: pass
-    
+
   def run(self):
     self.write(self.name, 'starting up', self.INFO)
     self.running = True
