@@ -379,11 +379,10 @@ class feed(threading.Thread):
     """ Add or remove article in dict. If no act and step 's after adding article - re-adding article in queue.
         step['time'] - empty cycle for increase performance if list very large"""
     curent_time = int(time.time())
-    if act is not None:
-      if act == 'add':
-        self._recheck_sending.list[message_id] = curent_time + step
-      elif act == 'remove':
-        self._recheck_sending.list.pop(message_id, None)
+    if act == 'add':
+      self._recheck_sending.list[message_id] = curent_time + step
+    elif act == 'remove':
+      self._recheck_sending.list.pop(message_id, None)
     elif self._recheck_sending.step['time'] < curent_time:
       self._recheck_sending.step['time'] = curent_time + 10
       for add_article in self._recheck_sending.list:
