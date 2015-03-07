@@ -347,23 +347,52 @@ class feed(threading.Thread):
             while self.queue.qsize() > 0 and count <= 50 and not self.con_broken:
               # FIXME why self.message_id here? IHAVE and POST makes sense, but streaming?
               # FIXME: add CHECK statements to list and send the whole bunch after the loop
-              self.message_id = self.queue.get()
-              if os.path.exists(os.path.join('articles', self.message_id)):
-                self.send('CHECK {0}\r\n'.format(self.message_id))
+              self._send_new_check('CHECK')
               count += 1
             self.state = 'idle'
           elif self.queue.qsize() > 0 and not self.con_broken:
-            self.message_id = self.queue.get()
             #print "[{0}] got message-id {1}".format(self.name, self.message_id)
-            # FIXME: check if article actually exists
             if self.outstream_ihave:
-              self.send('IHAVE {0}\r\n'.format(self.message_id))
+              self._send_new_check('IHAVE')
             elif self.outstream_post:
+              self.message_id = self.queue.get()
               self.send('POST\r\n')
+          self._recheck_sending()
           self.qsize = self.queue.qsize() + len(self.articles_to_send)
     self.log(self.logger.INFO, 'client disconnected')
     self.socket.close()
     self.SRNd.terminate_feed(self.name)
+
+  def _send_new_check(self, cmd):
+    """ Collect IHAVE and CHECK article id and re-add in queue if don't response or connect broken when send this """
+    self.message_id = self.queue.get()
+    if os.path.exists(os.path.join('articles', self.message_id)):
+      self.log(self.logger.DEBUG, 'send {} {}'.format(cmd, self.message_id))
+      self.send('{} {}\r\n'.format(cmd, self.message_id))
+      if self.con_broken:
+        self.log(self.logger.DEBUG, 'conn_broken when sending {} {}. Re-adding in queue'.format(cmd, self.message_id))
+        self.add_article(self.message_id)
+      else:
+        self._recheck_sending(self.message_id, 'add')
+
+  def _recheck_sending(self, message_id=None, act=None, step=30):
+    """ Add or remove article in dict. If no act and step 's after adding article - re-adding article in queue.
+        step['time'] - empty cycle for increase performance if list very large"""
+    curent_time = int(time.time())
+    if act is not None:
+      if act == 'add':
+        self._recheck_sending.list[message_id] = curent_time + step
+      elif act == 'remove':
+        self._recheck_sending.list.pop(message_id, None)
+    elif self._recheck_sending.step['time'] < curent_time:
+      self._recheck_sending.step['time'] = curent_time + 10
+      for add_article in self._recheck_sending.list:
+        if self._recheck_sending.list[add_article] < curent_time:
+          self._recheck_sending.list.pop(add_article, None)
+          self.log(self.logger.DEBUG, 'not response to {}. Re-adding in queue'.format(add_article))
+          self.add_article(add_article)
+  _recheck_sending.list = dict()
+  _recheck_sending.step = {'time': 0}
 
   def _read_and_prepare(self, fd, buffsize):
     data = ''
@@ -389,19 +418,30 @@ class feed(threading.Thread):
     buff = 16384
     self.multiline_out = True
     self.state = 'sending'
+    counts = 0
     with open(os.path.join('articles', message_id), 'rb') as fd:
       for to_send in self._read_and_prepare(fd, buff):
+        counts += 1
         self.send(to_send)
         if self.con_broken: break
     if not self.con_broken:
       self.send('.\r\n')
     if self.con_broken:
       self.add_article(message_id)
+      self._recheck_sending(message_id, 'remove')
+    else:
+      # ~ + 4 minute in 1 mb. Good for i2p, need correct for other network
+      multiplier = (counts * buff) / (1024 * 128)
+      if multiplier > 0:
+        self.log(self.logger.DEBUG, 'add {}s waiting after sending {}'.format((multiplier * 30), message_id))
+        self._recheck_sending(message_id, 'add', multiplier * 30)
     self.multiline_out = False
 
   def update_trackdb(self, line):
     self.log(self.logger.DEBUG, 'updating trackdb: %s' % line)
     message_id = line.split(' ')[1]
+    # remove existing\sending\etc article
+    self._recheck_sending(message_id, 'remove')
     try:
       f = open('{0}.trackdb'.format(self.name), 'a')
     except IOError as e:
@@ -465,6 +505,7 @@ class feed(threading.Thread):
         elif commands[0] == '431':
           # CHECK 431 == try again later
           self.add_article(line.split(' ')[1])
+          self._recheck_sending(line.split(' ')[1], 'remove')
       elif self.outstream_ihave:
         if commands[0] == '235' or commands[0] == '435' or commands[0] == '437':
           # IHAVE 235 == last article received
@@ -472,11 +513,11 @@ class feed(threading.Thread):
           # IHAVE 437 == article rejected
           self.update_trackdb(line)
           if self.queue.qsize() > 0:
-            self.message_id = self.queue.get()
-            self.send('IHAVE {0}\r\n'.format(self.message_id))
+            self._send_new_check('IHAVE')
         elif commands[0] == '436':
           # IHAVE 436 == try again later
           self.add_article(self.message_id)
+          self._recheck_sending(self.message_id, 'remove')
         elif commands[0] == '335':
           # IHAVE 335 == waiting for article
           self.send_article(self.message_id)
