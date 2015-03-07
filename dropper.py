@@ -107,7 +107,6 @@ class dropper(threading.Thread):
           if int(self.sqlite.execute('SELECT count(message_id) FROM articles WHERE message_id = ?', (message_id,)).fetchone()[0]) != 0:
             self.log(self.logger.INFO, 'article \'{}\' was blacklisted and is moved back into incoming/. processing again'.format(message_id))
         self.write(desthash, message_id, groups, link, compile_header, body_offset)
-        os.remove(link)
     self.busy = False
     if self.retry:
       self.retry = False
@@ -219,14 +218,15 @@ class dropper(threading.Thread):
       o.write(compile_header)
       i.seek(body_offset)
       o.write(i.read())
+    os.remove(inc_link)
     try:
       self.sqlite_hasher.execute('INSERT INTO article_hashes VALUES (?, ?, ?)', (message_id, sha1(message_id).hexdigest(), desthash))
       self.sqlite_hasher_conn.commit()
     except:
       pass
+    article_link = '../../' + link
     for group in groups:
       self.log(self.logger.DEBUG, 'creating link for {}'.format(group))
-      article_link = '../../' + link
       group_dir = os.path.join('groups', group)
       if not os.path.exists(group_dir):
         # FIXME don't rely on exists(group_dir) if directory is out of sync with database
