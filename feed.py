@@ -51,6 +51,8 @@ class feed(threading.Thread):
       self.polltimeout = 500 # 1 * 1000
       self.name = 'outfeed-{0}-{1}'.format(self.host, self.port)
       self.init_socket()
+      self.rechecking = dict()
+      self.rechecking_step = 0
     else:
       self.socket = connection[0]
       self.fileno = self.socket.fileno()
@@ -377,21 +379,18 @@ class feed(threading.Thread):
 
   def _recheck_sending(self, message_id=None, act=None, step=30):
     """ Add or remove article in dict. If no act and step 's after adding article - re-adding article in queue.
-        step['time'] - empty cycle for increase performance if list very large"""
+        self.rechecking_step - empty cycle for increase performance if list very large"""
     curent_time = int(time.time())
     if act == 'add':
-      self._recheck_sending.list[message_id] = curent_time + step
+      self.rechecking[message_id] = curent_time + step
     elif act == 'remove':
-      self._recheck_sending.list.pop(message_id, None)
-    elif self._recheck_sending.step['time'] < curent_time:
-      self._recheck_sending.step['time'] = curent_time + 10
-      for add_article in self._recheck_sending.list:
-        if self._recheck_sending.list[add_article] < curent_time:
-          self._recheck_sending.list.pop(add_article, None)
-          self.log(self.logger.DEBUG, 'not response to {}. Re-adding in queue'.format(add_article))
-          self.add_article(add_article)
-  _recheck_sending.list = dict()
-  _recheck_sending.step = {'time': 0}
+      self.rechecking.pop(message_id, None)
+    elif self.rechecking_step < curent_time:
+      self.rechecking_step = curent_time + 10
+      for add_article in [x for x in self.rechecking if self.rechecking[x] < curent_time]:
+        self.rechecking.pop(add_article, None)
+        self.log(self.logger.DEBUG, 'not response to {}. Re-adding in queue'.format(add_article))
+        self.add_article(add_article)
 
   def _read_and_prepare(self, fd, buffsize):
     data = ''
@@ -430,10 +429,12 @@ class feed(threading.Thread):
       self._recheck_sending(message_id, 'remove')
     else:
       # ~ + 4 minute in 1 mb. Good for i2p, need correct for other network
-      multiplier = (counts * buff) / (1024 * 128)
-      if multiplier > 0:
-        self.log(self.logger.DEBUG, 'add {}s waiting after sending {}'.format((multiplier * 30), message_id))
-        self._recheck_sending(message_id, 'add', multiplier * 30)
+      multiplier = (counts * buff) / (1024 * 64)
+      multiplier = multiplier * 60 if multiplier > 0 else 60
+      if multiplier > 600:
+        multiplier = 600
+      self.log(self.logger.DEBUG, 'add {}s waiting after sending {}'.format(multiplier, message_id))
+      self._recheck_sending(message_id, 'add', multiplier)
     self.multiline_out = False
 
   def update_trackdb(self, line):
