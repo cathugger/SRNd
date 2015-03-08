@@ -171,7 +171,7 @@ class feed(threading.Thread):
       self.log(self.logger.INFO, 'connection established')
       self.send(self.welcome + '\r\n')
     else:
-      self.articles_to_send = list()
+      self.articles_to_send = set()
       cooldown_msg = ''
       while self.running and not connected:
         self.qsize = self.queue.qsize() + len(self.articles_to_send)
@@ -504,8 +504,9 @@ class feed(threading.Thread):
       if self.outstream_stream:
         if commands[0] == '238':
           # CHECK 238 == article wanted
-          self.articles_to_send.append(line.split(' ')[1])
-          self._recheck_sending(line.split(' ')[1], 'remove')
+          article_wanted = line.split(' ')[1]
+          self.articles_to_send.add(article_wanted)
+          self._recheck_sending(article_wanted, 'remove')
         if commands[0] == '239' or commands[0] == '438' or commands[0] == '439':
           # TAKETHIS 239 == Article transferred OK, record successfully sent message-id to database
           # CHECK 438 == Article not wanted
