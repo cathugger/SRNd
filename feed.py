@@ -505,6 +505,7 @@ class feed(threading.Thread):
         if commands[0] == '238':
           # CHECK 238 == article wanted
           self.articles_to_send.append(line.split(' ')[1])
+          self._recheck_sending(line.split(' ')[1], 'remove')
         if commands[0] == '239' or commands[0] == '438' or commands[0] == '439':
           # TAKETHIS 239 == Article transferred OK, record successfully sent message-id to database
           # CHECK 438 == Article not wanted
