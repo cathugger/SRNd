@@ -584,6 +584,9 @@ class main(threading.Thread):
     self._load_templates()
     self.cache_init()
 
+    # index generation happens only at startup
+    self.generate_index()
+
     if self.config['generate_all']:
       self.regenerate_all_html()
 
@@ -592,9 +595,6 @@ class main(threading.Thread):
       self.regenerate_boards.add(group_row[0])
     for thread_row in self.sqlite.execute('SELECT article_uid FROM articles WHERE parent = "" OR parent = article_uid ORDER BY last_update DESC').fetchall():
       self.regenerate_threads.add(thread_row[0])
-
-    # index generation happens only at startup
-    self.generate_index()
 
   def shutdown(self):
     self.running = False
@@ -850,7 +850,7 @@ class main(threading.Thread):
     self.log(self.logger.INFO, 'starting up as plugin..')
     self.past_init()
     self.running = True
-    regen_overview = False
+    regen_overview = True
     got_control = False
     while self.running:
       try:
