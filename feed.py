@@ -432,17 +432,14 @@ class feed(threading.Thread):
         if self.con_broken: break
     if not self.con_broken:
       self.send('.\r\n')
-    if self.con_broken:
-      self.add_article(message_id)
-      self._recheck_sending(message_id, 'remove')
-    else:
-      # ~ + 4 minute in 1 mb. Good for i2p, need correct for other network
-      multiplier = (counts * buff) / (1024 * 64)
-      multiplier = multiplier * 60 if multiplier > 0 else 60
-      if multiplier > 600:
-        multiplier = 600
-      self.log(self.logger.VERBOSE, 'add {}s waiting after sending {}'.format(multiplier, message_id))
-      self._recheck_sending(message_id, 'add', multiplier)
+    # ~ + 4 minute in 1 mb. May be need correct for other network
+    # rechecking small articles first
+    multiplier = (counts * buff) / (1024 * 64)
+    multiplier = multiplier * 60 if multiplier > 0 else 60
+    if multiplier > 1200:
+      multiplier = 1200
+    self.log(self.logger.VERBOSE, 'add {}s waiting after sending {}'.format(multiplier, message_id))
+    self._recheck_sending(message_id, 'add', multiplier)
     self.multiline_out = False
 
   def update_trackdb(self, line):
