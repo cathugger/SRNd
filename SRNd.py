@@ -511,6 +511,7 @@ class SRNd(threading.Thread):
         # open track db here, read, close
         if sync_on_startup:
           self.feed_db[name] = set()
+          readed = 0
           try:
             f = open('{0}.trackdb'.format(name), 'r')
           except IOError as e:
@@ -520,7 +521,15 @@ class SRNd(threading.Thread):
               self.log(self.logger.ERROR, 'cannot open: %s: %s' % ('{0}.trackdb'.format(name), e.strerror))
           else:
             for line in f.readlines():
+              readed += 1
               self.feed_db[name].add(line.rstrip('\n'))
+          f.close()
+          # remove duplicates
+          if readed > len(self.feed_db[name]) > 1:
+            self.log(self.logger.INFO, 'detect {} duplicates in {}.trackdb. Rewrite'.format((readed - len(self.feed_db[name])), name))
+            with open('{0}.trackdb'.format(name), 'w') as f:
+              f.write('\n'.join(self.feed_db[name]))
+              f.write('\n')
         current_feedlist.append(name)
         proxy = None
         if proxy_type != None:
