@@ -81,6 +81,7 @@ class main(threading.Thread):
     self.serving = False
 
   def shutdown(self):
+    self.config['running'] = False
     if self.serving:
       self.httpd.shutdown()
     else:
@@ -125,7 +126,12 @@ class main(threading.Thread):
 
   def _cache_init(self):
     self.cache = dict()
-    self.cache['flags'] = {row[0]: row[1] for row in self.overchandb.execute('SELECT flag_name, cast(flag as integer) FROM flags WHERE flag_name != ""').fetchall()}
+    while len(self.cache) < 1 and self.config['running']:
+      try:
+        self.cache['flags'] = {row[0]: row[1] for row in self.overchandb.execute('SELECT flag_name, cast(flag as integer) FROM flags WHERE flag_name != ""').fetchall()}
+      except sqlite3.Error:
+        # db not created. wait...
+        time.sleep(5)
 
   def _api_init(self):
     self.apis = dict()
