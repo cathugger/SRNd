@@ -333,24 +333,12 @@ class feed(threading.Thread):
         #print "[{0}] timeout hit, state = {1}".format(self.name, self.state)
         if self.outstream_ready and self.state == 'idle':
           #print "[{0}] queue size: {1}".format(self.name, self.queue.qsize())
+          self._recheck_sending()
           if self.outstream_stream:
-            self.state = 'outfeed_send_article_stream'
-            self.qsize = self.queue.qsize() + len(self.articles_to_send)
-            for message_id in self.articles_to_send:
-              if self.con_broken: break
-              if os.path.exists(os.path.join('articles', message_id)):
-                self.send('TAKETHIS {0}\r\n'.format(message_id))
-                self.send_article(message_id)
-                self.qsize -= 1
-            if not self.con_broken: del self.articles_to_send[:]
-            self.qsize = self.queue.qsize() + len(self.articles_to_send)
-            self.state = 'outfeed_send_check_stream'
-            count = 0
-            while self.queue.qsize() > 0 and count <= 50 and not self.con_broken:
-              # FIXME why self.message_id here? IHAVE and POST makes sense, but streaming?
-              # FIXME: add CHECK statements to list and send the whole bunch after the loop
-              self._send_new_check('CHECK')
-              count += 1
+            if len(self.articles_to_send) > 0:
+              self._worker_send_article_stream()
+            else:
+              self._worker_send_check_stream()
             self.state = 'idle'
           elif self.queue.qsize() > 0 and not self.con_broken:
             #print "[{0}] got message-id {1}".format(self.name, self.message_id)
@@ -359,11 +347,31 @@ class feed(threading.Thread):
             elif self.outstream_post:
               self.message_id = self.queue.get()
               self.send('POST\r\n')
-          self._recheck_sending()
           self.qsize = self.queue.qsize() + len(self.articles_to_send)
     self.log(self.logger.INFO, 'client disconnected')
     self.socket.close()
     self.SRNd.terminate_feed(self.name)
+
+  def _worker_send_check_stream(self, max_check=50):
+    self.qsize = self.queue.qsize() + len(self.articles_to_send)
+    self.state = 'outfeed_send_check_stream'
+    count = 0
+    while self.queue.qsize() > 0 and count <= max_check and not self.con_broken:
+      # FIXME why self.message_id here? IHAVE and POST makes sense, but streaming?
+      # FIXME: add CHECK statements to list and send the whole bunch after the loop
+      self._send_new_check('CHECK')
+      count += 1
+
+  def _worker_send_article_stream(self, send_time=120):
+    self.state = 'outfeed_send_article_stream'
+    self.qsize = self.queue.qsize() + len(self.articles_to_send)
+    start_time = int(time.time())
+    while len(self.articles_to_send) > 0 and start_time + send_time > int(time.time()) and not self.con_broken:
+      message_id = self.articles_to_send.pop(0)
+      if os.path.exists(os.path.join('articles', message_id)):
+        self.send('TAKETHIS {0}\r\n'.format(message_id))
+        self.send_article(message_id)
+        self.qsize -= 1
 
   def _send_new_check(self, cmd):
     """ Collect IHAVE and CHECK article id and re-add in queue if don't response or connect broken when send this """
@@ -389,7 +397,7 @@ class feed(threading.Thread):
       self.rechecking_step = curent_time + 10
       for add_article in [x for x in self.rechecking if self.rechecking[x] < curent_time]:
         self.rechecking.pop(add_article, None)
-        self.log(self.logger.DEBUG, 'not response to {}. Re-adding in queue'.format(add_article))
+        self.log(self.logger.DEBUG, 'not response to {} - re-adding in queue'.format(add_article))
         self.add_article(add_article)
 
   def _read_and_prepare(self, fd, buffsize):
@@ -433,7 +441,7 @@ class feed(threading.Thread):
       multiplier = multiplier * 60 if multiplier > 0 else 60
       if multiplier > 600:
         multiplier = 600
-      self.log(self.logger.DEBUG, 'add {}s waiting after sending {}'.format(multiplier, message_id))
+      self.log(self.logger.VERBOSE, 'add {}s waiting after sending {}'.format(multiplier, message_id))
       self._recheck_sending(message_id, 'add', multiplier)
     self.multiline_out = False
 
