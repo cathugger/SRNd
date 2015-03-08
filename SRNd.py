@@ -737,7 +737,6 @@ class SRNd(threading.Thread):
         del synclist[group]
 
     self.log(self.logger.DEBUG, 'startup_sync done. hopefully.')
-    del current_sync_targets
     del self.feed_db
 
   def run(self):
