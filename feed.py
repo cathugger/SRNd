@@ -367,7 +367,7 @@ class feed(threading.Thread):
     self.qsize = self.queue.qsize() + len(self.articles_to_send)
     start_time = int(time.time())
     while len(self.articles_to_send) > 0 and start_time + send_time > int(time.time()) and not self.con_broken:
-      message_id = self.articles_to_send.pop(0)
+      message_id = self.articles_to_send.pop()
       if os.path.exists(os.path.join('articles', message_id)):
         self.send('TAKETHIS {0}\r\n'.format(message_id))
         self.send_article(message_id)
