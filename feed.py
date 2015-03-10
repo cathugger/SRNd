@@ -523,8 +523,7 @@ class feed(threading.Thread):
             self._send_new_check('IHAVE')
         elif commands[0] == '436':
           # IHAVE 436 == try again later
-          self.add_article(self.message_id)
-          self._recheck_sending(self.message_id, 'remove')
+          self._recheck_sending(self.message_id, 'add', 600)
         elif commands[0] == '335':
           # IHAVE 335 == waiting for article
           self.send_article(self.message_id)
