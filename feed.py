@@ -385,7 +385,7 @@ class feed(threading.Thread):
       else:
         self._recheck_sending(self.message_id, 'add')
 
-  def _recheck_sending(self, message_id=None, act=None, step=30):
+  def _recheck_sending(self, message_id=None, act=None, step=120):
     """ Add or remove article in dict. If no act and step 's after adding article - re-adding article in queue.
         self.rechecking_step - empty cycle for increase performance if list very large"""
     curent_time = int(time.time())
@@ -394,7 +394,7 @@ class feed(threading.Thread):
     elif act == 'remove':
       self.rechecking.pop(message_id, None)
     elif self.rechecking_step < curent_time:
-      self.rechecking_step = curent_time + 10
+      self.rechecking_step = curent_time + 20
       for add_article in [x for x in self.rechecking if self.rechecking[x] < curent_time]:
         self.rechecking.pop(add_article, None)
         self.log(self.logger.DEBUG, 'not response to {} - re-adding in queue'.format(add_article))
@@ -435,9 +435,9 @@ class feed(threading.Thread):
     # ~ + 4 minute in 1 mb. May be need correct for other network
     # rechecking small articles first
     multiplier = (counts * buff) / (1024 * 64)
-    multiplier = multiplier * 60 if multiplier > 0 else 60
-    if multiplier > 1200:
-      multiplier = 1200
+    multiplier = multiplier * 120 if multiplier > 0 else 120
+    if multiplier > 3600:
+      multiplier = 3600
     self.log(self.logger.VERBOSE, 'add {}s waiting after sending {}'.format(multiplier, message_id))
     self._recheck_sending(message_id, 'add', multiplier)
     self.multiline_out = False
