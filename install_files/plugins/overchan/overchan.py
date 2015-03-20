@@ -863,11 +863,10 @@ class main(threading.Thread):
             continue
           #message_id = self.queue.get(block=True, timeout=1)
           self.log(self.logger.DEBUG, 'got article %s' % message_id)
+          f = open(os.path.join('articles', message_id), 'r')
           try:
-            f = open(os.path.join('articles', message_id), 'r')
             if not self.parse_message(message_id, f):
               f.close()
-              #self.log(self.logger.WARNING, 'got article %s, parse_message failed. somehow.' % message_id)
           except Exception as e:
             self.log(self.logger.WARNING, 'something went wrong while trying to parse article %s: %s' % (message_id, e))
             self.log(self.logger.WARNING, traceback.format_exc())
