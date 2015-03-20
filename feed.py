@@ -451,8 +451,9 @@ class feed(threading.Thread):
       f = open('{0}.trackdb'.format(self.name), 'a')
     except IOError as e:
       self.log(self.logger.ERROR, 'cannot open: %s: %s' % ('{0}.trackdb'.format(self.name), e.strerror))
-    f.write('{0}\n'.format(message_id))
-    f.close()
+    else:
+      f.write('{0}\n'.format(message_id))
+      f.close()
 
   def handle_line(self, line):
     self.log(self.logger.VERBOSE, 'in: %s' % line)
