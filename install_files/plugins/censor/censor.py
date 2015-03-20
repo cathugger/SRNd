@@ -316,11 +316,12 @@ class main(threading.Thread):
       else:
         self.censordb.execute('UPDATE signature_cache SET received = ? WHERE message_uid = ?', (current_time, message_id))
         self.sqlite_censor_conn.commit()
-      try:
         f = open(os.path.join("articles", message_id), 'r')
+      try:
         self.parse_article(f, message_id)
       except Exception as e:
         self.log(self.logger.WARNING, 'something went wrong while parsing %s: %s' % (message_id, e))
+      finally:
         f.close()
       return True
     public_key = None
@@ -359,6 +360,7 @@ class main(threading.Thread):
       self.sqlite_censor_conn.commit()
       return True
     self.parse_article(f, message_id, self.get_key_id(public_key))
+    f.close()
     return True
 
   def get_key_id(self, public_key):
@@ -411,8 +413,6 @@ class main(threading.Thread):
         continue
       line = line.split('\n')[0]
       self.handle_line(line, key_id, sent, is_replay, False)
-
-    article_fd.close()
 
   def redistribute_command(self, group, line, comment, timestamp):
     # TODO add universal redistributor? Add SRNd queue? Currents methods thread-safe?
