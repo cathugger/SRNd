@@ -316,7 +316,7 @@ class main(threading.Thread):
       else:
         self.censordb.execute('UPDATE signature_cache SET received = ? WHERE message_uid = ?', (current_time, message_id))
         self.sqlite_censor_conn.commit()
-        f = open(os.path.join("articles", message_id), 'r')
+      f = open(os.path.join("articles", message_id), 'r')
       try:
         self.parse_article(f, message_id)
       except Exception as e:
