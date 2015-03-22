@@ -9,7 +9,7 @@ class API_1(MainAPIHandler):
     MainAPIHandler.__init__(self, args)
 
   def _handle_lasts(self, requ):
-    """return last posts list. time - int unuxtime, sent after this. limit - post limit, max 100 min 1. group - groupname.exemple: get /lasts?limit=10&group=overchan.ru.drugs"""
+    """return last posts list. time - int unixtime, sent after this. limit - post limit, max 100 min 1. group - groupname. By example: get /lasts?limit=10&group=overchan.ru.drugs"""
     limits, after_time, group = self._prepare_lasts(requ)
     params = ['article_hash', 'sent']
     if group == 'all':
