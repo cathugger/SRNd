@@ -884,6 +884,8 @@ class censor(BaseHTTPRequestHandler):
       'outfeeds': ''}
     if self.origin.SRNd_info is None:
       data['status'] = '<b>Add to censor config for enabling this:</b> #start_param SRNd_info=info<br /><br />'
+    elif not self.__check_legal_access('srnd-acl-mod'):
+      data['status'] = '<b>Not authorized, flag srnd-acl-mod missing</b><br /><br />'
     else:
       feed_data = self.origin.SRNd_info({'command': 'status', 'data': 'feeds'})
       for target in ('infeeds', 'outfeeds'):
