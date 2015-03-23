@@ -1027,6 +1027,8 @@ class censor(BaseHTTPRequestHandler):
       result = self.origin.sqlite_overchan.execute('SELECT count(1) as counter, strftime("%w",  sent, "unixepoch") as weekday FROM articles WHERE sent > strftime("%s", "now", "-' + str(days) + ' days") GROUP BY weekday ORDER BY weekday ASC').fetchall()
     else:
       result = self.origin.sqlite_overchan.execute('SELECT count(1) as counter, strftime("%w",  sent, "unixepoch") as weekday FROM articles GROUP BY weekday ORDER BY weekday ASC').fetchall()
+    if len(result) == 0:
+      return ((None, None, None),)
     stats = list()
     max_ = 0
     for row in result:
