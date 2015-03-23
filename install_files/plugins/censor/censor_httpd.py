@@ -877,6 +877,10 @@ class censor(BaseHTTPRequestHandler):
       'cpu_usage': None,
       'ram_human': None,
       'ram_raw': None,
+      'disk_free_human': None,
+      'disk_free': None,
+      'disk_used_human': None,
+      'disk_used': None,
       'plugins': None,
       'infeeds_count': None,
       'infeeds': '',
@@ -903,6 +907,10 @@ class censor(BaseHTTPRequestHandler):
       data['cpu_usage'] = stats['cpu']
       data['ram_human'] = self.__sizeof_human_readable(stats['ram'])
       data['ram_raw'] = stats['ram']
+      data['disk_free_human'] = self.__sizeof_human_readable(stats['disk_free'])
+      data['disk_free'] = stats['disk_free']
+      data['disk_used_human'] = self.__sizeof_human_readable(stats['disk_used'])
+      data['disk_used'] = stats['disk_used']
       data['infeeds_count'] = stats['infeeds']
       data['outfeeds_count'] = stats['outfeeds']
 
