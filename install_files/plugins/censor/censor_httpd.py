@@ -134,6 +134,8 @@ class censor(BaseHTTPRequestHandler):
         self.handle_delete(path[8:])
       elif path.startswith('/restore?'):
         self.handle_restore(path[9:])
+      elif path.startswith('/info'):
+        self.send_info(path[6:])
       elif path.startswith('/notimplementedyet'):
         self.send_error('not implemented yet')
       else:
@@ -866,6 +868,47 @@ class censor(BaseHTTPRequestHandler):
       table.append('<OPTION value="{0}"{1}>{2}</OPTION>'.format(item, check_this, select_data[item]))
     return ''.join(table)
 
+  def send_info(self, data):
+    data = {\
+      'navigation': self.__get_navigation('info'),
+      'status': '',
+      'start_time_human': None,
+      'start_time_raw': None,
+      'cpu_usage': None,
+      'ram_human': None,
+      'ram_raw': None,
+      'plugins': None,
+      'infeeds_count': None,
+      'infeeds': '',
+      'outfeeds_count': None,
+      'outfeeds': ''}
+    if self.origin.SRNd_info is None:
+      data['status'] = '<b>Add to censor config for enabling this:</b> #start_param SRNd_info=info<br /><br />'
+    else:
+      feed_data = self.origin.SRNd_info({'command': 'status', 'data': 'feeds'})
+      for target in ('infeeds', 'outfeeds'):
+        feeds = list()
+        for feed in feed_data.get(target, {}):
+          feed_data[target][feed]['name'] = feed
+          feeds.append(self.origin.t_engine_info_feed_row.substitute(feed_data[target][feed]))
+        data[target] = '\n'.join(feeds)
+
+      data['plugins'] = ', '.join([x[7:] if x.lower().startswith('plugin-') else x for x in self.origin.SRNd_info({'command': 'status', 'data': 'plugins'}).get('active', {})])
+
+      stats = self.origin.SRNd_info({'command': 'stats'})
+      data['start_time_human'] = datetime.utcfromtimestamp(stats['start_up_timestamp']).strftime('%d.%m.%y %H:%M')
+      data['start_time_raw'] = stats['start_up_timestamp']
+      data['cpu_usage'] = stats['cpu']
+      data['ram_human'] = self.__sizeof_human_readable(stats['ram'])
+      data['ram_raw'] = stats['ram']
+      data['infeeds_count'] = stats['infeeds']
+      data['outfeeds_count'] = stats['outfeeds']
+
+    self.send_response(200)
+    self.send_header('Content-type', 'text/html')
+    self.end_headers()
+    self.wfile.write(self.origin.t_engine_info.substitute(data).encode('UTF-8'))
+
   def handle_delete(self, message_id):
     path = os.path.join('articles', 'censored', message_id)
     try:
@@ -1057,7 +1100,7 @@ class censor(BaseHTTPRequestHandler):
     out = list()
     #out.append('<div class="navigation">')
     for item in (('key_stats', 'key stats'), ('commands', 'c&c'), ('moderation_log', 'moderation log'), ('pic_log', 'pic log'),
-        ('message_log', 'message log'), ('stats', 'stats'), ('settings', 'settings'), ('postman', 'postman')):
+        ('message_log', 'message log'), ('stats', 'stats'), ('settings', 'settings'), ('postman', 'postman'), ('info', 'info')):
       if item[0] == current:
         out.append(item[1])
       else:
@@ -1289,6 +1332,7 @@ class censor_httpd(threading.Thread):
         self.httpd.reject_debug = False
       else:
         self.log(self.logger.WARNING, "'%s' is not a valid value for reject_debug. only true and false allowed. setting value to false.")
+    self.httpd.SRNd_info = args.get('SRNd_info', None)
     self.httpd.log = self.log
     self.httpd.logger = self.logger
     self.httpd.rnd = open("/dev/urandom", "r")
@@ -1402,12 +1446,10 @@ class censor_httpd(threading.Thread):
     f = open(os.path.join(template_directory, 'modify_commands.tmpl'), 'r')
     self.httpd.t_engine_modify_commands = string.Template(f.read())
     f.close()
-    #f = open(os.path.join(template_directory, 'message_pic.template'), 'r')
-    #self.httpd.template_message_pic = f.read()
-    #f.close()
-    #f = open(os.path.join(template_directory, 'message_signed.template'), 'r')
-    #self.httpd.template_message_signed = f.read()
-    #f.close()
+    with open(os.path.join(template_directory, 'info.tmpl'), 'r') as f:
+      self.httpd.t_engine_info = string.Template(f.read())
+    with open(os.path.join(template_directory, 'info_feed_row.tmpl'), 'r') as f:
+      self.httpd.t_engine_info_feed_row = string.Template(f.read())
 
   def shutdown(self):
     self.httpd.shutdown()

@@ -1,0 +1,33 @@
+<html>
+  <head>
+    <title>SRNd info</title>
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <link type="text/css" href="/styles.css" rel="stylesheet">
+    <link type="text/css" href="/censor.css" rel="stylesheet">
+  </head>
+  <body class="mod">
+    ${navigation}
+    <div class="box">
+${status}      <b>Start time: </b>${start_time_human} (${start_time_raw})<br />
+      <b>CPU usage: </b>${cpu_usage}%<br />
+      <b>RAM usage: </b>${ram_human} (${ram_raw})<br />
+      <b>Active plugins: </b>${plugins}
+    </div>
+    <br />
+    <div class="box">
+      <b>Infeeds: </b>${infeeds_count}
+      <table border="0px" class="datatable">
+        <tr><th>name</th><th>&nbsp;queue</th><th>&nbsp;status</th><th>&nbsp;actions</th></tr>
+${infeeds}
+      </table>
+    </div>
+    <br />
+    <div class="box">
+      <b>Outfeeds: </b>${outfeeds_count}
+      <table border="0px" class="datatable">
+        <tr><th>name</th><th>&nbsp;queue</th><th>&nbsp;status</th><th>&nbsp;actions</th></tr>
+${outfeeds}
+      </table>
+    </div>
+  </body>
+</html>
