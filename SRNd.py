@@ -153,6 +153,18 @@ class SRNd(threading.Thread):
     # FIXME add config var for dropper_debug
     self.dropper = dropper.dropper(thread_name='SRNd-dropper', logger=self.logger, listener=self.socket, master=self, debug=self.dropper_debug)
 
+    self.start_up_timestamp = -1
+    self.ctl_socket_handlers = dict()
+    self.ctl_socket_handlers["status"] = self.ctl_socket_handler_status
+    self.ctl_socket_handlers["log"] = self.ctl_socket_handler_logger
+    self.ctl_socket_handlers["stats"] = self.ctl_socket_handler_stats
+
+  def get_info(self, data=None):
+    if data is not None and data.get('command', None) in self.ctl_socket_handlers:
+      return self.ctl_socket_handlers[data['command']](data)
+    else:
+      return None
+
   def read_and_parse_config(self):
     # read configuration
     # FIXME think about path.. always use data/config/SRNd.conf unless argument states otherwise?
@@ -447,6 +459,8 @@ class SRNd(threading.Thread):
         try:
           if 'SRNd' in args:
             args['SRNd'] = self
+          if 'SRNd_info' in args:
+            args['SRNd_info'] = self.get_info
           current_plugin = __import__(plugin)
           self.plugins[name] = current_plugin.main(name, self.logger, args)
           new_plugins.append(name)
@@ -591,14 +605,14 @@ class SRNd(threading.Thread):
     while length != len(data):
       length += os.write(fd, data[length:])
 
-  def ctl_socket_handler_logger(self, data, fd):
+  def ctl_socket_handler_logger(self, data, fd=None):
     if data["data"] == "off" or data["data"] == "none":
       return self.logger.remove_target(self.ctl_socket_clients[fd][1])
     elif data["data"] == "on":
       data["data"] = 'all'
     return self.logger.add_target(self.ctl_socket_clients[fd][1], loglevel=data["data"].split(' '), json_framing_4=True)
 
-  def ctl_socket_handler_stats(self, data, fd):
+  def ctl_socket_handler_stats(self, data, fd=None):
     if not 'stats' in self.__dict__:
       self.stats = {"start_up_timestamp": self.start_up_timestamp}
       self.stats_last_update = 0
@@ -628,7 +642,7 @@ class SRNd(threading.Thread):
       self.stats_last_update = time.time()
     return self.stats
 
-  def ctl_socket_handler_status(self, data, fd):
+  def ctl_socket_handler_status(self, data, fd=None):
     if not data["data"]:
       return "all fine"
     ret = dict()
@@ -774,11 +788,6 @@ class SRNd(threading.Thread):
     self.poller = poller
 
     self.ctl_socket_clients = dict()
-    self.ctl_socket_handlers = dict()
-    self.ctl_socket_handlers["status"] = self.ctl_socket_handler_status
-    self.ctl_socket_handlers["log"] = self.ctl_socket_handler_logger
-    self.ctl_socket_handlers["stats"] = self.ctl_socket_handler_stats
-
 
     self.start_up_timestamp = int(time.time())
     while self.running:
