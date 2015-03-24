@@ -11,6 +11,12 @@ import time
 import traceback
 from distutils.dir_util import copy_tree
 
+try:
+  import psutil
+  psutil_import_result = True
+except ImportError:
+  psutil_import_result = False
+
 import dropper
 import feed
 
@@ -32,11 +38,7 @@ class SRNd(threading.Thread):
     self.log(self.logger.ERROR,    'srnd test logging with ERROR')
     self.log(self.logger.CRITICAL, 'srnd test logging with CRITICAL')
 
-    try:
-      self.stats_ramfile = open('/proc/self/statm', 'r')
-    except Exception as e:
-      self.log(self.logger.WARNING, 'can\'t open ram stat file at /proc/self/statm: %s' % e)
-      self.stats_ramfile = None
+    self._init_sysinfo()
 
     # create some directories
     for directory in ('filesystem', 'outfeeds', 'plugins'):
@@ -164,6 +166,48 @@ class SRNd(threading.Thread):
       return self.ctl_socket_handlers[data['command']](data)
     else:
       return None
+
+  def _get_sysinfo(self, target):
+    result = None
+    if target == 'cpu':
+      if psutil_import_result:
+        result = self._sysinfo['psutil'].cpu_percent(interval=None)
+      else:
+        result = 0
+    elif target == 'ram':
+      if psutil_import_result:
+        result = self._sysinfo['psutil'].memory_info()[0]
+      else:
+        if self._sysinfo['ramfile'] is not None:
+          self._sysinfo['ramfile'].seek(0)
+          result = int(self._sysinfo['ramfile'].read().split(' ')[1]) * self._sysinfo['pagesize']
+        else:
+          result = 0
+    elif target == 'disk_free':
+      result = self._sysinfo['statvfs'].f_bavail * self._sysinfo['statvfs'].f_frsize
+    elif target == 'disk_used':
+      result = (self._sysinfo['statvfs'].f_blocks - self._sysinfo['statvfs'].f_bfree) * self._sysinfo['statvfs'].f_frsize
+    return result
+
+  def _init_sysinfo(self):
+    self._sysinfo = dict()
+    if psutil_import_result:
+      self._sysinfo['psutil'] = psutil.Process()
+    else:
+      try:
+        self._sysinfo['ramfile'] = open('/proc/self/statm', 'r')
+      except Exception as e:
+        self.log(self.logger.WARNING, 'can\'t open ram stat file at /proc/self/statm: %s' % e)
+        self._sysinfo['ramfile'] = None
+      if 'SC_PAGESIZE' in os.sysconf_names:
+        self._sysinfo['pagesize'] = os.sysconf('SC_PAGESIZE')
+      elif 'SC_PAGE_SIZE' in os.sysconf_names:
+        self._sysinfo['pagesize'] = os.sysconf('SC_PAGE_SIZE')
+      elif '_SC_PAGESIZE' in os.sysconf_names:
+        self._sysinfo['pagesize'] = os.sysconf('_SC_PAGESIZE')
+      else:
+        self._sysinfo['pagesize'] = 4096
+    self._sysinfo['statvfs'] = os.statvfs(os.getcwd())
 
   def read_and_parse_config(self):
     # read configuration
@@ -616,29 +660,16 @@ class SRNd(threading.Thread):
     if not 'stats' in self.__dict__:
       self.stats = {"start_up_timestamp": self.start_up_timestamp}
       self.stats_last_update = 0
-      self.ram_usage = 0
-      if 'SC_PAGESIZE' in os.sysconf_names:
-        self.stats_pagesize = os.sysconf('SC_PAGESIZE')
-      elif 'SC_PAGE_SIZE' in os.sysconf_names:
-        self.stats_pagesize = os.sysconf('SC_PAGE_SIZE')
-      elif '_SC_PAGESIZE' in os.sysconf_names:
-        self.stats_pagesize = os.sysconf('_SC_PAGESIZE')
-      else:
-        self.stats_pagesize = 4096
     self.stats["infeeds"]  = sum(1 for x in self.feeds if x.startswith('infeed-'))
     self.stats["outfeeds"] = sum(1 for x in self.feeds if x.startswith('outfeed-'))
     self.stats["plugins"]  = len(self.plugins)
     if time.time() - self.stats_last_update > 5:
-      if self.stats_ramfile != None:
-        self.stats_ramfile.seek(0)
-        self.ram_usage = int(self.stats_ramfile.read().split(' ')[1]) * self.stats_pagesize
-      st = os.statvfs(os.getcwd())
       self.stats["groups"]    = os.stat('groups').st_nlink - 2
       self.stats["articles"]  = sum(1 for x in os.listdir('articles')) - os.stat('articles').st_nlink + 2
-      self.stats["cpu"]       = 15
-      self.stats["ram"]       = self.ram_usage
-      self.stats["disk_free"] = st.f_bavail * st.f_frsize
-      self.stats["disk_used"] = (st.f_blocks - st.f_bfree) * st.f_frsize
+      self.stats["cpu"]       = self._get_sysinfo('cpu')
+      self.stats["ram"]       = self._get_sysinfo('ram')
+      self.stats["disk_free"] = self._get_sysinfo('disk_free')
+      self.stats["disk_used"] = self._get_sysinfo('disk_used')
       self.stats_last_update = time.time()
     return self.stats
 
