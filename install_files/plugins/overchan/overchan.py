@@ -564,14 +564,14 @@ class main(threading.Thread):
     except:
       update_db_1 = False
     if update_db_1:
-      self.log(self.logger.WARNING, 'Start db update...')
+      self.log(self.logger.WARNING, 'Starting db update...')
       try:
         for row in self.sqlite.execute('SELECT article_uid FROM articles').fetchall():
           article_hash = sha1(row[0]).hexdigest()
           self.sqlite.execute('UPDATE articles SET article_hash = ? WHERE article_uid = ?', (article_hash, row[0]))
         self.sqlite_conn.commit()
       except Exception as e:
-        self.die('DB update status - FAIL. You need fix this error manually. If this firs start SRNd - ignore and restart SRNd. See overchan.py:562 for details. Error: {}'.format(e))
+        self.die('DB update status - FAIL. You must fix this error manually. In case this is the first time you are starting SRNd - ignore and restart SRNd. See overchan.py:562 for details. Error: {}'.format(e))
       else:
         self.log(self.logger.WARNING, 'DB update status - OK.')
     self.sqlite.execute('CREATE INDEX IF NOT EXISTS articles_group_idx ON articles(group_id);')

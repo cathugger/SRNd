@@ -389,7 +389,7 @@ class feed(threading.Thread):
       self.log(self.logger.DEBUG, 'send {} {}'.format(cmd, self.message_id))
       self.send('{} {}\r\n'.format(cmd, self.message_id), 'outfeed_send_{}_stream'.format(cmd))
       if self.con_broken:
-        self.log(self.logger.DEBUG, 'conn_broken when sending {} {}. Re-adding in queue'.format(cmd, self.message_id))
+        self.log(self.logger.DEBUG, 'conn_broken while sending {} {}. Re-adding in queue'.format(cmd, self.message_id))
         self.add_article(self.message_id)
       else:
         self._recheck_sending(self.message_id, 'add')
@@ -406,7 +406,7 @@ class feed(threading.Thread):
       self.rechecking_step = curent_time + 20
       for add_article in [x for x in self.rechecking if self.rechecking[x] < curent_time]:
         self.rechecking.pop(add_article, None)
-        self.log(self.logger.DEBUG, 'not response to {} - re-adding in queue'.format(add_article))
+        self.log(self.logger.DEBUG, 'no response for {} - re-adding in queue'.format(add_article))
         self.add_article(add_article)
 
   def _read_and_prepare(self, fd, buffsize):

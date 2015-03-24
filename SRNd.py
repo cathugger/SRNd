@@ -584,7 +584,7 @@ class SRNd(threading.Thread):
           f.close()
           # remove duplicates
           if readed > len(self.feed_db[name]) > 1:
-            self.log(self.logger.INFO, 'detect {} duplicates in {}.trackdb. Rewrite'.format((readed - len(self.feed_db[name])), name))
+            self.log(self.logger.INFO, 'found {} duplicates in {}.trackdb. Rewriting'.format((readed - len(self.feed_db[name])), name))
             with open('{0}.trackdb'.format(name), 'w') as f:
               f.write('\n'.join(self.feed_db[name]))
               f.write('\n')
