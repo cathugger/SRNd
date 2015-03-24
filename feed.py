@@ -192,25 +192,32 @@ class feed(threading.Thread):
           else:
             self.log(self.logger.INFO, 'connection established via proxy %s' % str(self.proxy))
         except socket.error as e:
-          if e.errno == 106:
+          if e.errno == 9:
+            # Bad file descriptor
+            self.init_socket()
+            cooldown_msg = "can't connect: %s. " % e
+          elif e.errno == 106:
             # tunnelendpoint already connected. wtf? only happened via proxy
             # FIXME debug this
             self.log(self.logger.ERROR, '%s: setting connected = True' % e)
             connected = True
-          elif e.errno == 9:
-            # Bad file descriptor
-            self.init_socket()
-            cooldown_msg = "can't connect: %s. " % e
-          elif e.errno == 113:
-            # no route to host
+          elif e.errno in (111, 113):
+            # 111 Connection refused
+            # 113 no route to host
             cooldown_msg = "can't connect: %s. " % e
           else:
             self.log(self.logger.ERROR, 'unhandled initial connect socket.error: %s' % e)
             self.log(self.logger.ERROR, traceback.format_exc())
             cooldown_msg = "can't connect: %s. " % e
         except sockssocket.ProxyError as e:
-          cooldown_msg = "can't connect: %s. " % e
-          self.log(self.logger.ERROR, 'unhandled initial connect ProxyError: %s' % e)
+          uni_msg = '[Errno {}] {}'.format(*e.message)
+          cooldown_msg = "can't connect: %s. " % uni_msg
+          if e.message[0] == 4:
+            # Host unreachable
+            pass
+          else:
+            self.log(self.logger.ERROR, 'unhandled initial connect ProxyError: %s' % uni_msg)
+            self.log(self.logger.ERROR, traceback.format_exc())
     self.state = 'idle'
     poll = select.poll()
     poll.register(self.socket.fileno(), select.POLLIN | select.POLLPRI)
