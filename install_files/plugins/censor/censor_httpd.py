@@ -92,7 +92,7 @@ class censor(BaseHTTPRequestHandler):
     if self.path == '/moderate?getkey':
       secret = self.origin.rnd.read(32)
       public = nacl.signing.SigningKey(secret).verify_key.encode()
-      self.send_error("secret: %s\npublic: %s" % (hexlify(secret), hexlify(public)))
+      self._send_error("secret: %s\npublic: %s" % (hexlify(secret), hexlify(public)))
       return
     elif self.path == '/moderate?login':
       cookie = self.get_cookie('ananas')
@@ -137,7 +137,7 @@ class censor(BaseHTTPRequestHandler):
       elif path.startswith('/info'):
         self.send_info(path[6:])
       elif path.startswith('/notimplementedyet'):
-        self.send_error('not implemented yet')
+        self._send_error('not implemented yet')
       else:
         self.send_keys()
       return
@@ -943,11 +943,19 @@ class censor(BaseHTTPRequestHandler):
     else:
       self.send_redirect(self.root_path, 'message_id does not exist in articles/censored', 5)
 
-  def send_error(self, errormessage):
+  def _send_error(self, errormessage):
     self.send_response(200)
     self.send_header('Content-type', 'text/plain')
     self.end_headers()
     self.wfile.write(errormessage)
+
+  def send_error(self, code, message=None):
+    """Overrides method in BaseHTTPRequestHandler
+    Don't send errors to the user, only logs
+    """
+    if message is None:
+      message = self.responses.get(code, ('???', '???'))[0]
+    self.origin.log(self.origin.logger.ERROR, "Internal server error: code {}, message {}".format(code, message))
 
   def __write_nntp_article(self, f):
     attachment = re.compile('^[cC]ontent-[tT]ype: ([a-zA-Z0-9/]+).*name="([^"]+)')
@@ -1124,9 +1132,9 @@ class censor(BaseHTTPRequestHandler):
   def die(self, message=''):
     self.console_headers_dump("%s:%i wants to fuck around, %s" % (self.client_address[0], self.client_address[1], message))
     if self.origin.reject_debug:
-      self.send_error('don\'t fuck around here mkay\n%s' % message)
+      self._send_error('don\'t fuck around here mkay\n%s' % message)
     else:
-      self.send_error('don\'t fuck around here mkay')
+      self._send_error('don\'t fuck around here mkay')
 
   def __get_message_id_by_hash(self, hash_):
     return self.origin.sqlite_hasher.execute("SELECT message_id FROM article_hashes WHERE message_id_hash = ?", (hash_,)).fetchone()[0]
