@@ -75,6 +75,7 @@ class feed(threading.Thread):
     self.current_article_id = -1
     self.sync_on_startup = sync_on_startup
     self.qsize = 0
+    self.articles_to_receive = set()
 
   def init_socket(self):
     if ':' in self.host:
@@ -101,12 +102,12 @@ class feed(threading.Thread):
   def add_article(self, message_id):
     self.queue.put(message_id)
 
-  def send(self, message):
+  def send(self, message, state='sending'):
     #FIXME: readd message_id if conn_broken
     #FIXME: ^ add message_id as additional argument
     #TODO: do the actual reading and sending here as well, including converting
     #TODO: ^ provide file FD as argument so reply to remote can be checked first
-    self.state = 'sending'
+    self.state = state
     sent = 0
     length = len(message)
     while sent != length:
@@ -158,6 +159,9 @@ class feed(threading.Thread):
     if self.cooldown_counter != 10:
       self.cooldown_counter += 1
 
+  def _bump_outstream_qsize(self):
+    self.qsize = self.queue.qsize() + len(self.articles_to_send) + len(self.rechecking)
+
   def run(self):
     self.sqlite_conn_dropper = sqlite3.connect('dropper.db3')
     self.sqlite_dropper = self.sqlite_conn_dropper.cursor()
@@ -174,7 +178,7 @@ class feed(threading.Thread):
       self.articles_to_send = set()
       cooldown_msg = ''
       while self.running and not connected:
-        self.qsize = self.queue.qsize() + len(self.articles_to_send)
+        self._bump_outstream_qsize()
         self.state = 'cooldown'
         self.cooldown(cooldown_msg)
         if not self.running:
@@ -229,9 +233,9 @@ class feed(threading.Thread):
           self.socket.close()
           self.init_socket()
           while self.running and not connected:
-            self.qsize = self.queue.qsize() + len(self.articles_to_send)
+            self._bump_outstream_qsize()
             # TODO create def connect(), use self.vars for buffer, connected and poll
-            if len(self.articles_to_send) == 0 and self.queue.qsize() == 0:
+            if self.qsize == 0:
               self.log(self.logger.INFO, 'connection broken. no article to send, sleeping')
               self.state = 'nothing_to_send'
               while self.running and self.queue.qsize() == 0:
@@ -268,7 +272,7 @@ class feed(threading.Thread):
           if not self.running: break
           if not connected: continue
       if poll(self.polltimeout):
-        self.state = 'receiving'
+        self.state = 'receiving_article' if self.multiline else 'receiving'
         cur_len = len(in_buffer)
         try:
           in_buffer += self.socket.recv(self.buffersize)
@@ -347,14 +351,13 @@ class feed(threading.Thread):
             elif self.outstream_post:
               self.message_id = self.queue.get()
               self.send('POST\r\n')
-          self.qsize = self.queue.qsize() + len(self.articles_to_send)
+          self._bump_outstream_qsize()
     self.log(self.logger.INFO, 'client disconnected')
     self.socket.close()
     self.SRNd.terminate_feed(self.name)
 
   def _worker_send_check_stream(self, max_check=50):
-    self.qsize = self.queue.qsize() + len(self.articles_to_send)
-    self.state = 'outfeed_send_check_stream'
+    self._bump_outstream_qsize()
     count = 0
     while self.queue.qsize() > 0 and count <= max_check and not self.con_broken:
       # FIXME why self.message_id here? IHAVE and POST makes sense, but streaming?
@@ -363,14 +366,13 @@ class feed(threading.Thread):
       count += 1
 
   def _worker_send_article_stream(self, send_time=120):
-    self.state = 'outfeed_send_article_stream'
-    self.qsize = self.queue.qsize() + len(self.articles_to_send)
+    self._bump_outstream_qsize()
     start_time = int(time.time())
     while len(self.articles_to_send) > 0 and start_time + send_time > int(time.time()) and not self.con_broken:
       message_id = self.articles_to_send.pop()
       if os.path.exists(os.path.join('articles', message_id)):
         self.send('TAKETHIS {0}\r\n'.format(message_id))
-        self.send_article(message_id)
+        self.send_article(message_id, 'outfeed_send_article_stream')
         self.qsize -= 1
 
   def _send_new_check(self, cmd):
@@ -378,7 +380,7 @@ class feed(threading.Thread):
     self.message_id = self.queue.get()
     if os.path.exists(os.path.join('articles', self.message_id)):
       self.log(self.logger.DEBUG, 'send {} {}'.format(cmd, self.message_id))
-      self.send('{} {}\r\n'.format(cmd, self.message_id))
+      self.send('{} {}\r\n'.format(cmd, self.message_id), 'outfeed_send_{}_stream'.format(cmd))
       if self.con_broken:
         self.log(self.logger.DEBUG, 'conn_broken when sending {} {}. Re-adding in queue'.format(cmd, self.message_id))
         self.add_article(self.message_id)
@@ -419,19 +421,18 @@ class feed(threading.Thread):
         data += '\r\n'
       yield data
 
-  def send_article(self, message_id):
+  def send_article(self, message_id, state='sending_article'):
     self.log(self.logger.INFO, 'sending article %s' % message_id)
     buff = 16384
     self.multiline_out = True
-    self.state = 'sending'
     counts = 0
     with open(os.path.join('articles', message_id), 'rb') as fd:
       for to_send in self._read_and_prepare(fd, buff):
         counts += 1
-        self.send(to_send)
+        self.send(to_send, state)
         if self.con_broken: break
     if not self.con_broken:
-      self.send('.\r\n')
+      self.send('.\r\n', state)
     # ~ + 4 minute in 1 mb. May be need correct for other network
     # rechecking small articles first
     multiplier = (counts * buff) / (1024 * 64)
@@ -580,6 +581,8 @@ class feed(threading.Thread):
         self.send('438 {0} article is blacklisted\r\n'.format(message_id))
         #print "[%s] CHECK article blacklisted: %s" % (self.name, message_id)
         return
+      self.articles_to_receive.add(message_id)
+      self.qsize = len(self.articles_to_receive)
       self.send('238 {0} go ahead, send to the article\r\n'.format(message_id))
     elif commands[0] == 'TAKETHIS' and len(commands) == 2:
       self.waitfor = 'article'
@@ -675,6 +678,8 @@ class feed(threading.Thread):
         elif lines[index][0] == '.':
           lines[index] = lines[index][1:]
 
+      self.articles_to_receive.discard(message_id)
+      self.qsize = len(self.articles_to_receive)
       # check for errors
       if not body_found: error += 'no body found, '
       if newsgroups == '': error += 'no newsgroups found, '
