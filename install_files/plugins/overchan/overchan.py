@@ -1355,11 +1355,11 @@ class main(threading.Thread):
       return self.move_censored_article(message_id)
 
     for group in groups:
-      try:
-        group_flags = int(self.sqlite.execute("SELECT flags FROM groups WHERE group_name=?", (group,)).fetchone()[0])
-      except Exception as e:
-        self.log(self.logger.INFO, 'Processing group %s error message %s %s' % (group, message_id, e))
+      group_flags = self.sqlite.execute("SELECT flags FROM groups WHERE group_name=?", (group,)).fetchone()
+      if group_flags is None:
+        self.log(self.logger.WARNING, 'Message {} in nonexistent group {}'.format(message_id, group))
       else:
+        group_flags = int(group_flags[0])
         if (group_flags & self.cache['flags']['spam-fix']) != 0 and len(message) < 5:
           self.log(self.logger.INFO, 'Spamprotect group %s, censored %s' % (group, message_id))
           self.delete_orphan_attach(image_name, thumb_name)
