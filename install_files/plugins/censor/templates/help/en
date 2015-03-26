@@ -1,0 +1,13 @@
+{
+    "send_commands": "",
+    "send_modify_commands": "",
+    "moderation_ignored_log": "",
+    "moderation_accepted_log": "",
+    "send_messagelog": "",
+    "send_stats": "",
+    "send_settings": "",
+    "send_modify_settings": "",
+    "send_postman_settings": "",
+    "send_modify_postman_settings": "",
+    "send_info": ""
+}

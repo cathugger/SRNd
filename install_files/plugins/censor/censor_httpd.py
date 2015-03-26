@@ -10,6 +10,7 @@ import sqlite3
 import string
 import threading
 import time
+import json
 from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer
 from binascii import hexlify, unhexlify
 from cgi import FieldStorage
@@ -526,11 +527,13 @@ class censor(BaseHTTPRequestHandler):
       page_corrector = -1
       log_body['accepted_log'] = '<a href="moderation_log?1">accepted log</a>'
       log_body['ignored_log'] = 'ignored log'
+      help_target = 'moderation_ignored_log'
     else:
       page_corrector = 1
       log_accepted = 1
       log_body['accepted_log'] = 'accepted log'
       log_body['ignored_log'] = '<a href="moderation_log?-1">ignored log</a>'
+      help_target = 'moderation_accepted_log'
     log_body['pagination'] = '<div style="float:right;">'
     if page > 1:
       log_body['pagination'] += '<a href="moderation_log?%i">previous</a>' % ((page-1)*page_corrector)
@@ -600,10 +603,8 @@ class censor(BaseHTTPRequestHandler):
         table.append(self.origin.t_engine_log_ignored.substitute(log_row))
 
     log_body['mod_log'] = ''.join(table).rstrip()
-    self.send_response(200)
-    self.send_header('Content-type', 'text/html')
-    self.end_headers()
-    self.wfile.write(self.origin.t_engine_log.substitute(log_body).encode('UTF-8'))
+
+    self._substitute_and_send(self.origin.t_engine_log, log_body, help_target)
 
   def send_piclog(self, page=1, pagecount=30):
     #out = '<html><head><link type="text/css" href="/styles.css" rel="stylesheet"><style type="text/css">body { margin: 10px; margin-top: 20px; font-family: monospace; font-size: 9pt; } .navigation { background: #101010; padding-top: 19px; position: fixed; top: 0; width: 100%; }</style></head><body>%%navigation%%'
@@ -652,10 +653,7 @@ class censor(BaseHTTPRequestHandler):
         groups.group_id = articles.group_id AND message LIKE ? ORDER BY articles.sent DESC LIMIT ?', ('%'+query_str+'%', message_log['count'])).fetchall()
     message_log['content'] = self.send_messagelog_construct(data_row)
     message_log['target'] = self.root_path + 'message_log'
-    self.send_response(200)
-    self.send_header('Content-type', 'text/html')
-    self.end_headers()
-    self.wfile.write(self.origin.t_engine_message_log.substitute(message_log).encode('UTF-8'))
+    self._substitute_and_send(self.origin.t_engine_message_log, message_log, 'send_messagelog')
 
   def send_messagelog_construct(self, data_row):
     table = list()
@@ -699,10 +697,7 @@ class censor(BaseHTTPRequestHandler):
     stats_data['stats_usage_weekday_28'] = ''.join( t_3_rows % x for x in self.__stats_usage_weekday(28))
     stats_data['stats_usage_weekday']    = ''.join( t_3_rows % x for x in self.__stats_usage_weekday()  )
 
-    self.send_response(200)
-    self.send_header('Content-type', 'text/html')
-    self.end_headers()
-    self.wfile.write(self.origin.t_engine_stats.substitute(stats_data))
+    self._substitute_and_send(self.origin.t_engine_stats, stats_data, 'send_stats')
 
   def send_message(self, message_id):
     self.send_response(200)
@@ -736,13 +731,12 @@ class censor(BaseHTTPRequestHandler):
       table.append(self.origin.t_engine_settings_list.substitute(data_row))
     data['board_list'] = '\n'.join(table)
     if board_id:
+      help_target = 'send_modify_settings'
       data['post_form'] = self.send_modify_board(board_id)
     else:
+      help_target = 'send_settings'
       data['post_form'] = ''
-    self.send_response(200)
-    self.send_header('Content-type', 'text/html')
-    self.end_headers()
-    self.wfile.write(self.origin.t_engine_settings.substitute(data).encode('UTF-8'))
+    self._substitute_and_send(self.origin.t_engine_settings, data, help_target)
 
   def send_postman_settings(self, userkey=''):
     data = dict()
@@ -776,17 +770,16 @@ class censor(BaseHTTPRequestHandler):
     data['allow_userkey'] = '\n'.join(allow_table)
     data['disallow_userkey'] = '\n'.join(disallow_table)
 
+    help_target = 'send_modify_postman_settings'
     if len(modify_user) > 0:
       data['modify_user'] = self.postman_modify_user(modify_user)
     elif userkey == 'new':
       data['modify_user'] = self.postman_modify_user(('new', '', 0, 0))
     else:
       data['modify_user'] = ''
+      help_target = 'send_postman_settings'
 
-    self.send_response(200)
-    self.send_header('Content-type', 'text/html')
-    self.end_headers()
-    self.wfile.write(self.origin.t_engine_postman.substitute(data).encode('UTF-8'))
+    self._substitute_and_send(self.origin.t_engine_postman, data, help_target)
 
   def postman_modify_user(self, user_data):
     current_time = int(time.time())
@@ -796,7 +789,6 @@ class censor(BaseHTTPRequestHandler):
     if user_data[0] == 'new':
       form_data['action'] = 'add'
       form_data['userkey_edit'] = '<input type="text" name="userkey" value="" class="posttext" maxlength="64"/>'
-      pass
     else:
       form_data['action'] = 'modify'
       form_data['userkey_edit'] = user_data[0]
@@ -838,13 +830,12 @@ class censor(BaseHTTPRequestHandler):
     data['commands_list'] = '\n'.join(data_list)
     if len(modify_data) > 0:
       data['modify_command'] = self.commands_modify(modify_data, data_selector)
+      help_target = 'send_modify_commands'
     else:
       data['modify_command'] = ''
+      help_target = 'send_commands'
 
-    self.send_response(200)
-    self.send_header('Content-type', 'text/html')
-    self.end_headers()
-    self.wfile.write(self.origin.t_engine_commands.substitute(data).encode('UTF-8'))
+    self._substitute_and_send(self.origin.t_engine_commands, data, help_target)
 
   def commands_modify(self, modify_data, data_selector):
     command_data = dict()
@@ -914,10 +905,7 @@ class censor(BaseHTTPRequestHandler):
       data['infeeds_count'] = stats['infeeds']
       data['outfeeds_count'] = stats['outfeeds']
 
-    self.send_response(200)
-    self.send_header('Content-type', 'text/html')
-    self.end_headers()
-    self.wfile.write(self.origin.t_engine_info.substitute(data).encode('UTF-8'))
+    self._substitute_and_send(self.origin.t_engine_info, data, 'send_info')
 
   def handle_delete(self, message_id):
     path = os.path.join('articles', 'censored', message_id)
@@ -956,6 +944,16 @@ class censor(BaseHTTPRequestHandler):
     if message is None:
       message = self.responses.get(code, ('???', '???'))[0]
     self.origin.log(self.origin.logger.ERROR, "Internal server error: code {}, message {}".format(code, message))
+
+  def _substitute_and_send(self, t_engine, data, target=None):
+    if target is None or len(self.origin.help_data.get(target, '')) == 0:
+      data['help'] = ''
+    else:
+      data['help'] = self.origin.t_engine_help.substitute(help=self.origin.help_data[target])
+    self.send_response(200)
+    self.send_header('Content-type', 'text/html')
+    self.end_headers()
+    self.wfile.write(t_engine.substitute(data).encode('UTF-8'))
 
   def __write_nntp_article(self, f):
     attachment = re.compile('^[cC]ontent-[tT]ype: ([a-zA-Z0-9/]+).*name="([^"]+)')
@@ -1281,7 +1279,6 @@ class censor(BaseHTTPRequestHandler):
       if e.errno == 32:
         self.origin.log(e, 2)
         # Broken pipe
-        pass
       else:
         raise e
 
@@ -1351,6 +1348,7 @@ class censor_httpd(threading.Thread):
       else:
         self.log(self.logger.WARNING, "'%s' is not a valid value for reject_debug. only true and false allowed. setting value to false.")
     self.httpd.SRNd_info = args.get('SRNd_info', None)
+    help_lang = args.get('help', 'en')
     self.httpd.log = self.log
     self.httpd.logger = self.logger
     self.httpd.rnd = open("/dev/urandom", "r")
@@ -1468,6 +1466,41 @@ class censor_httpd(threading.Thread):
       self.httpd.t_engine_info = string.Template(f.read())
     with open(os.path.join(template_directory, 'info_feed_row.tmpl'), 'r') as f:
       self.httpd.t_engine_info_feed_row = string.Template(f.read())
+    with open(os.path.join(template_directory, 'help.tmpl'), 'r') as f:
+      self.httpd.t_engine_help = string.Template(f.read())
+
+    self.httpd.help_data = self._load_help_data(os.path.join(template_directory, 'help'), help_lang)
+
+  def _load_help_data(self, help_dir, lang):
+    if lang.lower() in ('false', 'none', 'no', '0'):
+      return {}
+    if os.path.isfile(os.path.join(help_dir, lang)):
+      pass
+    elif os.path.isfile(os.path.join(help_dir, 'en')):
+      self.log(self.logger.WARNING, 'Help file "{}" not found. Use default "{}"'.format(os.path.join(help_dir, lang), os.path.join(help_dir, 'en')))
+      lang = 'en'
+    else:
+      self.log(self.logger.WARNING, 'help files not found. Help disabled')
+      return {}
+    with codecs.open(os.path.join(help_dir, lang), 'r', 'UTF-8') as f:
+      try:
+        help_data = json.load(f)
+      except ValueError as e:
+        self.log(self.logger.ERROR, 'Error loading "{}": {}. Help disabled'.format(os.path.join(help_dir, lang), e))
+        return {}
+    if not isinstance(help_data, dict):
+      self.log(self.logger.ERROR, 'Strange "{}": loading data is not dict. Help disabled'.format(os.path.join(help_dir, lang)))
+      return {}
+    else:
+      return self._formatting_help_data(help_data)
+
+  @staticmethod
+  def _formatting_help_data(data):
+    # TODO: nesting, indentation?
+    for data_row in [x for x in data]:
+      if isinstance(data[data_row], list):
+        data[data_row] = u'<br />'.join(data[data_row])
+    return data
 
   def shutdown(self):
     self.httpd.shutdown()

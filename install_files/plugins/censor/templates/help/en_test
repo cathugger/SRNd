@@ -1,0 +1,18 @@
+{
+  "send_commands": "send_commands: <br><b>foo</b>, <br><strike>bar</strike>, <br><i>baz</i>.",
+  "send_modify_commands": [
+    "send_modify_commands:",
+    "<b>foo</b>,",
+    "<strike>bar</strike>,",
+    "<i>baz</i>."
+  ],
+  "moderation_ignored_log": "moderation_ignored_log: <br><b>foo</b>, <br><strike>bar</strike>, <br><i>baz</i>.",
+  "moderation_accepted_log": "moderation_accepted_log: <br><b>foo</b>, <br><strike>bar</strike>, <br><i>baz</i>.",
+  "send_messagelog": "send_messagelog: <br><b>foo</b>, <br><strike>bar</strike>, <br><i>baz</i>.",
+  "send_stats": "send_stats: <br><b>foo</b>, <br><strike>bar</strike>, <br><i>baz</i>.",
+  "send_settings": "send_settings: <br><b>foo</b>, <br><strike>bar</strike>, <br><i>baz</i>.",
+  "send_modify_settings": "send_modify_settings: <br><b>foo</b>, <br><strike>bar</strike>, <br><i>baz</i>.",
+  "send_postman_settings": "send_postman_settings: <br><b>foo</b>, <br><strike>bar</strike>, <br><i>baz</i>.",
+  "send_modify_postman_settings": "send_modify_postman_settings: <br><b>foo</b>, <br><strike>bar</strike>, <br><i>baz</i>.",
+  "send_info": "send_info: <br><b>foo</b>, <br><strike>bar</strike>, <br><i>baz</i>."
+}

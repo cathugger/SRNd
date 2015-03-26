@@ -57,3 +57,8 @@
   .evilmod:checked ~ form .stillevil {
     display: table-cell !important;
   }
+  .help {
+    margin: 3em 1em;
+    clear: both;
+    float: left;
+  }
