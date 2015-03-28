@@ -396,6 +396,12 @@ class SRNd(threading.Thread):
       f.write('instance_name={0}\n'.format(self.instance_name))
       f.close()
 
+  @staticmethod
+  def _list_config_files(path):
+    for target in os.listdir(path):
+      if os.path.isfile(os.path.join(path, target)) and not target.startswith('.'):
+        yield target
+
   def update_hooks(self):
     self.log(self.logger.INFO, 'reading hook configuration..')
     self.hooks = dict()
@@ -404,10 +410,8 @@ class SRNd(threading.Thread):
     for hook_type, hook_name in (('filesystem', 'filesystem'), ('outfeeds', 'outfeed'), ('plugins', 'plugin')):
       directory = os.path.join('config', 'hooks', hook_type)
       found = 0
-      for hook in os.listdir(directory):
+      for hook in self._list_config_files(directory):
         link = os.path.join(directory, hook)
-        if not os.path.isfile(link):
-          continue
         if hook_name != 'outfeed':
           name = '{0}-{1}'.format(hook_name, hook)
         else:
@@ -477,43 +481,42 @@ class SRNd(threading.Thread):
     new_plugins = list()
     current_plugin = None
     errors = False
-    for plugin in os.listdir(os.path.join('config', 'hooks', 'plugins')):
+    for plugin in self._list_config_files(os.path.join('config', 'hooks', 'plugins')):
       link = os.path.join('config', 'hooks', 'plugins', plugin)
-      if os.path.isfile(link):
-        plugin_path = os.path.join('plugins', plugin)
-        if not plugin_path in sys.path:
-          sys.path.append(plugin_path)
-        name = 'plugin-' + plugin
-        if name in self.plugins:
-          continue
-        args = dict()
-        f = open(link, 'r')
-        line = f.readline()
-        while line != "":
-          if len(line) == 1:
-            line = f.readline()
-            continue
-          if line.startswith('#start_param '):
-            line = line[13:-1]
-            key = line.split('=', 1)[0]
-            args[key] = line.split('=', 1)[1]
+      plugin_path = os.path.join('plugins', plugin)
+      if not plugin_path in sys.path:
+        sys.path.append(plugin_path)
+      name = 'plugin-' + plugin
+      if name in self.plugins:
+        continue
+      args = dict()
+      f = open(link, 'r')
+      line = f.readline()
+      while line != "":
+        if len(line) == 1:
           line = f.readline()
-        f.close()
-        #print "[SRNd] trying to import {0}..".format(name)
-        try:
-          if 'SRNd' in args:
-            args['SRNd'] = self
-          if 'SRNd_info' in args:
-            args['SRNd_info'] = self.get_info
-          current_plugin = __import__(plugin)
-          self.plugins[name] = current_plugin.main(name, self.logger, args)
-          new_plugins.append(name)
-        except Exception as e:
-          errors = True
-          self.log(self.logger.ERROR, 'error while importing %s: %s' % (name, e))
-          if name in self.plugins:
-            del self.plugins[name]
           continue
+        if line.startswith('#start_param '):
+          line = line[13:-1]
+          key = line.split('=', 1)[0]
+          args[key] = line.split('=', 1)[1]
+        line = f.readline()
+      f.close()
+      #print "[SRNd] trying to import {0}..".format(name)
+      try:
+        if 'SRNd' in args:
+          args['SRNd'] = self
+        if 'SRNd_info' in args:
+          args['SRNd_info'] = self.get_info
+        current_plugin = __import__(plugin)
+        self.plugins[name] = current_plugin.main(name, self.logger, args)
+        new_plugins.append(name)
+      except Exception as e:
+        errors = True
+        self.log(self.logger.ERROR, 'error while importing %s: %s' % (name, e))
+        if name in self.plugins:
+          del self.plugins[name]
+        continue
     del current_plugin
     if errors:
       self.log(self.logger.CRITICAL, 'could not import at least one plugin. Terminating.')
@@ -538,74 +541,73 @@ class SRNd(threading.Thread):
     counter_new = 0
     current_feedlist = list()
     self.feed_db = dict()
-    for outfeed in os.listdir(os.path.join('config', 'hooks', 'outfeeds')):
+    for outfeed in self._list_config_files(os.path.join('config', 'hooks', 'outfeeds')):
       outfeed_file = os.path.join('config', 'hooks', 'outfeeds', outfeed)
-      if os.path.isfile(outfeed_file):
-        f = open(outfeed_file)
-        sync_on_startup = False
-        debuglevel = self.loglevel
-        proxy_type = None
-        proxy_ip = None
-        proxy_port = None
-        for line in f:
-          lowerline = line.lower()
-          if lowerline.startswith('#start_param '):
-            if lowerline.startswith('#start_param sync_on_startup=true'):
-              sync_on_startup = True
-            elif lowerline.startswith('#start_param debug='):
-              try:
-                debuglevel = int(lowerline.split('=')[1][0])
-              except:
-                pass
-            elif lowerline.startswith('#start_param proxy_type='):
-              proxy_type = lowerline.split('=', 1)[1].rstrip()
-            elif lowerline.startswith('#start_param proxy_ip='):
-              proxy_ip = lowerline.split('=', 1)[1].rstrip()
-            elif lowerline.startswith('#start_param proxy_port='):
-              proxy_port = lowerline.split('=', 1)[1].rstrip()
-        f.close()
-        host, port = self._extract_outfeed_data(outfeed)
-        name = 'outfeed-{}-{}'.format(host, port)
-        # open track db here, read, close
-        if sync_on_startup:
-          self.feed_db[name] = set()
-          readed = 0
-          try:
-            f = open('{0}.trackdb'.format(name), 'r')
-          except IOError as e:
-            if e.errno == 2:
-              pass
-            else:
-              self.log(self.logger.ERROR, 'cannot open: %s: %s' % ('{0}.trackdb'.format(name), e.strerror))
-          else:
-            for line in f.readlines():
-              readed += 1
-              self.feed_db[name].add(line.rstrip('\n'))
-          f.close()
-          # remove duplicates
-          if readed > len(self.feed_db[name]) > 1:
-            self.log(self.logger.INFO, 'found {} duplicates in {}.trackdb. Rewriting'.format((readed - len(self.feed_db[name])), name))
-            with open('{0}.trackdb'.format(name), 'w') as f:
-              f.write('\n'.join(self.feed_db[name]))
-              f.write('\n')
-        current_feedlist.append(name)
-        proxy = None
-        if proxy_type != None:
-          if proxy_ip != None:
+      f = open(outfeed_file)
+      sync_on_startup = False
+      debuglevel = self.loglevel
+      proxy_type = None
+      proxy_ip = None
+      proxy_port = None
+      for line in f:
+        lowerline = line.lower()
+        if lowerline.startswith('#start_param '):
+          if lowerline.startswith('#start_param sync_on_startup=true'):
+            sync_on_startup = True
+          elif lowerline.startswith('#start_param debug='):
             try:
-              proxy_port = int(proxy_port)
-              proxy = (proxy_type, proxy_ip, proxy_port)
-              self.log(self.logger.INFO, 'starting outfeed {} using proxy: {}'.format(name, str(proxy)))
+              debuglevel = int(lowerline.split('=')[1][0])
             except:
               pass
-        if name not in self.feeds:
+          elif lowerline.startswith('#start_param proxy_type='):
+            proxy_type = lowerline.split('=', 1)[1].rstrip()
+          elif lowerline.startswith('#start_param proxy_ip='):
+            proxy_ip = lowerline.split('=', 1)[1].rstrip()
+          elif lowerline.startswith('#start_param proxy_port='):
+            proxy_port = lowerline.split('=', 1)[1].rstrip()
+      f.close()
+      host, port = self._extract_outfeed_data(outfeed)
+      name = 'outfeed-{}-{}'.format(host, port)
+      # open track db here, read, close
+      if sync_on_startup:
+        self.feed_db[name] = set()
+        readed = 0
+        try:
+          f = open('{0}.trackdb'.format(name), 'r')
+        except IOError as e:
+          if e.errno == 2:
+            pass
+          else:
+            self.log(self.logger.ERROR, 'cannot open: %s: %s' % ('{0}.trackdb'.format(name), e.strerror))
+        else:
+          for line in f.readlines():
+            readed += 1
+            self.feed_db[name].add(line.rstrip('\n'))
+        f.close()
+        # remove duplicates
+        if readed > len(self.feed_db[name]) > 1:
+          self.log(self.logger.INFO, 'found {} duplicates in {}.trackdb. Rewriting'.format((readed - len(self.feed_db[name])), name))
+          with open('{0}.trackdb'.format(name), 'w') as f:
+            f.write('\n'.join(self.feed_db[name]))
+            f.write('\n')
+      current_feedlist.append(name)
+      proxy = None
+      if proxy_type != None:
+        if proxy_ip != None:
           try:
-            self.log(self.logger.DEBUG, 'starting outfeed: %s' % name)
-            self.feeds[name] = feed.feed(self, self.logger, outstream=True, host=host, port=port, sync_on_startup=sync_on_startup, proxy=proxy, debug=debuglevel)
-            self.feeds[name].start()
-            counter_new += 1
-          except Exception as e:
-            self.log(self.logger.WARNING, 'could not start outfeed %s: %s' % (name, e))
+            proxy_port = int(proxy_port)
+            proxy = (proxy_type, proxy_ip, proxy_port)
+            self.log(self.logger.INFO, 'starting outfeed {} using proxy: {}'.format(name, str(proxy)))
+          except:
+            pass
+      if name not in self.feeds:
+        try:
+          self.log(self.logger.DEBUG, 'starting outfeed: %s' % name)
+          self.feeds[name] = feed.feed(self, self.logger, outstream=True, host=host, port=port, sync_on_startup=sync_on_startup, proxy=proxy, debug=debuglevel)
+          self.feeds[name].start()
+          counter_new += 1
+        except Exception as e:
+          self.log(self.logger.WARNING, 'could not start outfeed %s: %s' % (name, e))
     counter_removed = 0
     feeds = list()
     for name in self.feeds:
