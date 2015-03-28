@@ -937,7 +937,7 @@ class main(threading.Thread):
         result_time += all_time
         sleep_time = self.config['sleep_time'] * counter if do_sleep else 0
         percentage = (100 * result_counter) / thread_count
-        self.log(self.logger.INFO, 'generating {} [{}%] threads at {:0.4f}s [work:{:0.4f}s, sleep:{:0.4f}s]'.format(counter, percentage, all_time, (all_time - sleep_time), sleep_time))
+        self.log(self.logger.INFO, 'generating {} [{:3}%] threads at {:0.4f}s [work:{:0.4f}s, sleep:{:0.4f}s]'.format(counter, percentage, all_time, (all_time - sleep_time), sleep_time))
         start_time = time.time()
         counter = 0
       if not self.running:
