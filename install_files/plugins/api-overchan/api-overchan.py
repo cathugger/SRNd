@@ -89,7 +89,7 @@ class main(threading.Thread):
 
   def _init_config(self, args, add_default=True):
     cfg_new = dict()
-    cfg_def = {\
+    cfg_def = {
         'debug': self.logger.INFO,
         'allow_request': '*',
         'disallow_request': '',
@@ -104,7 +104,8 @@ class main(threading.Thread):
         'cache_life': 5,
         'cache_max': 10,
         'cache_allow': '*',
-        'cache_disallow': 'error;info'}
+        'cache_disallow': 'error;info'
+    }
     for target in args:
       if target in cfg_def:
         try:
