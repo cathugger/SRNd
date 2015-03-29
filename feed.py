@@ -30,7 +30,7 @@ class feed(threading.Thread):
     if loglevel >= self.loglevel:
       self.logger.log(self.name, message, loglevel)
 
-  def __init__(self, master, logger, connection=None, outstream=False, host=None, port=None, sync_on_startup=False, proxy=None, debug=2):
+  def __init__(self, master, logger, db_connector, connection=None, outstream=False, host=None, port=None, sync_on_startup=False, proxy=None, debug=2):
     threading.Thread.__init__(self)
     self.outstream = outstream
     self.loglevel = debug

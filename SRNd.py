@@ -97,6 +97,11 @@ class SRNd(threading.Thread):
     # create jail
     os.chdir(self.data_dir)
 
+    # init db manager
+    if not os.path.exists(self._db_dir):
+      os.makedirs(self._db_dir)
+    self._db_manager = __import__('srnd.db_utils').db_utils.DatabaseManager(self._db_dir)
+
     # reading and starting plugins
     # we need to do this before chrooting because plugins may need to import other libraries
     self.plugins = dict()
@@ -153,7 +158,7 @@ class SRNd(threading.Thread):
     threading.Thread.__init__(self)
     self.name = "SRNd-listener"
     # FIXME add config var for dropper_debug
-    self.dropper = dropper.dropper(thread_name='SRNd-dropper', logger=self.logger, listener=self.socket, master=self, debug=self.dropper_debug)
+    self.dropper = dropper.dropper(thread_name='SRNd-dropper', logger=self.logger, listener=self.socket, master=self, debug=self.dropper_debug, db_connector=self._db_manager.connect)
 
     self.start_up_timestamp = -1
     self.ctl_socket_handlers = dict()
@@ -225,6 +230,7 @@ class SRNd(threading.Thread):
       self.infeed_debug = -1
       self.dropper_debug = -1
       self.instance_name = ''
+      self._db_dir = ''
       f = open(config_file, 'r')
       config = f.read()
       f.close()
@@ -257,6 +263,8 @@ class SRNd(threading.Thread):
             self.ipv6 = False
         elif key == 'data_dir':
           self.data_dir = value
+        elif key == 'db_dir':
+          self._db_dir = value
         elif key == 'use_chroot':
           if value.lower() == 'true':
             self.chroot = True
@@ -323,6 +331,9 @@ class SRNd(threading.Thread):
       if self.data_dir == '':
         self.data_dir = 'data'
         writeConfig = True
+      if self._db_dir == '':
+        self._db_dir = 'database'
+        writeConfig = True
       if self.ipv6 == '':
         self.ipv6 = False
         writeConfig = True
@@ -341,6 +352,7 @@ class SRNd(threading.Thread):
       self.port = 119
       #self.config = 'some random NNTPd v 0.1'
       self.data_dir = 'data'
+      self._db_dir = 'database'
       self.chroot = True
       self.setuid = 'news'
       self.ipv6 = False
@@ -388,6 +400,7 @@ class SRNd(threading.Thread):
       f.write('bind_port={0}\n'.format(self.port))
       f.write('bind_use_ipv6={0}\n'.format(self.ipv6))
       f.write('data_dir={0}\n'.format(self.data_dir))
+      f.write('db_dir={0}\n'.format(self._db_dir))
       f.write('use_chroot={0}\n'.format(self.chroot))
       f.write('setuid={0}\n'.format(self.setuid))
       f.write('srnd_debuglevel={0}\n'.format(self.loglevel))
@@ -503,11 +516,12 @@ class SRNd(threading.Thread):
         line = f.readline()
       f.close()
       #print "[SRNd] trying to import {0}..".format(name)
+      args['db_connector'] = self._db_manager.connect
+      if 'SRNd' in args:
+        args['SRNd'] = self
+      if 'SRNd_info' in args:
+        args['SRNd_info'] = self.get_info
       try:
-        if 'SRNd' in args:
-          args['SRNd'] = self
-        if 'SRNd_info' in args:
-          args['SRNd_info'] = self.get_info
         current_plugin = __import__(plugin)
         self.plugins[name] = current_plugin.main(name, self.logger, args)
         new_plugins.append(name)
@@ -603,7 +617,7 @@ class SRNd(threading.Thread):
       if name not in self.feeds:
         try:
           self.log(self.logger.DEBUG, 'starting outfeed: %s' % name)
-          self.feeds[name] = feed.feed(self, self.logger, outstream=True, host=host, port=port, sync_on_startup=sync_on_startup, proxy=proxy, debug=debuglevel)
+          self.feeds[name] = feed.feed(self, self.logger, outstream=True, host=host, port=port, sync_on_startup=sync_on_startup, proxy=proxy, debug=debuglevel, db_connector=self._db_manager.connect)
           self.feeds[name].start()
           counter_new += 1
         except Exception as e:
@@ -831,7 +845,7 @@ class SRNd(threading.Thread):
             con = self.socket.accept()
             name = 'infeed-{0}-{1}'.format(con[1][0], con[1][1])
             if name not in self.feeds:
-              self.feeds[name] = feed.feed(self, self.logger, connection=con, debug=self.infeed_debug)
+              self.feeds[name] = feed.feed(self, self.logger, connection=con, debug=self.infeed_debug, db_connector=self._db_manager.connect)
               self.feeds[name].start()
             else:
               self.log(self.logger.WARNING, 'got connection from %s but its still in feeds. wtf?' % name)
