@@ -141,7 +141,8 @@ class main(threading.Thread):
                'tz_name': 'UTC',
                'enable_top': False,
                'top_step': 10,
-               'top_count': 100
+               'top_count': 100,
+               'db_maintenance': 3
     }
     # (to self.config['thumbs'], from args, default)
     thumbnail_files = (('no_file', 'no_file', 'nope.png'), ('document', 'document_file', 'document.png'), ('invalid', 'invalid_file', 'invalid.png'), ('audio', 'audio_file', 'audio.png'), \
@@ -517,8 +518,12 @@ class main(threading.Thread):
                (group_id INTEGER PRIMARY KEY AUTOINCREMENT, group_name text UNIQUE, article_count INTEGER, last_update INTEGER)''')
     self.sqlite.execute('''CREATE TABLE IF NOT EXISTS articles
                (article_uid text, group_id INTEGER, sender text, email text, subject text, sent INTEGER, parent text, message text, imagename text, imagelink text, thumblink text, last_update INTEGER, public_key text, PRIMARY KEY (article_uid, group_id))''')
+    self.sqlite.execute('''CREATE TABLE IF NOT EXISTS config (key text PRIMARY KEY, value text)''')
+    try:
+      self.sqlite.execute('INSERT INTO config VALUES ("db_maintenance","0")')
+    except sqlite3.IntegrityError:
+      pass
 
-    # TODO add some flag like ability to carry different data for groups like (removed + added manually + public + hidden + whatever)
     self.sqlite.execute('''CREATE TABLE IF NOT EXISTS flags
                (flag_id INTEGER PRIMARY KEY AUTOINCREMENT, flag_name text UNIQUE, flag text)''')
 
@@ -579,7 +584,11 @@ class main(threading.Thread):
     self.sqlite.execute('CREATE INDEX IF NOT EXISTS articles_article_idx ON articles(article_uid);')
     self.sqlite.execute('CREATE INDEX IF NOT EXISTS articles_last_update_idx ON articles(group_id, parent, last_update);')
     self.sqlite.execute('CREATE INDEX IF NOT EXISTS articles_article_hash_idx ON articles(article_hash);')
+    db_maintenance = self._need_db_maintenance()
     self.sqlite_conn.commit()
+
+    if db_maintenance:
+      self._db_maintenance()
 
     self._load_templates()
     self.cache_init()
@@ -595,6 +604,29 @@ class main(threading.Thread):
       self.regenerate_boards.add(group_row[0])
     for thread_row in self.sqlite.execute('SELECT article_uid FROM articles WHERE parent = "" OR parent = article_uid ORDER BY last_update DESC').fetchall():
       self.regenerate_threads.add(thread_row[0])
+
+  def _need_db_maintenance(self):
+    result = self.sqlite.execute('SELECT value FROM config WHERE key = "db_maintenance"').fetchone()
+    try:
+      result = int(result[0])
+    except ValueError:
+      self.log(self.logger.ERROR, 'Strange value in db_maintenance getting from config table: FIX IT!')
+      return False
+    if result >= self.config['db_maintenance']:
+      self.sqlite.execute('UPDATE config SET value = "0" WHERE key = "db_maintenance"')
+      return True
+    else:
+      self.sqlite.execute('UPDATE config SET value = ? WHERE key = "db_maintenance"', (result + 1,))
+      return False
+
+  def _db_maintenance(self):
+    self.log(self.logger.INFO, 'db maintenance: VACUUM and REINDEX')
+    start_time = time.time()
+    self.sqlite.execute('VACUUM;')
+    self.sqlite_conn.commit()
+    self.sqlite.execute('REINDEX;')
+    self.sqlite_conn.commit()
+    self.log(self.logger.INFO, 'db maintenance: Complit at {}s'.format(int(time.time() - start_time)))
 
   def shutdown(self):
     self.running = False
@@ -851,7 +883,7 @@ class main(threading.Thread):
     self.past_init()
     self.running = True
     regen_overview = True
-    got_control = False
+    got_control_count = 0
     while self.running:
       try:
         ret = self.queue.get(block=True, timeout=1)
@@ -875,7 +907,7 @@ class main(threading.Thread):
             except IOError:
               pass
         elif ret[0] == "control":
-          got_control = True
+          got_control_count += 1
           self.handle_control(ret[1], ret[2])
         else:
           self.log(self.logger.ERROR, 'found article with unknown source: %s' % ret[0])
@@ -905,11 +937,11 @@ class main(threading.Thread):
           if self.config['enable_top']:
             self.generate_top_page()
           regen_overview = False
-        if got_control:
+        if got_control_count > 100:
           self.sqlite_conn.commit()
           self.sqlite.execute('VACUUM;')
           self.sqlite_conn.commit()
-          got_control = False
+          got_control_count = 0
     self.sqlite_censor_conn.close()
     self.sqlite_conn.close()
     self.sqlite_dropper_conn.close()
