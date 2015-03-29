@@ -163,7 +163,7 @@ class feed(threading.Thread):
     self.qsize = self.queue.qsize() + len(self.articles_to_send) + len(self.rechecking)
 
   def run(self):
-    self.sqlite_conn_dropper = sqlite3.connect('dropper.db3')
+    self.sqlite_conn_dropper = sqlite3.connect('dropper.db3', timeout=60)
     self.sqlite_dropper = self.sqlite_conn_dropper.cursor()
     self.running = True
     connected = False

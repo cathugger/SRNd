@@ -204,13 +204,13 @@ class main(threading.Thread):
     #if self.should_terminate:
     #  return
     self.log(self.logger.INFO, 'starting up as plugin..')
-    self.sqlite_dropper_conn = sqlite3.connect('dropper.db3')
+    self.sqlite_dropper_conn = sqlite3.connect('dropper.db3', timeout=60)
     self.dropperdb = self.sqlite_dropper_conn.cursor()
     self.sqlite_censor_conn = sqlite3.connect('censor.db3')
     self.censordb = self.sqlite_censor_conn.cursor()
-    self.sqlite_overchan_conn = sqlite3.connect('plugins/overchan/overchan.db3')
+    self.sqlite_overchan_conn = sqlite3.connect('plugins/overchan/overchan.db3', timeout=60)
     self.overchandb = self.sqlite_overchan_conn.cursor()
-    self.postmandb_conn = sqlite3.connect('postman.db3')
+    self.postmandb_conn = sqlite3.connect('postman.db3', timeout=60)
     self.postmandb = self.postmandb_conn.cursor()
     self.allowed_cache = dict()
     self.key_cache = dict()

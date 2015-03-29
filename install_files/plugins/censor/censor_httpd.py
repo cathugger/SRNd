@@ -1514,14 +1514,14 @@ class censor_httpd(threading.Thread):
     # connect to hasher database
     # FIXME: add database_directory to postman?
     self.database_directory = ''
-    self.httpd.sqlite_hasher_conn = sqlite3.connect('hashes.db3', timeout=15)
+    self.httpd.sqlite_hasher_conn = sqlite3.connect('hashes.db3', timeout=60)
     self.httpd.sqlite_hasher = self.httpd.sqlite_hasher_conn.cursor()
-    self.httpd.sqlite_censor_conn = sqlite3.connect('censor.db3', timeout=15)
+    self.httpd.sqlite_censor_conn = sqlite3.connect('censor.db3', timeout=60)
     self.httpd.sqlite_censor = self.httpd.sqlite_censor_conn.cursor()
     # FIXME get overchan db path via arg
-    self.httpd.sqlite_overchan_conn = sqlite3.connect('plugins/overchan/overchan.db3', timeout=15)
+    self.httpd.sqlite_overchan_conn = sqlite3.connect('plugins/overchan/overchan.db3', timeout=60)
     self.httpd.sqlite_overchan = self.httpd.sqlite_overchan_conn.cursor()
-    self.httpd.postmandb_conn = sqlite3.connect('postman.db3', timeout=15)
+    self.httpd.postmandb_conn = sqlite3.connect('postman.db3', timeout=60)
     self.httpd.postmandb = self.httpd.postmandb_conn.cursor()
 
     self.log(self.logger.INFO, 'start listening at http://%s:%i' % (self.ip, self.port))

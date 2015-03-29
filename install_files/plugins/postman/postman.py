@@ -912,12 +912,12 @@ class main(threading.Thread):
     # FIXME: add database_directory to postman?
     self.database_directory = ''
     self.db_version = 3
-    self.httpd.sqlite_conn = sqlite3.connect(os.path.join(self.database_directory, 'hashes.db3'))
+    self.httpd.sqlite_conn = sqlite3.connect(os.path.join(self.database_directory, 'hashes.db3'), timeout=60)
     self.httpd.sqlite = self.httpd.sqlite_conn.cursor()
     if self.httpd.overchan_fake_id:
-      self.httpd.dropperdb_conn = sqlite3.connect(os.path.join(self.database_directory, 'dropper.db3'))
+      self.httpd.dropperdb_conn = sqlite3.connect(os.path.join(self.database_directory, 'dropper.db3'), timeout=60)
       self.httpd.dropperdb = self.httpd.dropperdb_conn.cursor()
-    self.httpd.postmandb_conn = sqlite3.connect(os.path.join(self.database_directory, 'postman.db3'))
+    self.httpd.postmandb_conn = sqlite3.connect(os.path.join(self.database_directory, 'postman.db3'), timeout=60)
     self.httpd.postmandb = self.httpd.postmandb_conn.cursor()
     try:
       db_version = int(self.httpd.postmandb.execute("SELECT value FROM config WHERE key = ?", ("db_version",)).fetchone()[0])

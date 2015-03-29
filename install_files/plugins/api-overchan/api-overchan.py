@@ -62,7 +62,7 @@ class main(threading.Thread):
     if not self.config['running']:
       self.log(self.logger.INFO, 'running is False.')
       return
-    self.overchandb_conn = sqlite3.connect(os.path.join(self.config['database_directory'], 'overchan.db3'), timeout=5)
+    self.overchandb_conn = sqlite3.connect(os.path.join(self.config['database_directory'], 'overchan.db3'), timeout=60)
     self.overchandb = self.overchandb_conn.cursor()
     self._cache_init()
     self._api_init()

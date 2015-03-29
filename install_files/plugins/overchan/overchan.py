@@ -505,9 +505,9 @@ class main(threading.Thread):
     self.cache['moder_flags'] = dict()
     self.board_cache = dict()
 
-    self.sqlite_dropper_conn = sqlite3.connect('dropper.db3')
+    self.sqlite_dropper_conn = sqlite3.connect('dropper.db3', timeout=60)
     self.dropperdb = self.sqlite_dropper_conn.cursor()
-    self.sqlite_censor_conn = sqlite3.connect('censor.db3')
+    self.sqlite_censor_conn = sqlite3.connect('censor.db3', timeout=60)
     self.censordb = self.sqlite_censor_conn.cursor()
     self.sqlite_conn = sqlite3.connect(os.path.join(self.config['database_directory'], 'overchan.db3'))
     self.sqlite = self.sqlite_conn.cursor()
@@ -909,6 +909,7 @@ class main(threading.Thread):
         elif ret[0] == "control":
           got_control_count += 1
           self.handle_control(ret[1], ret[2])
+          self.sqlite_conn.commit()
         else:
           self.log(self.logger.ERROR, 'found article with unknown source: %s' % ret[0])
 
@@ -938,7 +939,6 @@ class main(threading.Thread):
             self.generate_top_page()
           regen_overview = False
         if got_control_count > 100:
-          self.sqlite_conn.commit()
           self.sqlite.execute('VACUUM;')
           self.sqlite_conn.commit()
           got_control_count = 0
