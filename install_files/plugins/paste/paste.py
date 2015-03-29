@@ -40,19 +40,19 @@ class main(threading.Thread):
     threading.Thread.__init__(self)
     self.name = thread_name
     self.logger = logger
+    self._db_connector = args['db_connector']
     self.should_terminate = False
     self.loglevel = self.logger.INFO
     # TODO: move sleep stuff to config table
     self.sleep_threshold = 10
     self.sleep_time = 0.02
     error = ''
-    for arg in ('template_directory', 'output_directory', 'database_directory', 'css_file', 'title'):
+    for arg in ('template_directory', 'output_directory', 'css_file', 'title'):
       if not arg in args:
         error += '%s not in arguments\n' % arg
     if error != '':
       self.die(error.rstrip('\n'))
     self.outputDirectory = args['output_directory']
-    self.database_directory = args['database_directory']
     self.templateDirectory = args['template_directory']
     self.css_file = args['css_file']
     self.html_title = args['title']
@@ -82,13 +82,10 @@ class main(threading.Thread):
       fcntl.fcntl(fd, fcntl.F_SETSIG, 0)
       fcntl.fcntl(fd, fcntl.F_NOTIFY,
                   fcntl.DN_MODIFY | fcntl.DN_CREATE | fcntl.DN_MULTISHOT)
-      if not os.path.exists(self.database_directory):
-        os.mkdir(self.database_directory)
-      self.sqlite_conn = sqlite3.connect(os.path.join(self.database_directory, 'pastes.db3'))
-      self.sqlite = self.sqlite_conn.cursor()
+      self.sqlite = self._db_connector('pastes')
       self.sqlite.execute('''CREATE TABLE IF NOT EXISTS pastes
                     (article_uid text, hash text PRIMARY KEY, sender text, email text, subject text, sent INTEGER, body text, root text, received INTEGER)''')
-      self.sqlite_conn.commit()
+      self.sqlite.commit()
     else:
       self.log(self.logger.INFO, 'initializing as plugin..')
       if 'watch_directory' in args:
@@ -155,18 +152,15 @@ class main(threading.Thread):
       return
     if not os.path.exists(self.outputDirectory):
       os.mkdir(self.outputDirectory)
-    if not os.path.exists(self.database_directory):
-      os.mkdir(self.database_directory)
     i = open(os.path.join(self.templateDirectory, self.css_file), 'r')
     o = open(os.path.join(self.outputDirectory, 'styles.css'), 'w')
     o.write(i.read())
     o.close()
     i.close()
-    self.sqlite_conn = sqlite3.connect(os.path.join(self.database_directory, 'pastes.db3'))
-    self.sqlite = self.sqlite_conn.cursor()
+    self.sqlite = self._db_connector('pastes')
     self.sqlite.execute('''CREATE TABLE IF NOT EXISTS pastes
                   (article_uid text, hash text PRIMARY KEY, sender text, email text, subject text, sent INTEGER, body text, root text, received INTEGER)''')
-    self.sqlite_conn.commit()
+    self.sqlite.commit()
     self.running = True
     self.regenerate_index = False
     self.log(self.logger.INFO, 'starting up as plugin..')
@@ -210,15 +204,15 @@ class main(threading.Thread):
           time.sleep(self.sleep_time)
       except Queue.Empty as e:
         if got_control:
-          self.sqlite_conn.commit()
+          self.sqlite.commit()
           self.sqlite.execute('VACUUM;')
-          self.sqlite_conn.commit()
+          self.sqlite.commit()
           got_control = False
           self.regenerate_index = True
         if self.regenerate_index:
           self.recreate_index()
           self.regenerate_index = False
-    self.sqlite_conn.close()
+    self.sqlite.close()
     self.log(self.logger.INFO, 'bye')
 
   def generate_paste(self, identifier, paste_content, subject, sender, sent):
@@ -301,7 +295,7 @@ class main(threading.Thread):
         break
     self.generate_paste(identifier, ''.join(bar).decode('UTF-8'), subject, sender, sent)
     self.sqlite.execute('INSERT INTO pastes VALUES (?,?,?,?,?,?,?,?,?)', (message_id, hash_message_uid, sender.decode('UTF-8'), email.decode('UTF-8'), subject.decode('UTF-8'), sent, ''.join(bar).decode('UTF-8'), '', int(time.time())))
-    self.sqlite_conn.commit()
+    self.sqlite.commit()
     del bar
     return True
 
@@ -338,7 +332,7 @@ class main(threading.Thread):
           os.unlink(os.path.join(self.outputDirectory, "%s.html" % sha1(message_id).hexdigest()[:10]))
         except Exception as e:
           self.log(self.logger.WARNING, 'could not delete paste for message_id %s: %s' % (message_id, e))
-        self.sqlite_conn.commit()
+        self.sqlite.commit()
       else:
         self.log(self.logger.WARNING, 'unknown control message: %s' % line)
 

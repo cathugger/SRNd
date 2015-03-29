@@ -54,20 +54,16 @@ class main(threading.Thread):
     self.serving = False
     self.sync_on_startup = False
     self.config = self._init_config(args)
-    if 'database_directory' not in self.config:
-      self.log(self.logger.CRITICAL, 'database_directory not present in config.')
-      self.config['running'] = False
 
   def run(self):
     if not self.config['running']:
       self.log(self.logger.INFO, 'running is False.')
       return
-    self.overchandb_conn = sqlite3.connect(os.path.join(self.config['database_directory'], 'overchan.db3'), timeout=60)
-    self.overchandb = self.overchandb_conn.cursor()
+    self.overchandb = self.config['db_connector']('overchan', timeout=60)
     self._cache_init()
     self._api_init()
     self._start_serving()
-    self.overchandb_conn.close()
+    self.overchandb.close()
     self.log(self.logger.INFO, 'bye')
 
   def _start_serving(self):

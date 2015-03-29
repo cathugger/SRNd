@@ -50,17 +50,17 @@ class main(threading.Thread):
     self.sleep_time = 0.02
 
     error = ''
-    for arg in ('template_directory', 'output_directory', 'database_directory', 'temp_directory', 'document_file', 'invalid_file', 'css_file', 'title'):
+    for arg in ('template_directory', 'output_directory', 'temp_directory', 'document_file', 'invalid_file', 'css_file', 'title'):
       if not arg in args:
         error += "%s not in arguments\n" % arg
     if error != '':
       error = error.rstrip("\n")
       self.die(error)
     self.output_directory = args['output_directory']
-    self.database_directory = args['database_directory']
     self.template_directory = args['template_directory']
     self.temp_directory = args['temp_directory']
     self.html_title = args['title']
+    self._db_connector = args['db_connector']
     if not os.path.exists(self.template_directory):
       self.die('error: template directory \'%s\' does not exist' % self.template_directory)
     self.invalid_file = args['invalid_file']
@@ -207,7 +207,6 @@ class main(threading.Thread):
     required_dirs.append(os.path.join(self.output_directory, '..', 'spamprotector'))
     required_dirs.append(os.path.join(self.output_directory, 'img'))
     required_dirs.append(os.path.join(self.output_directory, 'thumbs'))
-    required_dirs.append(self.database_directory)
     required_dirs.append(self.temp_directory)
     for directory in required_dirs:
       if not os.path.exists(directory):
@@ -260,11 +259,8 @@ class main(threading.Thread):
     self.regenerate_boards = list()
     self.regenerate_threads = list()
     self.missing_parents = dict()
-    self.sqlite_hasher_conn = sqlite3.connect('hashes.db3')
-    self.db_hasher = self.sqlite_hasher_conn.cursor() 
-    self.sqlite_conn = sqlite3.connect(os.path.join(self.database_directory, 'forum.db3'))
-    self.sqlite_conn.row_factory = sqlite3.Row
-    self.sqlite = self.sqlite_conn.cursor()
+    self.db_hasher = self._db_connector('hashes', timeout=60)
+    self.sqlite = self._db_connector('forum')
     # FIXME use config table with current db version + def update_db(db_version) like in censor plugin
     self.sqlite.execute('''CREATE TABLE IF NOT EXISTS groups
                (group_id INTEGER PRIMARY KEY AUTOINCREMENT, group_name text UNIQUE, article_count INTEGER, last_update INTEGER)''')
@@ -293,7 +289,7 @@ class main(threading.Thread):
     self.sqlite.execute('CREATE INDEX IF NOT EXISTS articles_group_idx ON articles(group_id);')
     self.sqlite.execute('CREATE INDEX IF NOT EXISTS articles_parent_idx ON articles(parent);')
     self.sqlite.execute('CREATE INDEX IF NOT EXISTS articles_article_idx ON articles(article_uid);')
-    self.sqlite_conn.commit()
+    self.sqlite.commit()
     
     if self.regenerate_html_on_startup:
       self.regenerate_all_html()
@@ -328,14 +324,14 @@ class main(threading.Thread):
         except:
           self.sqlite.execute('INSERT INTO groups(group_name, article_count, last_update) VALUES (?,?,?)', (group_name, 0, int(time.time())))
           self.log(self.logger.INFO, 'added new board: \'%s\'' % group_name)
-        self.sqlite_conn.commit()
+        self.sqlite.commit()
         self.regenerate_all_html()
       elif line.lower().startswith("overchan-board-del"):
         group_name = line.lower().split(" ")[1]
         try:
           self.sqlite.execute('UPDATE groups SET blocked = 1 WHERE group_name = ?', (group_name,))
           self.log(self.logger.INFO, 'blocked board: \'%s\'' % group_name)
-          self.sqlite_conn.commit()
+          self.sqlite.commit()
           self.regenerate_all_html()
         except:
           self.log(self.logger.WARNING, 'should delete board %s but there is no board with that name' % group_name)
@@ -375,7 +371,7 @@ class main(threading.Thread):
           except Exception as e:
             self.log(self.logger.WARNING, 'could not delete attachment %s: %s' % (row[1], e))
         self.sqlite.execute('UPDATE articles SET imagelink = "invalid", thumblink = "invalid", imagename = "invalid", public_key = "" WHERE article_uid = ?', (message_id,))
-        self.sqlite_conn.commit()
+        self.sqlite.commit()
       elif line.lower().startswith("delete "):
         message_id = line.lower().split(" ")[1]
         if os.path.exists(os.path.join("articles", "restored", message_id)):
@@ -431,12 +427,12 @@ class main(threading.Thread):
             os.unlink(os.path.join(self.output_directory, "thumbs", row[1]))
           except Exception as e:
             self.log(self.logger.WARNING, 'could not delete thumbs/%s: %s' % (row[1], e))
-        self.sqlite_conn.commit()
+        self.sqlite.commit()
     for post in root_posts:
       if int(self.sqlite.execute("SELECT count(article_uid) FROM articles WHERE parent = ? and parent != article_uid", (message_id,)).fetchone()[0]) == 0:
         self.log(self.logger.DEBUG, 'deleting message_id %s, root_post has no more childs' % message_id)
         self.sqlite.execute('DELETE FROM articles WHERE article_uid = ?', (message_id,))
-        self.sqlite_conn.commit()
+        self.sqlite.commit()
         try:
           os.unlink(os.path.join(self.output_directory, "thread-%s" % sha1(message_id).hexdigest()[:10]))
         except Exception as e:
@@ -524,12 +520,12 @@ class main(threading.Thread):
           self.generate_boardview()
           regen_overview = False
         if got_control:
-          self.sqlite_conn.commit()
+          self.sqlite.commit()
           self.sqlite.execute('VACUUM;')
-          self.sqlite_conn.commit()
+          self.sqlite.commit()
           got_control = False
-    self.sqlite_conn.close()
-    self.sqlite_hasher_conn.close()
+    self.sqlite.close()
+    self.db_hasher.close()
     self.log(self.logger.INFO, 'bye')
 
   def upp_it(self, data):
@@ -642,7 +638,7 @@ class main(threading.Thread):
       if not result:
         try:
           self.sqlite.execute('INSERT INTO groups(group_name, article_count, last_update) VALUES (?,?,?)', (group, 1, int(time.time())))
-          self.sqlite_conn.commit()
+          self.sqlite.commit()
         except:
           self.log(self.logger.INFO, 'ignoring message for blocked group %s' % group)
           continue
@@ -666,7 +662,7 @@ class main(threading.Thread):
           parent_last_update = result[0]
           if sent > parent_last_update:
             self.sqlite.execute('UPDATE articles SET last_update=? WHERE article_uid=?', (sent, parent))
-            self.sqlite_conn.commit()
+            self.sqlite.commit()
         else:
           self.log(self.logger.INFO, 'missing parent %s for post %s' %  (parent, message_id))
           if parent in self.missing_parents:
@@ -828,11 +824,11 @@ class main(threading.Thread):
       # post has been censored and is now being restored. just delete post for all groups so it can be reinserted
       self.log(self.logger.INFO, 'post has been censored and is now being restored: %s' % message_id) 
       self.sqlite.execute('DELETE FROM articles WHERE article_uid=?', (message_id,))
-      self.sqlite_conn.commit()
+      self.sqlite.commit()
     for group_id in group_ids:
       self.sqlite.execute('INSERT INTO articles(article_uid, group_id, sender, email, subject, sent, parent, message, imagename, imagelink, thumblink, last_update, public_key, received) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)', (message_id, group_id, sender.decode('UTF-8'), email.decode('UTF-8'), subject.decode('UTF-8'), sent, parent, message.decode('UTF-8'), image_name_original.decode('UTF-8'), image_name, thumb_name, last_update, public_key, int(time.time())))
       self.sqlite.execute('UPDATE groups SET last_update=?, article_count = (SELECT count(article_uid) FROM articles WHERE group_id = ?) WHERE group_id = ?', (int(time.time()), group_id, group_id))
-    self.sqlite_conn.commit()
+    self.sqlite.commit()
     if update_dat_thread not in self.regenerate_threads:
       self.regenerate_threads.append(update_dat_thread)
     return True
@@ -1106,11 +1102,11 @@ if __name__ == '__main__':
       signal.pause()
     except KeyboardInterrupt as e:
       print
-      self.sqlite_conn.close()
+      self.sqlite.close()
       self.log('bye', 2)
       exit(0)
     except Exception as e:
       print "Exception:", e  
-      self.sqlite_conn.close()
+      self.sqlite.close()
       self.log('bye', 2)
       exit(0)

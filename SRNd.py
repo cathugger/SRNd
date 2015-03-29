@@ -101,6 +101,7 @@ class SRNd(threading.Thread):
     if not os.path.exists(self._db_dir):
       os.makedirs(self._db_dir)
     self._db_manager = __import__('srnd.db_utils').db_utils.DatabaseManager(self._db_dir)
+    self._auto_db_migration()
 
     # reading and starting plugins
     # we need to do this before chrooting because plugins may need to import other libraries
@@ -165,6 +166,22 @@ class SRNd(threading.Thread):
     self.ctl_socket_handlers["status"] = self.ctl_socket_handler_status
     self.ctl_socket_handlers["log"] = self.ctl_socket_handler_logger
     self.ctl_socket_handlers["stats"] = self.ctl_socket_handler_stats
+
+  def _auto_db_migration(self):
+    # Work only for default plugins and db locations
+    targets = (
+        ('censor.db3', 'censor.db3'), ('dropper.db3', 'dropper.db3'), ('hashes.db3', 'hashes.db3'), ('postman.db3', 'postman.db3'),
+        ('overchan.db3', os.path.join('plugins', 'overchan', 'overchan.db3')), ('pastes.db3', os.path.join('plugins', 'paste', 'pastes.db3'))
+    )
+    for target in targets:
+      new_location = os.path.join(self._db_dir, target[0])
+      if os.path.isfile(target[1]) and os.path.isfile(new_location):
+        self.log(self.logger.ERROR, 'DB migrator: {0} duplicate found {1}. If you copy {2} manually, delete {1}. If not - WTF!'.format(new_location, target[1], target[0]))
+      elif os.path.isfile(target[1]):
+        try:
+          os.rename(target[1], new_location)
+        except OSError as e:
+          self.log(self.logger.ERROR, 'DB migrator: Error move {} to {}: {}'.format(target[1], new_location, e))
 
   def get_info(self, data=None):
     if data is not None and data.get('command', None) in self.ctl_socket_handlers:

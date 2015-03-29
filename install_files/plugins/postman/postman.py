@@ -567,6 +567,7 @@ class main(threading.Thread):
     self.logger = logger
     self.serving = False
     self.sync_on_startup = False
+    self._db_connector = args['db_connector']
     if 'debug' not in args:
       self.loglevel = self.logger.INFO
       self.log(self.logger.DEBUG, 'debuglevel not defined, using default of debug = %i' % self.loglevel)
@@ -884,7 +885,7 @@ class main(threading.Thread):
       self.httpd.postmandb.execute('CREATE TABLE userkey (userkey text PRIMARY KEY, \
         local_name text, expires INTEGER, allow INTEGER, cookie text, last_login INTEGER, postcount INTEGER DEFAULT 0, last_message INTEGER, last_message_id text)')
       self.httpd.postmandb.execute("CREATE INDEX IF NOT EXISTS userkey_cookie_idx ON userkey(cookie, allow, expires)")
-      self.httpd.postmandb_conn.commit()
+      self.httpd.postmandb.commit()
       current_version = 1
     if current_version == 1:
       self.log(self.logger.INFO, "updating db from version %i to version %i" % (current_version, 2))
@@ -896,29 +897,23 @@ class main(threading.Thread):
       self.httpd.postmandb.execute('CREATE TRIGGER IF NOT EXISTS userkey_oninsert AFTER INSERT ON userkey BEGIN \
         INSERT INTO modifications (table_name, action) VALUES ("userkey","INSERT"); END')
       self.httpd.postmandb.execute('UPDATE config SET value = "2" WHERE key = "db_version"')
-      self.httpd.postmandb_conn.commit()
+      self.httpd.postmandb.commit()
       current_version = 2
     if current_version == 2:
       self.log(self.logger.INFO, "updating db from version %i to version %i" % (current_version, 3))
       self.httpd.postmandb.execute('CREATE TABLE i2p_desthash (desthash text PRIMARY KEY, expires INTEGER)')
       self.httpd.postmandb.execute('UPDATE config SET value = "3" WHERE key = "db_version"')
-      self.httpd.postmandb_conn.commit()
+      self.httpd.postmandb.commit()
       current_version = 3
 
   def run(self):
     if self.should_terminate:
       return
-    # connect to hasher database
-    # FIXME: add database_directory to postman?
-    self.database_directory = ''
     self.db_version = 3
-    self.httpd.sqlite_conn = sqlite3.connect(os.path.join(self.database_directory, 'hashes.db3'), timeout=60)
-    self.httpd.sqlite = self.httpd.sqlite_conn.cursor()
+    self.httpd.sqlite = self._db_connector('hashes', timeout=60)
     if self.httpd.overchan_fake_id:
-      self.httpd.dropperdb_conn = sqlite3.connect(os.path.join(self.database_directory, 'dropper.db3'), timeout=60)
-      self.httpd.dropperdb = self.httpd.dropperdb_conn.cursor()
-    self.httpd.postmandb_conn = sqlite3.connect(os.path.join(self.database_directory, 'postman.db3'), timeout=60)
-    self.httpd.postmandb = self.httpd.postmandb_conn.cursor()
+      self.httpd.dropperdb =  self._db_connector('dropper', timeout=60)
+    self.httpd.postmandb = self._db_connector('postman', timeout=60)
     try:
       db_version = int(self.httpd.postmandb.execute("SELECT value FROM config WHERE key = ?", ("db_version",)).fetchone()[0])
     except Exception as e:
@@ -1065,7 +1060,7 @@ class main(threading.Thread):
     if db_update:
       self.log(self.logger.INFO, "Save cookies to db")
       self.httpd.cookie_cache = dict()
-      self.httpd.postmandb_conn.commit()
+      self.httpd.postmandb.commit()
     self.httpd.db_busy = False
     return db_update
 
@@ -1074,7 +1069,7 @@ class main(threading.Thread):
     for row in self.httpd.postmandb.execute('SELECT desthash, expires FROM i2p_desthash WHERE expires > ?', (current_time,)).fetchall():
       self.httpd.dest_cache[row[0]] = [0, current_time, int(row[1])]
     self.httpd.postmandb.execute('DELETE FROM i2p_desthash')
-    self.httpd.postmandb_conn.commit()
+    self.httpd.postmandb.commit()
     self.log(self.logger.INFO, "Hardened i2p spamprotect enabled. Loaded {0} desthashes. If you're hosting non-i2p site, disable this".format(len(self.httpd.dest_cache)))
 
   def save_i2p_spamprotect_cache(self):
@@ -1082,7 +1077,7 @@ class main(threading.Thread):
     for desthash in self.httpd.dest_cache:
       if current_time < self.httpd.dest_cache[desthash][2]:
         self.httpd.postmandb.execute("INSERT INTO i2p_desthash (desthash, expires) VALUES (?, ?)", (desthash, self.httpd.dest_cache[desthash][2]))
-    self.httpd.postmandb_conn.commit()
+    self.httpd.postmandb.commit()
 
   def allow_this_desthash(self, desthash):
     if desthash not in self.httpd.dest_cache:
@@ -1175,7 +1170,7 @@ class main(threading.Thread):
       self.httpd.db_busy = True
       del self.httpd.userkey_list[pubkey]
       self.httpd.postmandb.execute('UPDATE userkey SET allow = 0 WHERE userkey = ?', (pubkey,))
-      self.httpd.postmandb_conn.commit()
+      self.httpd.postmandb.commit()
       self.httpd.db_busy = False
 
 class new_captcha(object):

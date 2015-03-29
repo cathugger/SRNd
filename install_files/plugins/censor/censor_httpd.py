@@ -338,7 +338,7 @@ class censor(BaseHTTPRequestHandler):
       set_cookie = '{0}={1}; expires={2}; path=/;'.format(cookie_name, new_cookie, datetime.utcfromtimestamp(expires[0]).strftime('%a, %d-%b-%Y %T GMT'))
       try:
         self.origin.postmandb.execute('UPDATE userkey SET last_login = ?, cookie = ? WHERE userkey = ?', (current_time, new_cookie, public))
-        self.origin.postmandb_conn.commit()
+        self.origin.postmandb.commit()
       except Exception as e:
         self.origin.log(self.origin.logger.WARNING, 'user login: error database update %s' % e)
         return False, set_cookie
@@ -1292,6 +1292,7 @@ class censor_httpd(threading.Thread):
     threading.Thread.__init__(self)
     self.name = thread_name
     self.logger = logger
+    self._db_connector = args['db_connector']
     if 'debug' not in args:
       self.loglevel = self.logger.INFO
       self.log(self.logger.DEBUG, 'debuglevel not defined, using default of debug = %i' % self.loglevel)
@@ -1511,25 +1512,17 @@ class censor_httpd(threading.Thread):
   def run(self):
     if self.should_terminate:
       return
-    # connect to hasher database
-    # FIXME: add database_directory to postman?
-    self.database_directory = ''
-    self.httpd.sqlite_hasher_conn = sqlite3.connect('hashes.db3', timeout=60)
-    self.httpd.sqlite_hasher = self.httpd.sqlite_hasher_conn.cursor()
-    self.httpd.sqlite_censor_conn = sqlite3.connect('censor.db3', timeout=60)
-    self.httpd.sqlite_censor = self.httpd.sqlite_censor_conn.cursor()
-    # FIXME get overchan db path via arg
-    self.httpd.sqlite_overchan_conn = sqlite3.connect('plugins/overchan/overchan.db3', timeout=60)
-    self.httpd.sqlite_overchan = self.httpd.sqlite_overchan_conn.cursor()
-    self.httpd.postmandb_conn = sqlite3.connect('postman.db3', timeout=60)
-    self.httpd.postmandb = self.httpd.postmandb_conn.cursor()
+    self.httpd.sqlite_hasher = self._db_connector('hashes', timeout=60)
+    self.httpd.sqlite_censor = self._db_connector('censor', timeout=60)
+    self.httpd.sqlite_overchan = self._db_connector('overchan', timeout=60)
+    self.httpd.postmandb = self._db_connector('postman', timeout=60)
 
     self.log(self.logger.INFO, 'start listening at http://%s:%i' % (self.ip, self.port))
     self.httpd.serve_forever()
-    self.httpd.sqlite_hasher_conn.close()
-    self.httpd.sqlite_censor_conn.close()
-    self.httpd.sqlite_overchan_conn.close()
-    self.httpd.postmandb_conn.close()
+    self.httpd.sqlite_hasher.close()
+    self.httpd.sqlite_censor.close()
+    self.httpd.sqlite_overchan.close()
+    self.httpd.postmandb.close()
     self.httpd.rnd.close()
     self.log(self.logger.INFO, 'bye')
 

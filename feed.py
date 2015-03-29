@@ -76,6 +76,7 @@ class feed(threading.Thread):
     self.sync_on_startup = sync_on_startup
     self.qsize = 0
     self.articles_to_receive = set()
+    self._db_connector = db_connector
 
   def init_socket(self):
     if ':' in self.host:
@@ -163,8 +164,7 @@ class feed(threading.Thread):
     self.qsize = self.queue.qsize() + len(self.articles_to_send) + len(self.rechecking)
 
   def run(self):
-    self.sqlite_conn_dropper = sqlite3.connect('dropper.db3', timeout=60)
-    self.sqlite_dropper = self.sqlite_conn_dropper.cursor()
+    self.sqlite_dropper = self._db_connector('dropper', timeout=60)
     self.running = True
     connected = False
     self.multiline = False
@@ -361,6 +361,7 @@ class feed(threading.Thread):
           self._bump_outstream_qsize()
     self.log(self.logger.INFO, 'client disconnected')
     self.socket.close()
+    self.sqlite_dropper.close()
     self.SRNd.terminate_feed(self.name)
 
   def _worker_send_check_stream(self, max_check=50):

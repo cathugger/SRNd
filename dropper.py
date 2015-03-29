@@ -28,11 +28,10 @@ class dropper(threading.Thread):
 
     self.db_version = 2
     self.watching = os.path.join(os.getcwd(), "incoming")
-    self.sqlite_conn = sqlite3.connect('dropper.db3')
-    self.sqlite = self.sqlite_conn.cursor()
 
-    self.sqlite_hasher_conn = sqlite3.connect('hashes.db3')
-    self.sqlite_hasher = self.sqlite_hasher_conn.cursor()
+    self.sqlite = kwargs['db_connector']('dropper')
+    self.sqlite_hasher = kwargs['db_connector']('hashes')
+
     self.sqlite_hasher.execute('''CREATE TABLE IF NOT EXISTS article_hashes
                (message_id text PRIMARY KEY, message_id_hash text, sender_desthash text)''')
     try:
@@ -41,7 +40,7 @@ class dropper(threading.Thread):
       pass
     self.sqlite_hasher.execute('CREATE INDEX IF NOT EXISTS article_desthash_idx ON article_hashes(sender_desthash);')
     self.sqlite_hasher.execute('CREATE INDEX IF NOT EXISTS article_hash_idx ON article_hashes(message_id_hash);')
-    self.sqlite_hasher_conn.commit()
+    self.sqlite_hasher.commit()
     self.reqs = ['message-id', 'newsgroups', 'date', 'subject', 'from', 'path']
     try:
       db_version = int(self.sqlite.execute("SELECT value FROM config WHERE key = ?", ("db_version",)).fetchone()[0])
@@ -64,13 +63,13 @@ class dropper(threading.Thread):
                  (message_id text, group_id INTEGER, article_id INTEGER, received INTEGER, PRIMARY KEY (article_id, group_id))''')
 
       self.sqlite.execute('CREATE INDEX IF NOT EXISTS article_idx ON articles(message_id);')
-      self.sqlite_conn.commit()
+      self.sqlite.commit()
       current_version = 1
     if current_version == 1:
       self.sqlite.execute('CREATE TABLE article_path (id INTEGER PRIMARY KEY, src TEXT, dst TEXT, count INTEGER DEFAULT 0, UNIQUE(src, dst))')
       self.sqlite.execute('CREATE INDEX article_path_ab_idx ON article_path(src, dst)')
       self.sqlite.execute('UPDATE config SET value = "2" WHERE key = "db_version"')
-      self.sqlite_conn.commit()
+      self.sqlite.commit()
       current_version = 2
 
   def handler_progress_incoming(self, signum, frame):
@@ -221,7 +220,7 @@ class dropper(threading.Thread):
     os.remove(inc_link)
     try:
       self.sqlite_hasher.execute('INSERT INTO article_hashes VALUES (?, ?, ?)', (message_id, sha1(message_id).hexdigest(), desthash))
-      self.sqlite_hasher_conn.commit()
+      self.sqlite_hasher.commit()
     except:
       pass
     article_link = '../../' + link
@@ -237,7 +236,7 @@ class dropper(threading.Thread):
         group_id = int(self.sqlite.execute('SELECT group_id FROM groups WHERE group_name = ?', (group,)).fetchone()[0])
         try: self.sqlite.execute('INSERT INTO articles VALUES (?, ?, ?, ?)', (message_id, group_id, article_id, int(time.time())))
         except: pass
-        self.sqlite_conn.commit()
+        self.sqlite.commit()
         self.log(self.logger.DEBUG, 'creating directory {}'.format(group_dir))
         os.mkdir(group_dir)
       else:
@@ -254,7 +253,7 @@ class dropper(threading.Thread):
           article_id = int(self.sqlite.execute('SELECT highest_id FROM groups WHERE group_name = ?', (group,)).fetchone()[0]) + 1
           self.sqlite.execute('INSERT INTO articles VALUES (?, ?, ?, ?)', (message_id, group_id, article_id, int(time.time())))
           self.sqlite.execute('UPDATE groups SET highest_id = ?, article_count = article_count + 1, last_update = ? WHERE group_id = ?', (article_id, int(time.time()), group_id))
-          self.sqlite_conn.commit()
+          self.sqlite.commit()
       group_link = os.path.join(group_dir, str(article_id))
       try:
         os.symlink(article_link, group_link)
@@ -293,7 +292,7 @@ class dropper(threading.Thread):
       if len(article_path[src]) > 2 and len(article_path[dst]) > 2:
         self.sqlite.execute('INSERT OR IGNORE INTO article_path (src, dst) VALUES (?, ?)', (article_path[src], article_path[dst]))
         self.sqlite.execute('UPDATE article_path SET count = count + 1 WHERE src = ? AND dst = ?', (article_path[src], article_path[dst]))
-    self.sqlite_conn.commit()
+    self.sqlite.commit()
 
   def run(self):
     # only called from the outside via handler_progress_incoming()

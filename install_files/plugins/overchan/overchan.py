@@ -60,7 +60,7 @@ class main(threading.Thread):
     self._init_config(args)
     self.config['top_counter'] = self.config['top_step']
 
-    error = ['{} not in arguments'.format(arg) for arg in ('template_directory', 'output_directory', 'database_directory', 'temp_directory') if not arg in self.config]
+    error = ['{} not in arguments'.format(arg) for arg in ('template_directory', 'output_directory', 'temp_directory') if not arg in self.config]
     if len(error) > 0:
       self.die('\n'.join(error))
 
@@ -480,7 +480,6 @@ class main(threading.Thread):
     required_dirs.append(os.path.join(self.config['output_directory'], '..', 'spamprotector'))
     required_dirs.append(os.path.join(self.config['output_directory'], 'img'))
     required_dirs.append(os.path.join(self.config['output_directory'], 'thumbs'))
-    required_dirs.append(self.config['database_directory'])
     required_dirs.append(self.config['temp_directory'])
     for directory in required_dirs:
       if not os.path.exists(directory):
@@ -507,12 +506,9 @@ class main(threading.Thread):
     self.cache['moder_flags'] = dict()
     self.board_cache = dict()
 
-    self.sqlite_dropper_conn = sqlite3.connect('dropper.db3', timeout=60)
-    self.dropperdb = self.sqlite_dropper_conn.cursor()
-    self.sqlite_censor_conn = sqlite3.connect('censor.db3', timeout=60)
-    self.censordb = self.sqlite_censor_conn.cursor()
-    self.sqlite_conn = sqlite3.connect(os.path.join(self.config['database_directory'], 'overchan.db3'))
-    self.sqlite = self.sqlite_conn.cursor()
+    self.dropperdb = self.config['db_connector']('dropper', timeout=60)
+    self.censordb = self.config['db_connector']('censor', timeout=60)
+    self.sqlite = self.config['db_connector']('overchan')
     if not self.config['sqlite_synchronous']:
       self.sqlite.execute("PRAGMA synchronous = OFF")
     # FIXME use config table with current db version + def update_db(db_version) like in censor plugin
@@ -575,7 +571,7 @@ class main(threading.Thread):
         for row in self.sqlite.execute('SELECT article_uid FROM articles').fetchall():
           article_hash = sha1(row[0]).hexdigest()
           self.sqlite.execute('UPDATE articles SET article_hash = ? WHERE article_uid = ?', (article_hash, row[0]))
-        self.sqlite_conn.commit()
+          self.sqlite.commit()
       except sqlite3.Error as e:
         self.die('DB update status - FAIL. You must fix this error manually. In case this is the first time you are starting SRNd - ignore and restart SRNd. See overchan.py:562 for details. Error: {}'.format(e))
       else:
@@ -586,7 +582,7 @@ class main(threading.Thread):
     self.sqlite.execute('CREATE INDEX IF NOT EXISTS articles_last_update_idx ON articles(group_id, parent, last_update);')
     self.sqlite.execute('CREATE INDEX IF NOT EXISTS articles_article_hash_idx ON articles(article_hash);')
     db_maintenance = self._need_db_maintenance()
-    self.sqlite_conn.commit()
+    self.sqlite.commit()
 
     if db_maintenance:
       self._db_maintenance()
@@ -624,9 +620,9 @@ class main(threading.Thread):
     self.log(self.logger.INFO, 'db maintenance: VACUUM and REINDEX')
     start_time = time.time()
     self.sqlite.execute('VACUUM;')
-    self.sqlite_conn.commit()
+    self.sqlite.commit()
     self.sqlite.execute('REINDEX;')
-    self.sqlite_conn.commit()
+    self.sqlite.commit()
     self.log(self.logger.INFO, 'db maintenance: Complit at {}s'.format(int(time.time() - start_time)))
 
   def shutdown(self):
@@ -647,7 +643,7 @@ class main(threading.Thread):
       sticky_action = 'sticky thread'
     try:
       self.sqlite.execute('UPDATE articles SET sticky = ? WHERE article_uid = ? AND (parent = "" OR parent = article_uid)', (sticky_flag, message_id))
-      self.sqlite_conn.commit()
+      self.sqlite.commit()
     except sqlite3.Error:
       return 'Fail time update'
     self.regenerate_boards.add(result[1])
@@ -666,7 +662,7 @@ class main(threading.Thread):
       close_action = 'open thread'
     try:
       self.sqlite.execute('UPDATE articles SET closed = ? WHERE article_uid = ? AND (parent = "" OR parent = article_uid)', (close_status, message_id))
-      self.sqlite_conn.commit()
+      self.sqlite.commit()
     except sqlite3.Error:
       return 'Fail db update'
     self.regenerate_boards.add(result[1])
@@ -713,7 +709,7 @@ class main(threading.Thread):
         self.log(self.logger.INFO, 'deleting child message_id %s' % message_id)
         self.sqlite.execute('DELETE FROM articles WHERE article_uid = ?', (message_id,))
         # FIXME: add detection for parent == deleted message (not just censored) and if true, add to root_posts
-      self.sqlite_conn.commit()
+      self.sqlite.commit()
       orphan_attach.add((row[0], row[1]))
       self.regenerate_boards.add(row[3])
     self.delete_messages.clear()
@@ -746,7 +742,7 @@ class main(threading.Thread):
         self.log(self.logger.DEBUG, 'incorrect filename %s, not delete %s' % (imagename, imagepath))
     if len(image) > 40:
       self.sqlite.execute('UPDATE articles SET thumblink = "censored" WHERE imagelink = ?', (image,))
-      self.sqlite_conn.commit()
+      self.sqlite.commit()
 
   def overchan_board_add(self, args):
     group_name = args[0].lower()
@@ -766,7 +762,7 @@ class main(threading.Thread):
       self.log(self.logger.INFO, 'added new board: \'%s\'' % group_name)
     if len(args) > 2:
       self.overchan_aliases_update(args[2], group_name)
-    self.sqlite_conn.commit()
+    self.sqlite.commit()
     self.__flush_board_cache()
     self.regenerate_all_html()
 
@@ -776,7 +772,7 @@ class main(threading.Thread):
         result = self.sqlite.execute("SELECT flags FROM groups WHERE group_name=?", (group_name,)).fetchone()
         flags |= self.cache['flags']['blocked'] if result is None else int(result[0]) | self.cache['flags']['blocked']
       self.sqlite.execute('UPDATE groups SET flags = ? WHERE group_name = ?', (str(flags), group_name))
-      self.sqlite_conn.commit()
+      self.sqlite.commit()
     except sqlite3.Error:
       self.log(self.logger.WARNING, 'should delete board %s but there is no board with that name' % group_name)
     else:
@@ -814,7 +810,7 @@ class main(threading.Thread):
           self.sqlite.execute('UPDATE groups SET flags = ? WHERE group_name = ?', (flags, group_name))
           if len(get_data) > 2:
             self.overchan_aliases_update(get_data[2], group_name)
-          self.sqlite_conn.commit()
+          self.sqlite.commit()
           self.__flush_board_cache(group_id)
           self.regenerate_boards.add(group_id)
       elif line.lower().startswith('overchan-board-add'):
@@ -913,7 +909,7 @@ class main(threading.Thread):
         elif ret[0] == "control":
           got_control_count += 1
           self.handle_control(ret[1], ret[2])
-          self.sqlite_conn.commit()
+          self.sqlite.commit()
         else:
           self.log(self.logger.ERROR, 'found article with unknown source: %s' % ret[0])
 
@@ -946,11 +942,11 @@ class main(threading.Thread):
           regen_overview = False
         if got_control_count > 100:
           self.sqlite.execute('VACUUM;')
-          self.sqlite_conn.commit()
+          self.sqlite.commit()
           got_control_count = 0
-    self.sqlite_censor_conn.close()
-    self.sqlite_conn.close()
-    self.sqlite_dropper_conn.close()
+    self.censordb.close()
+    self.sqlite.close()
+    self.dropperdb.close()
     self.log(self.logger.INFO, 'bye')
 
   def _generate_threads(self):
@@ -1435,7 +1431,7 @@ class main(threading.Thread):
       if not result:
         try:
           self.sqlite.execute('INSERT INTO groups(group_name, article_count, last_update) VALUES (?,?,?)', (group, 1, int(time.time())))
-          self.sqlite_conn.commit()
+          self.sqlite.commit()
         except sqlite3.Error:
           self.log(self.logger.INFO, 'ignoring message for blocked group %s' % group)
           continue
@@ -1460,7 +1456,7 @@ class main(threading.Thread):
         if parent_result is not None:
           if self.config['bump_limit'] == 0 or self.sqlite.execute('SELECT count(article_uid) FROM articles WHERE parent = ? AND parent != article_uid ', (parent,)).fetchone()[0] < self.config['bump_limit']:
             self.sqlite.execute('UPDATE articles SET last_update=? WHERE article_uid=?', (sent, parent))
-            self.sqlite_conn.commit()
+            self.sqlite.commit()
           else:
             last_update = sent - 10
         else:
@@ -1490,7 +1486,7 @@ class main(threading.Thread):
       # post has been censored and is now being restored. just delete post for all groups so it can be reinserted
       self.log(self.logger.INFO, 'post has been censored and is now being restored: %s' % message_id)
       self.sqlite.execute('DELETE FROM articles WHERE article_uid=?', (message_id,))
-      self.sqlite_conn.commit()
+      self.sqlite.commit()
 
     if len(image_name) > 40:
       censored_articles = self.sqlite.execute('SELECT article_uid FROM articles WHERE thumblink = "censored" AND imagelink = ?', (image_name,)).fetchall()
@@ -1541,7 +1537,7 @@ class main(threading.Thread):
     for group_id in group_ids:
       self.sqlite.execute(insert_request, [x[1] for x in insert_list] + [group_id,])
       self.sqlite.execute('UPDATE groups SET last_update=?, article_count = (SELECT count(article_uid) FROM articles WHERE group_id = ?) WHERE group_id = ?', (int(time.time()), group_id, group_id))
-    self.sqlite_conn.commit()
+    self.sqlite.commit()
     return True
 
   def _get_board_root_posts(self, group_id, post_count, offset=0):
