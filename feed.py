@@ -43,11 +43,7 @@ class feed(threading.Thread):
       self.host = host
       self.port = port
       self.queue = Queue.LifoQueue()
-      self.outstream_stream = False
-      self.outstream_ihave = False
-      self.outstream_post = False
-      self.outstream_ready = False
-      self.outstream_currently_testing = ''
+      self._outstream_flags_init()
       self.polltimeout = 500 # 1 * 1000
       self.name = 'outfeed-{0}-{1}'.format(self.host, self.port)
       self.init_socket()
@@ -77,6 +73,13 @@ class feed(threading.Thread):
     self.qsize = 0
     self.articles_to_receive = set()
     self._db_connector = db_connector
+
+  def _outstream_flags_init(self):
+    self.outstream_stream = False
+    self.outstream_ihave = False
+    self.outstream_post = False
+    self.outstream_ready = False
+    self.outstream_currently_testing = ''
 
   def init_socket(self):
     if ':' in self.host:
@@ -232,6 +235,7 @@ class feed(threading.Thread):
           break
         else:
           connected = False
+          self._outstream_flags_init()
           try:
             self.socket.shutdown(socket.SHUT_RDWR)
           except socket.error as e:
