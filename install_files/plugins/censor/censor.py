@@ -47,7 +47,7 @@ class main(threading.Thread):
         self.loglevel = self.logger.INFO
         self.log(self.logger.INFO, 'debuglevel not between 0 and 5, using default of debug = %i' % self.logger.INFO)
     self.log(self.logger.INFO, 'initializing as plugin..')
-    if not 'SRNd' in args:
+    if not 'srnd' in args:
       # FIXME add self.die()
       self.log(self.logger.CRITICAL, 'SRNd not in args')
       return
@@ -66,7 +66,7 @@ class main(threading.Thread):
       except: pass
     if self.ignore_old < 0: self.ignore_old = 0
     self.ignore_old *= 3600 * 24
-    self.SRNd = args['SRNd']
+    self.SRNd = args['srnd']
     self.log(self.logger.DEBUG, 'initializing censor_httpd..')
     args['censor'] = self
     self.httpd = censor_httpd.censor_httpd("censor_httpd", self.logger, args)
@@ -603,7 +603,7 @@ if __name__ == '__main__':
   print "[%s] %s" % ("censor", "this plugin can't run as standalone version.")
   args = dict()
   args['debug'] = 5
-  args['SRNd'] = None
+  args['srnd'] = None
   tester = main("testthread", args)
   tester.start()
   for article in ("1", "<wxrfozvunv1384881163@web.overchan.deliciouscake.ano>"):

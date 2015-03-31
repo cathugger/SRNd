@@ -1348,7 +1348,7 @@ class censor_httpd(threading.Thread):
         self.httpd.reject_debug = False
       else:
         self.log(self.logger.WARNING, "'%s' is not a valid value for reject_debug. only true and false allowed. setting value to false.")
-    self.httpd.SRNd_info = args.get('SRNd_info', None)
+    self.httpd.SRNd_info = args.get('srnd_info', None)
     help_lang = args.get('help', 'en')
     self.httpd.log = self.log
     self.httpd.logger = self.logger
