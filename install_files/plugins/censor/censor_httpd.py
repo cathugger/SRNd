@@ -210,13 +210,16 @@ class censor(BaseHTTPRequestHandler):
     comment = '#'
     if int(self.origin.sqlite_censor.execute('SELECT count(id) FROM keys WHERE key = ?', (key,)).fetchone()[0]):
       old_nick, old_flags = self.origin.sqlite_censor.execute('SELECT local_name, flags FROM keys WHERE key = ?', (key,)).fetchone()
+      old_nick = old_nick.encode('UTF-8')
+      old_flags = int(old_flags)
       if local_nick != old_nick:
         comment += '%s rename to %s' % (old_nick, local_nick)
-      if int(old_flags) != result:
+      if old_flags != result:
         comment += ' change flag %s->%s ' % (old_flags, result)
     else:
       comment += 'add new key %s, flags %s' % (local_nick, result)
-    if comment == '#': comment = ''
+    if comment == '#':
+      comment = ''
     cmd_line = {'srnd-acl-mod': ('{0} {1} {2}{3}'.format(key, result, local_nick, comment),)}
     self.handle_commands(cmd_line, public, secret)
 
@@ -410,7 +413,7 @@ class censor(BaseHTTPRequestHandler):
     self.send_response(200)
     self.send_header('Content-type', 'text/html')
     self.end_headers()
-    self.wfile.write(out)
+    self.wfile.write(out.encode('UTF-8'))
 
   def send_modify_board(self, board_id):
     if board_id.startswith('id='):
@@ -510,7 +513,7 @@ class censor(BaseHTTPRequestHandler):
     self.send_response(200)
     self.send_header('Content-type', 'text/html')
     self.end_headers()
-    self.wfile.write(out)
+    self.wfile.write(out.encode('UTF-8'))
 
   @staticmethod
   def hidden_line(line, max_len=60):

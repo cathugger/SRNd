@@ -450,9 +450,9 @@ class main(threading.Thread):
       self.log(self.logger.DEBUG, "not authorized for '%s': %i" % (command, key_id))
     try:
       self.censordb.execute('INSERT INTO log (accepted, command_id, data, key_id, reason_id, comment, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)', \
-        (accepted, command_id, data, key_id, reason_id, basicHTMLencode(comment), int(time.time())))
+        (accepted, command_id, data.decode('UTF-8'), key_id, reason_id, basicHTMLencode(comment).decode('UTF-8'), int(time.time())))
       self.censordb.commit()
-    except Exception as e:
+    except sqlite3.Error:
       pass
 
   def handle_srnd_acl_mod(self, line):
@@ -461,8 +461,10 @@ class main(threading.Thread):
     local_nick = ''
     row = line.split(" ", 3)[1:]
     key = row[0]
-    if len(row) > 1: flags = row[1]
-    if len(row) > 2: local_nick = row[2]
+    if len(row) > 1:
+      flags = row[1]
+    if len(row) > 2:
+      local_nick = row[2].decode('UTF-8')
     try:
       if int(self.censordb.execute('SELECT count(key) FROM keys WHERE key = ?', (key,)).fetchone()[0]) == 0:
         self.log(self.logger.DEBUG, "handle acl_mod: new key")
@@ -479,7 +481,7 @@ class main(threading.Thread):
     self.log(self.logger.DEBUG, "handle postman-mod: %s" % line)
     userkey, base64_blob = line.split(" ", 2)[1:]
     try:
-      local_name, allow, expires, logout = [base64.urlsafe_b64decode(x) for x in base64_blob.split(':')]
+      local_name, allow, expires, logout = [base64.urlsafe_b64decode(x).decode('UTF-8') for x in base64_blob.split(':')]
     except:
       self.log(self.logger.WARNING, 'get corrupted data for %s' % userkey)
       return userkey, None
@@ -494,9 +496,8 @@ class main(threading.Thread):
       expires = int(expires) * 24 * 3600 + current_time
     except ValueError:
       expires = current_time
-    if expires < current_time or expires - current_time > 3650 * 24 * 3600: expires = current_time
-    if logout != '':
-      logout = True
+    if expires < current_time or expires - current_time > 3650 * 24 * 3600:
+      expires = current_time
 
     try:
       if int(self.postmandb.execute('SELECT count(userkey) FROM userkey WHERE userkey = ?', (userkey,)).fetchone()[0]) == 0:
@@ -504,7 +505,7 @@ class main(threading.Thread):
         self.postmandb.execute("INSERT INTO userkey (userkey, local_name, allow, expires) VALUES (?, ?, ?, ?)", (userkey, local_name, allow, expires))
       else:
         self.postmandb.execute("UPDATE userkey SET local_name = ?, allow = ?, expires = ? WHERE userkey = ?", (local_name, allow, expires, userkey))
-        if logout:
+        if logout != '':
           self.postmandb.execute("UPDATE userkey SET cookie = ? WHERE userkey = ?", ('', userkey))
       self.postmandb.commit()
     except Exception as e:
