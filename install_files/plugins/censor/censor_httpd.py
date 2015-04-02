@@ -890,6 +890,8 @@ class censor(BaseHTTPRequestHandler):
         feeds = list()
         for feed in feed_data.get(target, {}):
           feed_data[target][feed]['name'] = feed
+          feed_data[target][feed]['transfer_human'] = self.__sizeof_human_readable(feed_data[target][feed]['transfer'])
+          feed_data[target][feed]['speed_human'] = self.__sizeof_human_readable(int(feed_data[target][feed]['transfer'] / feed_data[target][feed]['transfer_time']))
           feeds.append(self.origin.t_engine_info_feed_row.substitute(feed_data[target][feed]))
         data[target] = '\n'.join(feeds)
 
