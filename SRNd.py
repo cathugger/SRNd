@@ -466,7 +466,7 @@ class SRNd(threading.Thread):
       if w_count > 0:
         output_log.append('whitelist')
         output_log.extend([' {}'.format(x) for x in rules['whitelist']])
-      if w_count > 0:
+      if b_count > 0:
         output_log.append('blacklist')
         output_log.extend([' {}'.format(x) for x in rules['blacklist']])
       self.log(self.logger.INFO, '\n'.join(output_log))
