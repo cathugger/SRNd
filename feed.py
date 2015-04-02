@@ -73,8 +73,8 @@ class feed(threading.Thread):
     self.sync_on_startup = sync_on_startup
     self.qsize = 0
     self.articles_to_receive = set()
-    self.byte_transfer = 0
-    self.time_transfer = 0.0
+    self.byte_transfer = 1
+    self.time_transfer = 0.1
     self._db_connector = db_connector
 
   def _outstream_flags_init(self):
@@ -141,6 +141,7 @@ class feed(threading.Thread):
         self.con_broken = True
         break
     self.log(self.logger.VERBOSE, 'out: %s' % message[:-2])
+    return sent
 
   def shutdown(self):
     # FIXME socket.shutdown() needed if running == False?
@@ -441,19 +442,22 @@ class feed(threading.Thread):
 
   def send_article(self, message_id, state='sending_article'):
     self.log(self.logger.INFO, 'sending article %s' % message_id)
+    start_time = time.time()
     buff = 16384
     self.multiline_out = True
-    counts = 0
+    sending = 0
     with open(os.path.join('articles', message_id), 'rb') as fd:
       for to_send in self._read_and_prepare(fd, buff):
-        counts += 1
-        self.send(to_send, state)
-        if self.con_broken: break
+        sending += self.send(to_send, state)
+        if self.con_broken:
+          break
     if not self.con_broken:
       self.send('.\r\n', state)
+      self.byte_transfer += sending
+      self.time_transfer += time.time() - start_time
     # ~ + 4 minute in 1 mb. May be need correct for other network
     # rechecking small articles first
-    multiplier = (counts * buff) / (1024 * 64)
+    multiplier = (sending) / (1024 * 64)
     multiplier = multiplier * 120 if multiplier > 0 else 120
     if multiplier > 3600:
       multiplier = 3600
@@ -835,7 +839,7 @@ class HandleIncoming(object):
       elif line.lower().startswith('newsgroups:'):
         self.newsgroups = line.split(' ', 1)[1]
       self.header.append(line)
-    self.read_byte += len(line)
+    self.read_byte += len(line) + 2
     if self._start_transfer == 0:
       self._start_transfer = time.time()
 

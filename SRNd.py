@@ -728,6 +728,14 @@ class SRNd(threading.Thread):
       self.stats_last_update = time.time()
     return self.stats
 
+  def _get_feed_stat(self, name):
+    return {
+        "state": self.feeds[name].state,
+        "queue": self.feeds[name].qsize,
+        "transfer": self.feeds[name].byte_transfer,
+        "transfer_time": self.feeds[name].time_transfer
+    }
+
   def ctl_socket_handler_status(self, data, fd=None):
     if not data["data"]:
       return "all fine"
@@ -736,15 +744,9 @@ class SRNd(threading.Thread):
       infeeds = dict()
       for name in self.feeds:
         if name.startswith("outfeed-"):
-          ret[name[8:]] = {
-            "state": self.feeds[name].state,
-            "queue": self.feeds[name].qsize
-          }
+          ret[name[8:]] = self._get_feed_stat(name)
         else:
-          infeeds[name[7:]] = {
-            "state": self.feeds[name].state,
-            "queue": self.feeds[name].qsize
-          }
+          infeeds[name[7:]] = self._get_feed_stat(name)
       return {"infeeds": infeeds, "outfeeds": ret}
     if data["data"] == "plugins":
       for name in self.plugins:
