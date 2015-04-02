@@ -30,8 +30,9 @@ class feed(threading.Thread):
     if loglevel >= self.loglevel:
       self.logger.log(self.name, message, loglevel)
 
-  def __init__(self, master, logger, db_connector, connection=None, outstream=False, host=None, port=None, sync_on_startup=False, proxy=None, debug=2):
+  def __init__(self, master, logger, db_connector, connection=None, outstream=False, host=None, port=None, sync_on_startup=False, proxy=None, debug=2, infeeds_config=None):
     threading.Thread.__init__(self)
+    self.infeeds_config = infeeds_config
     self.outstream = outstream
     self.loglevel = debug
     #self.logger = logger
@@ -667,6 +668,22 @@ class feed(threading.Thread):
     else:
       self.send('501 i much recommend in speak to the proper NNTP based on CAPABILITIES\r\n')
 
+  def _allow_groups(self, newsgroups):
+    if newsgroups == '' or self.infeeds_config is None:
+      return True
+    groups = newsgroups.split(';') if ';' in newsgroups else newsgroups.split(',')
+    for group in groups:
+      if not self._isgroup_in_rules(group, self.infeeds_config['rules']['whitelist']) or self._isgroup_in_rules(group, self.infeeds_config['rules']['blacklist']):
+        return False
+    return True
+
+  @staticmethod
+  def _isgroup_in_rules(group, regexp_list):
+    for regexp in regexp_list:
+      if regexp == group or regexp == '*' or regexp[-1] == '*' and group.startswith(regexp[:-1]):
+        return True
+    return False
+
   def handle_multiline(self, lines):
     # TODO if variant != POST think about using message_id in handle_singleline for self.outfile = open(tmp/$message_id, 'w')
     # TODO also in handle_singleline: if os.path.exists(tmp/$message_id): retry later
@@ -742,6 +759,10 @@ class feed(threading.Thread):
         if os.path.exists(os.path.join('articles', 'censored', message_id)):
           self.send('439 {0} article is blacklisted\r\n'.format(message_id))
           self.log(self.logger.DEBUG, 'rejecting blacklisted article %s' % message_id)
+          return
+        if not self._allow_groups(newsgroups):
+          self.send('439 {} article reject. group {} is blacklisted\r\n'.format(message_id, newsgroups))
+          self.log(self.logger.DEBUG, 'rejecting article {}: group {} is blacklisted'.format(message_id, newsgroups))
           return
         self.send('239 {0} article received\r\n'.format(self.message_id_takethis))
         self.message_id_takethis = ''

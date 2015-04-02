@@ -450,6 +450,28 @@ class SRNd(threading.Thread):
               rules['blacklist'].add(line)
     return rules
 
+  def _load_infeeds_config(self, cfg_file=os.path.join('config', 'infeeds.conf')):
+    if not os.path.isfile(cfg_file):
+      with open(cfg_file, 'w') as f:
+        f.write('# see docs/hooks.txt for a detailed description about the hook configuration syntax.\n\n')
+        f.write('# All infeeds use this config\n\n\n\n')
+        f.write('# allow all groups\n')
+        f.write('*\n')
+    rules = self._read_hook_rules(cfg_file)
+    w_count = len(rules['whitelist'])
+    b_count = len(rules['blacklist'])
+    if w_count + b_count > 0:
+      output_log = list()
+      output_log.append('\nFound {} infeeds hooks:'.format(w_count + b_count))
+      if w_count > 0:
+        output_log.append('whitelist')
+        output_log.extend([' {}'.format(x) for x in rules['whitelist']])
+      if w_count > 0:
+        output_log.append('blacklist')
+        output_log.extend([' {}'.format(x) for x in rules['blacklist']])
+      self.log(self.logger.INFO, '\n'.join(output_log))
+    return {'rules': rules, 'config': self._config_reader(cfg_file)}
+
   def update_hooks(self):
     self.log(self.logger.INFO, 'reading hook configuration..')
     self.hooks = dict()
@@ -754,16 +776,20 @@ class SRNd(threading.Thread):
       message_list.append(message_id)
     return message_list
 
+  @staticmethod
+  def _ishook_match(group_name, regexp):
+    return regexp == group_name or regexp == '*' or regexp[-1] == '*' and group_name.startswith(regexp[:-1])
+
   def get_allow_hooks(self, group_name):
     targets = set()
     for white_group in self.hooks:
-      if white_group == group_name or white_group[-1] == '*' and group_name.startswith(white_group[:-1]):
+      if self._ishook_match(group_name, white_group):
         # hook found, extend
         targets |= self.hooks[white_group]
     if len(targets) > 0:
       # remove blacklisted elements
       for black_group in self.hook_blacklist:
-        if black_group == group_name or black_group[-1] == '*' and group_name.startswith(black_group[:-1]):
+        if self._ishook_match(group_name, black_group):
           targets -= self.hook_blacklist[black_group]
     return targets
 
@@ -828,6 +854,8 @@ class SRNd(threading.Thread):
       time.sleep(0.1)
     self.update_hooks()
 
+    self.infeeds_config = self._load_infeeds_config()
+
     self._sync_on_startup()
 
     self.dropper.start()
@@ -862,7 +890,7 @@ class SRNd(threading.Thread):
             con = self.socket.accept()
             name = 'infeed-{0}-{1}'.format(con[1][0], con[1][1])
             if name not in self.feeds:
-              self.feeds[name] = feed.feed(self, self.logger, connection=con, debug=self.infeed_debug, db_connector=self._db_manager.connect)
+              self.feeds[name] = feed.feed(self, self.logger, connection=con, debug=self.infeed_debug, db_connector=self._db_manager.connect, infeeds_config=self.infeeds_config)
               self.feeds[name].start()
             else:
               self.log(self.logger.WARNING, 'got connection from %s but its still in feeds. wtf?' % name)
