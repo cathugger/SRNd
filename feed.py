@@ -73,6 +73,8 @@ class feed(threading.Thread):
     self.sync_on_startup = sync_on_startup
     self.qsize = 0
     self.articles_to_receive = set()
+    self.byte_transfer = 0
+    self.time_transfer = 0.0
     self._db_connector = db_connector
 
   def _outstream_flags_init(self):
@@ -226,7 +228,7 @@ class feed(threading.Thread):
     poll = select.poll()
     poll.register(self.socket.fileno(), select.POLLIN | select.POLLPRI)
     poll = poll.poll
-    self.buffer_multiline = list()
+    incoming_file = HandleIncoming(infeed_name=self.name)
     self.con_broken = False
     in_buffer = ''
     while self.running:
@@ -332,15 +334,17 @@ class feed(threading.Thread):
           if not self.multiline:
             self.handle_line(part)
           elif len(part) != 1:
-            self.buffer_multiline.append(part)
+            incoming_file.add(part)
             self.log(self.logger.VERBOSE, 'multiline in: %s' % part)
           else:
             if part[0] == '.':
-              self.handle_multiline(self.buffer_multiline)
+              incoming_file.complit()
+              self.handle_multiline(incoming_file)
+              incoming_file.bye()
               self.multiline = False
-              del self.buffer_multiline[:]
+              incoming_file = HandleIncoming(infeed_name=self.name)
             else:
-              self.buffer_multiline.append(part)
+              incoming_file.add(part)
               self.log(self.logger.VERBOSE, 'multiline in: %s' % part)
           if not self.multiline:
             self.state = 'idle'
@@ -365,6 +369,7 @@ class feed(threading.Thread):
               self.send('POST\r\n')
           self._bump_outstream_qsize()
     self.log(self.logger.INFO, 'client disconnected')
+    incoming_file.bye()
     self.socket.close()
     self.sqlite_dropper.close()
     self.SRNd.terminate_feed(self.name)
@@ -684,106 +689,177 @@ class feed(threading.Thread):
         return True
     return False
 
-  def handle_multiline(self, lines):
+  def handle_multiline(self, handle_incoming):
     # TODO if variant != POST think about using message_id in handle_singleline for self.outfile = open(tmp/$message_id, 'w')
     # TODO also in handle_singleline: if os.path.exists(tmp/$message_id): retry later
 
-    if self.waitfor == 'article':
-      filename = '{0}-{1}'.format(self.name, int(time.time()))
-      message_id = ''
-      newsgroups = ''
-      body_found = False
-      error = ''
-      new_message_id = False
-      for index in xrange(0, len(lines)):
-        if not body_found:
-          if lines[index].lower().startswith('message-id:'):
-            message_id = lines[index].split(' ', 1)[1]
-          elif lines[index].lower().startswith('newsgroups:'):
-            newsgroups = lines[index].split(' ', 1)[1]
-        lines[index] += '\n'
-        if lines[index] == '\n':
-          body_found = True
-        elif lines[index][0] == '.':
-          lines[index] = lines[index][1:]
+    self.byte_transfer += handle_incoming.read_byte
+    self.time_transfer += handle_incoming.transfer_time
+    if self.waitfor != 'article':
+      self.log(self.logger.INFO, 'should handle multi line while waiting for %s:' % self.waitfor)
+      self.log(self.logger.INFO, ''.join(handle_incoming.header))
+      self.log(self.logger.INFO, 'should handle multi line end')
+    error = ''
+    add_headers = list()
+    self.articles_to_receive.discard(handle_incoming.message_id)
+    self.qsize = len(self.articles_to_receive)
 
-      self.articles_to_receive.discard(message_id)
-      self.qsize = len(self.articles_to_receive)
-      # check for errors
-      if not body_found: error += 'no body found, '
-      if newsgroups == '': error += 'no newsgroups found, '
-      if message_id == '':
-        if self.variant != 'POST':
-          error += 'no message-id in article, '
-        else:
-          rnd = ''.join(random.choice(string.ascii_lowercase) for x in range(10))
-          message_id = '{0}{1}@POSTED.SRNd'.format(rnd, int(time.time()))
-          new_message_id = True
-      elif '/' in message_id:
-        error += '/ in message-id, '
-      if error != '':
-        if self.variant == 'IHAVE':
-          self.send('437 invalid article: {0}\r\n'.format(error[:-2]))
-        elif self.variant == 'TAKETHIS':
-          self.send('439 {0} invalid article: {1}\r\n'.format(self.message_id_takethis, error[:-2]))
-          self.message_id_takethis = ''
-        elif self.variant == 'POST':
-          self.send('441 invalid article: {0}\r\n'.format(error[:-2]))
-        # save in articles/invalid for manual debug
-        f = open(os.path.join('articles', 'invalid', filename), 'w')
-        f.write('X-SRNd-invalid: {0}\n'.format(error[:-2]))
-        f.write('X-SRNd-source: {0}\n'.format(self.name))
-        f.write('X-SRNd-variant: {0}\n'.format(self.variant))
-        if new_message_id:
-          f.write('Message-ID: {0}\n'.format(message_id))
-        f.write(''.join(lines))
-        f.close()
-        self.waitfor = ''
-        self.variant = ''
-        self.log(self.logger.INFO, 'article invalid %s: %s' % (message_id, error[:-2]))
-        return
-
-      self.log(self.logger.DEBUG, 'article received %s' % message_id)
-
-      # save article in tmp and mv to incoming
-      if self.variant == 'POST':
-        self.send('240 article received\r\n')
-      elif self.variant == 'IHAVE':
-        self.send('235 article received\r\n')
-        #TODO: failed but try again later ==> 436
+    # check for errors
+    if not handle_incoming.body_found:
+      error += 'no body found, '
+    if handle_incoming.newsgroups == '':
+      error += 'no newsgroups found, '
+    if handle_incoming.message_id == '':
+      if self.variant != 'POST':
+        error += 'no message-id in article, '
+      else:
+        rnd = ''.join(random.choice(string.ascii_lowercase) for x in range(10))
+        handle_incoming.message_id = '{0}{1}@POSTED.SRNd'.format(rnd, int(time.time()))
+        add_headers.append('Message-ID: {0}'.format(handle_incoming.message_id))
+    elif '/' in handle_incoming.message_id:
+      error += '/ in message-id, '
+    if error != '':
+      if self.variant == 'IHAVE':
+        self.send('437 invalid article: {0}\r\n'.format(error[:-2]))
       elif self.variant == 'TAKETHIS':
-        if os.path.exists(os.path.join('articles', message_id)) or os.path.exists(os.path.join('incoming', message_id)):
-          self.send('439 {0} i know this article already\r\n'.format(message_id))
-          self.log(self.logger.DEBUG, 'rejecting already known article %s' % message_id)
-          return
-        if os.path.exists(os.path.join('articles', 'censored', message_id)):
-          self.send('439 {0} article is blacklisted\r\n'.format(message_id))
-          self.log(self.logger.DEBUG, 'rejecting blacklisted article %s' % message_id)
-          return
-        if not self._allow_groups(newsgroups):
-          self.send('439 {} article reject. group {} is blacklisted\r\n'.format(message_id, newsgroups))
-          self.log(self.logger.DEBUG, 'rejecting article {}: group {} is blacklisted'.format(message_id, newsgroups))
-          return
-        self.send('239 {0} article received\r\n'.format(self.message_id_takethis))
+        self.send('439 {0} invalid article: {1}\r\n'.format(self.message_id_takethis, error[:-2]))
         self.message_id_takethis = ''
-      self.log(self.logger.INFO, 'article received and accepted %s' % message_id)
-
-      if not os.path.exists(os.path.join('articles', 'censored', message_id)):
-        path = os.path.join('incoming', 'tmp', filename)
-        f = open(path, 'w')
-        if new_message_id:
-          f.write('Message-ID: {0}\n'.format(message_id))
-        f.write(''.join(lines))
-        f.close()
-        target = os.path.join('incoming', message_id)
-        if not os.path.exists(target):
-          os.rename(path, target)
-        else:
-          self.log(self.logger.INFO, 'got duplicate article: %s does already exist. removing temporary file' % target)
-          os.remove(path)
+      elif self.variant == 'POST':
+        self.send('441 invalid article: {0}\r\n'.format(error[:-2]))
+      # save in articles/invalid for manual debug
+      add_headers.append('X-SRNd-invalid: {0}'.format(error[:-2]))
+      add_headers.append('X-SRNd-source: {0}'.format(self.name))
+      add_headers.append('X-SRNd-variant: {0}'.format(self.variant))
+      handle_incoming.move_to(os.path.join('articles', 'invalid', '{0}-{1}'.format(self.name, int(time.time()))), add_headers)
       self.waitfor = ''
       self.variant = ''
+      self.log(self.logger.INFO, 'article invalid %s: %s' % (handle_incoming.message_id, error[:-2]))
+      return
+    self.log(self.logger.DEBUG, 'article received {}. Large: {}'.format(handle_incoming.message_id, handle_incoming.file_large))
+    # save article in tmp and mv to incoming
+    if self.variant == 'POST':
+      self.send('240 article received\r\n')
+    elif self.variant == 'IHAVE':
+      self.send('235 article received\r\n')
+      #TODO: failed but try again later ==> 436
+    elif self.variant == 'TAKETHIS':
+      if os.path.exists(os.path.join('articles', handle_incoming.message_id)) or os.path.exists(os.path.join('incoming', handle_incoming.message_id)):
+        self.send('439 {0} i know this article already\r\n'.format(handle_incoming.message_id))
+        self.log(self.logger.DEBUG, 'rejecting already known article %s' % handle_incoming.message_id)
+        return
+      if os.path.exists(os.path.join('articles', 'censored', handle_incoming.message_id)):
+        self.send('439 {0} article is blacklisted\r\n'.format(handle_incoming.message_id))
+        self.log(self.logger.DEBUG, 'rejecting blacklisted article %s' % handle_incoming.message_id)
+        return
+      if not self._allow_groups(handle_incoming.newsgroups):
+        self.send('439 {} article reject. group {} is blacklisted\r\n'.format(handle_incoming.message_id, handle_incoming.newsgroups))
+        self.log(self.logger.DEBUG, 'rejecting article {}: group {} is blacklisted'.format(handle_incoming.message_id, handle_incoming.newsgroups))
+        return
+      self.send('239 {0} article received\r\n'.format(self.message_id_takethis))
+      self.message_id_takethis = ''
+    self.log(self.logger.INFO, 'article received and accepted %s' % handle_incoming.message_id)
+
+    target = os.path.join('incoming', handle_incoming.message_id)
+    if not os.path.exists(target):
+      handle_incoming.move_to(target, add_headers)
     else:
-      self.log(self.logger.INFO, 'should handle multi line while waiting for %s:' % self.waitfor)
-      self.log(self.logger.INFO, ''.join(lines))
-      self.log(self.logger.INFO, 'should handle multi line end')
+      self.log(self.logger.INFO, 'got duplicate article: %s does already exist. removing temporary file' % target)
+    self.waitfor = ''
+    self.variant = ''
+
+class HandleIncoming(object):
+  def __init__(self, infeed_name='_unnamed_', tmp_path=os.path.join('incoming', 'tmp')):
+    self._tmp_path = tmp_path
+    self._infeed_name = infeed_name
+    self._article_path = os.path.join(tmp_path, self._get_random_id())
+
+    self.body_found = False
+    self.read_byte = 0
+    self.file_large = False
+    self.message_id = ''
+    self.newsgroups = ''
+    self.header = list()
+    self.transfer_time = 0.0
+    # if file size > _max_file_to_ram - save data in file.
+    self._max_file_to_ram = 3 * 10 ** 6 # 3MB
+    self._article_data = list()
+    self._open_article = None
+    self._no_data = False
+    self._complit = False
+    self._start_transfer = 0
+
+  def _get_random_id(self):
+    return '{}-{}-{}'.format(self._infeed_name, ''.join(random.choice(string.ascii_lowercase) for x in range(10)), int(time.time()))
+
+  def _write(self, line):
+    if not self.file_large and self.read_byte > self._max_file_to_ram:
+      self._full_flush()
+      self.file_large = True
+    if self.file_large:
+      self._open_article.write('{}\n'.format(line))
+    else:
+      self._article_data.append(line)
+
+  def _add_headers(self, headers):
+    if not self.file_large:
+      self._article_data[0:0] = headers
+    else:
+      new_path = os.path.join(self._tmp_path, self._get_random_id())
+      headers.append('')
+      with open(new_path, 'w') as o, open(self._article_path, 'r') as i:
+        o.write('\n'.join(headers))
+        o.write(i.read())
+      os.remove(self._article_path)
+      self._article_path = new_path
+
+  def _full_flush(self):
+    if self.file_large:
+      pass
+    else:
+      self._open_article = open(self._article_path, 'w')
+      self._open_article.write('\n'.join(self._article_data))
+      self._open_article.write('\n')
+      del self._article_data[:]
+
+  def add(self, line):
+    if self._no_data or self._complit:
+      raise Exception("article object already complit. Don't use add()")
+    if not self.body_found and line == '':
+      self.body_found = True
+    if line.startswith('.'):
+      line = line[1:]
+    self._write(line)
+    if not self.body_found:
+      if line.lower().startswith('message-id:'):
+        self.message_id = line.split(' ', 1)[1]
+      elif line.lower().startswith('newsgroups:'):
+        self.newsgroups = line.split(' ', 1)[1]
+      self.header.append(line)
+    self.read_byte += len(line)
+    if self._start_transfer == 0:
+      self._start_transfer = time.time()
+
+  def move_to(self, path, add_headers=None):
+    if not self._complit:
+      raise Exception("call complit before using move_to()")
+    if self._no_data:
+      raise Exception("article object already moved. Don't use move_to()")
+    if add_headers is not None and len(add_headers) > 0:
+      self._add_headers(add_headers)
+    self._full_flush()
+    self.complit()
+    self._no_data = True
+    os.rename(self._article_path, path)
+
+  def complit(self):
+    if not self._complit:
+      self.transfer_time = time.time() - self._start_transfer
+      self._complit = True
+    if self._open_article is not None:
+      self._open_article.close()
+
+  def bye(self):
+    self._complit = True
+    self._no_data = True
+    if os.path.isfile(self._article_path):
+      os.remove(self._article_path)
