@@ -658,9 +658,10 @@ class SRNd(threading.Thread):
           self.log(self.logger.DEBUG, 'starting outfeed: %s' % name)
           self.feeds[name] = feed.feed(self, self.logger, outstream=True, host=host, port=port, sync_on_startup=sync_on_startup, proxy=proxy, debug=debuglevel, db_connector=self._db_manager.connect)
           self.feeds[name].start()
-          counter_new += 1
         except Exception as e:
           self.log(self.logger.WARNING, 'could not start outfeed %s: %s' % (name, e))
+        else:
+          counter_new += 1
     counter_removed = 0
     feeds = list()
     for name in self.feeds:
@@ -795,7 +796,32 @@ class SRNd(threading.Thread):
           targets -= self.hook_blacklist[black_group]
     return targets
 
-  def _sync_on_startup(self):
+  def _is_valid_outfeed(self, target, hook, targets):
+    return self._is_allow_sync(target, hook, targets) and self._is_valid_any(self.feeds, target, 'outfeed')
+
+  def _is_valid_plugin(self, target, hook, targets):
+    return self._is_allow_sync(target, hook, targets) and self._is_valid_any(self.plugins, target, 'plugin')
+
+  def _is_valid_any(self, dict_data, target, type_):
+    if target in dict_data:
+      if dict_data[target].sync_on_startup:
+        self.log(self.logger.DEBUG, 'startup sync, adding {}'.format(target))
+        return True
+    else:
+       self.log(self.logger.WARNING, 'unknown {} detected. wtf? {}'.format(type_, target))
+    return False
+
+  @staticmethod
+  def _is_allow_sync(target, hook, targets):
+    if hook is not None and not target.startswith(hook):
+      return False
+    if targets is not None and target not in targets:
+      return False
+    return True
+
+  def _sync_on_startup(self, hook=None, targets=None):
+    # hook - plugin, outfeed. None - all
+    # targets - object name. None - any
     groups = [x for x in os.listdir('groups') if os.path.isdir(os.path.join('groups', x))]
     synclist = dict()
     # sync groups in random order
@@ -805,19 +831,11 @@ class SRNd(threading.Thread):
       current_sync_targets = set()
       for sync_target in self.get_allow_hooks(group):
         if sync_target.startswith('outfeed-'):
-          if sync_target in self.feeds:
-            if self.feeds[sync_target].sync_on_startup:
-              self.log(self.logger.DEBUG, 'startup sync, adding {}'.format(sync_target))
-              current_sync_targets.add(sync_target)
-          else:
-            self.log(self.logger.WARNING, 'unknown outfeed detected. wtf? {}'.format(sync_target))
+          if self._is_valid_outfeed(sync_target, hook, targets):
+            current_sync_targets.add(sync_target)
         elif sync_target.startswith('plugin-'):
-          if sync_target in self.plugins:
-            if self.plugins[sync_target].sync_on_startup:
-              self.log(self.logger.DEBUG, 'startup sync, adding {}'.format(sync_target))
-              current_sync_targets.add(sync_target)
-          else:
-            self.log(self.logger.WARNING, 'unknown plugin detected. wtf? {}'.format(sync_target))
+          if self._is_valid_plugin(sync_target, hook, targets):
+            current_sync_targets.add(sync_target)
         elif sync_target.startswith('filesystem-'):
           pass
         else:
@@ -834,7 +852,7 @@ class SRNd(threading.Thread):
           for message_id in synclist[group]['file_list'][:500]:
             for current_hook in synclist[group]['targets']:
               if current_hook.startswith('outfeed-'):
-                if message_id not in self.feed_db[current_hook]:
+                if message_id not in self.feed_db.get(current_hook, ''):
                   self.feeds[current_hook].add_article(message_id)
               elif current_hook.startswith('plugin-'):
                 self.plugins[current_hook].add_article(message_id)
@@ -843,7 +861,7 @@ class SRNd(threading.Thread):
         del synclist[group]
 
     self.log(self.logger.DEBUG, 'startup_sync done. hopefully.')
-    del self.feed_db
+    self.feed_db.clear()
 
   def run(self):
     self.running = True
