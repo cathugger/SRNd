@@ -166,6 +166,8 @@ class SRNd(threading.Thread):
     self.ctl_socket_handlers["status"] = self.ctl_socket_handler_status
     self.ctl_socket_handlers["log"] = self.ctl_socket_handler_logger
     self.ctl_socket_handlers["stats"] = self.ctl_socket_handler_stats
+    self.hooks = dict()
+    self.hook_blacklist = dict()
 
   def _auto_db_migration(self):
     # Work only for default plugins and db locations
@@ -462,7 +464,7 @@ class SRNd(threading.Thread):
     b_count = len(rules['blacklist'])
     if w_count + b_count > 0:
       output_log = list()
-      output_log.append('\nFound {} infeeds hooks:'.format(w_count + b_count))
+      output_log.append('Found {} infeeds hooks:'.format(w_count + b_count))
       if w_count > 0:
         output_log.append('whitelist')
         output_log.extend([' {}'.format(x) for x in rules['whitelist']])
@@ -474,12 +476,10 @@ class SRNd(threading.Thread):
 
   def update_hooks(self):
     self.log(self.logger.INFO, 'reading hook configuration..')
-    self.hooks = dict()
-    self.hook_blacklist = dict()
-    total = 0
+    hook_whitelist = dict()
+    hook_blacklist = dict()
     for hook_type, hook_name in (('filesystem', 'filesystem'), ('outfeeds', 'outfeed'), ('plugins', 'plugin')):
       directory = os.path.join('config', 'hooks', hook_type)
-      found = 0
       for hook in self._list_config_files(directory):
         link = os.path.join(directory, hook)
         if hook_name != 'outfeed':
@@ -492,43 +492,68 @@ class SRNd(threading.Thread):
         rules = self._read_hook_rules(link)
         # whitelist update
         for rule in rules['whitelist']:
-          if rule not in self.hooks:
-            self.hooks[rule] = set()
-          if name not in self.hooks[rule]:
-            self.hooks[rule].add(name)
-            found += 1
+          if rule not in hook_whitelist:
+            hook_whitelist[rule] = set()
+          if name not in hook_whitelist[rule]:
+            hook_whitelist[rule].add(name)
         # blacklist update
         for rule in rules['blacklist']:
-          if rule not in self.hook_blacklist:
-            self.hook_blacklist[rule] = set()
-          if name not in self.hook_blacklist[rule]:
-            self.hook_blacklist[rule].add(name)
-            found += 1
+          if rule not in hook_blacklist:
+            hook_blacklist[rule] = set()
+          if name not in hook_blacklist[rule]:
+            hook_blacklist[rule].add(name)
         if hook_type == 'filesystem':
           # create hook directory
           hook_dir = os.path.join('hooks', hook)
           if not os.path.exists(hook_dir):
             os.mkdir(hook_dir)
             os.chmod(hook_dir, 0o777)
-      total += found
-    #if not '*' in self.hooks:
-    #  self.hooks['*'] = list()
     output_log = list()
-    if total > 0:
-      output_log.append('found %i hooks:' % total)
-      output_log.append('whitelist')
-      for pattern in self.hooks:
-        output_log.append(' %s' % pattern)
-        for hook in self.hooks[pattern]:
-          output_log.append('   %s' % hook)
-      output_log.append('blacklist')
-      for pattern in self.hook_blacklist:
-        output_log.append(' %s' % pattern)
-        for hook in self.hook_blacklist[pattern]:
-          output_log.append('   %s' % hook)
+    # adding hooks
+    diff, diff_count = self._get_two_hooks_diff(self.hooks, hook_whitelist, self.hook_blacklist, hook_blacklist)
+    if diff_count > 0:
+      output_log.append('Adding {} hooks'.format(diff_count))
+      output_log.extend(diff)
+      output_log.append('')
+    # removed hooks
+    diff, diff_count = self._get_two_hooks_diff(hook_whitelist, self.hooks, hook_blacklist, self.hook_blacklist)
+    if diff_count > 0:
+      output_log.append('Remove {} hooks'.format(diff_count))
+      output_log.extend(diff)
+      output_log.append('')
+    if len(output_log) > 0:
       self.log(self.logger.INFO, '\n'.join(output_log))
-    else:
+    elif len(self.hook_blacklist) + len(self.hooks) == 0:
       self.log(self.logger.WARNING, 'did not find any hook')
+    else:
+      self.log(self.logger.INFO, 'Hooks not changes')
+    # rewrite old hooks
+    self.hooks = hook_whitelist
+    self.hook_blacklist = hook_blacklist
+
+  def _get_two_hooks_diff(self, old_whitelist, whitelist, old_blacklist, blacklist):
+    diff = list()
+    diff_whitelist, count_whitelist = self._get_hook_diff(old_whitelist, whitelist)
+    diff_blacklist, count_blacklist = self._get_hook_diff(old_blacklist, blacklist)
+    if count_whitelist > 0:
+      diff.append('whitelist')
+      diff.extend(diff_whitelist)
+    if count_blacklist > 0:
+      diff.append('blacklist')
+      diff.extend(diff_blacklist)
+    return diff, count_whitelist + count_blacklist
+
+  @staticmethod
+  def _get_hook_diff(old_hooks, new_hooks):
+    diff = list()
+    total = 0
+    for hook in new_hooks:
+      new = new_hooks[hook] - old_hooks.get(hook, set())
+      total += len(new)
+      if len(new) > 0:
+        diff.append(' {}'.format(hook))
+        diff.extend(['   {} '.format(x) for x in new])
+    return diff, total
 
   def update_plugins(self):
     self.log(self.logger.INFO, 'importing plugins..')
@@ -623,7 +648,6 @@ class SRNd(threading.Thread):
     self.log(self.logger.INFO, 'reading outfeeds..')
     counter_new = 0
     current_feedlist = list()
-    self.feed_db = dict()
     for outfeed in self._list_config_files(os.path.join('config', 'hooks', 'outfeeds')):
       start_params = self._config_reader(os.path.join('config', 'hooks', 'outfeeds', outfeed))
       proxy_conn = {'proxy_type': None, 'proxy_ip': None, 'proxy_port': None}
@@ -641,19 +665,17 @@ class SRNd(threading.Thread):
 
       host, port = self._extract_outfeed_data(outfeed)
       name = 'outfeed-{}-{}'.format(host, port)
-      if sync_on_startup:
-        self.feed_db[name] = self._trackdb_reder('{0}.trackdb'.format(name))
       current_feedlist.append(name)
       proxy = None
-      if proxy_conn['proxy_type'] is not None and proxy_conn['proxy_ip'] is not None:
-        try:
-          proxy_conn['proxy_port'] = int(proxy_conn['proxy_port'])
-        except ValueError:
-          pass
-        else:
-          proxy = (proxy_conn['proxy_type'], proxy_conn['proxy_ip'], proxy_conn['proxy_port'])
-          self.log(self.logger.INFO, 'starting outfeed {} using proxy: {}'.format(name, str(proxy)))
       if name not in self.feeds:
+        if proxy_conn['proxy_type'] is not None and proxy_conn['proxy_ip'] is not None:
+          try:
+            proxy_conn['proxy_port'] = int(proxy_conn['proxy_port'])
+          except ValueError:
+            pass
+          else:
+            proxy = (proxy_conn['proxy_type'], proxy_conn['proxy_ip'], proxy_conn['proxy_port'])
+            self.log(self.logger.INFO, 'starting outfeed {} using proxy: {}'.format(name, str(proxy)))
         try:
           self.log(self.logger.DEBUG, 'starting outfeed: %s' % name)
           self.feeds[name] = feed.feed(self, self.logger, outstream=True, host=host, port=port, sync_on_startup=sync_on_startup, proxy=proxy, debug=debuglevel, db_connector=self._db_manager.connect)
@@ -663,14 +685,9 @@ class SRNd(threading.Thread):
         else:
           counter_new += 1
     counter_removed = 0
-    feeds = list()
-    for name in self.feeds:
-      if name.startswith('outfeed'):
-        feeds.append(name)
-    for name in feeds:
-      if not name in current_feedlist and name in self.feeds:
-        self.feeds[name].shutdown()
-        counter_removed += 1
+    for name in [xx for xx in self.feeds if xx.startswith('outfeed') and xx not in current_feedlist]:
+      self.feeds[name].shutdown()
+      counter_removed += 1
     self.log(self.logger.INFO, 'outfeeds added: %i' % counter_new)
     self.log(self.logger.INFO, 'outfeeds removed: %i' % counter_removed)
 
@@ -808,7 +825,7 @@ class SRNd(threading.Thread):
         self.log(self.logger.DEBUG, 'startup sync, adding {}'.format(target))
         return True
     else:
-       self.log(self.logger.WARNING, 'unknown {} detected. wtf? {}'.format(type_, target))
+      self.log(self.logger.WARNING, 'unknown {} detected. wtf? {}'.format(type_, target))
     return False
 
   @staticmethod
@@ -863,10 +880,62 @@ class SRNd(threading.Thread):
     self.log(self.logger.DEBUG, 'startup_sync done. hopefully.')
     self.feed_db.clear()
 
+  def _load_outfeed_db(self, targets=None):
+    for target in self.feeds:
+      if self.feeds[target].sync_on_startup and targets is None or target in targets:
+        self.feed_db[target] = self._trackdb_reder('{0}.trackdb'.format(target))
+
+  def internal_ctl(self, args):
+    self.log(self.logger.DEBUG, 'Got control request {}'.format(args))
+    # reload hooks
+    if args['action'] == 'update':
+      if args.get('hook') == 'hooks':
+        self.update_hooks()
+        return True
+      elif args.get('hook') == 'outfeed':
+        self.update_outfeeds()
+        return True
+      elif args.get('hook') == 'plugin':
+        #self.update_plugin
+        pass
+    # resync
+    elif args['action'] == 'sync' and args.get('hook') in ('plugin', 'outfeed', None):
+      # reload trackdb
+      if args.get('hook') != 'plugin':
+        self._load_outfeed_db(targets=args.get('targets'))
+      self._sync_on_startup(hook=args.get('hook'), targets=args.get('targets'))
+      return True
+    # shutdown
+    elif args['action'] == 'die' and args.get('hook') in ('infeed', 'outfeed', 'plugins'):
+      wait_count = 8
+      wait_time = 0.5
+      status = False
+      if args.get('hook') in ('infeed', 'outfeed'):
+        for feed_ in [xx for xx in self.feeds if xx.startswith(args.get('hook'))]:
+          if args.get('targets') is None or feed_ in args.get('targets'):
+            self.feeds[feed_].shutdown()
+            c_count = 0
+            while feed_ in self.feeds and c_count < wait_count:
+              c_count += 1
+              time.sleep(wait_time)
+            status = c_count < wait_count
+      if args.get('hook') == 'plugins':
+        for plugin in [xx for xx in self.plugins]:
+          if plugin in args.get('targets', plugin):
+            status = True
+            self.plugins[plugin].shutdown()
+            self.plugins[plugin].join()
+            del self.plugins[plugin]
+      return status
+    self.log(self.logger.WARNING, 'Invalid control request: {}'.format(args))
+    return False
+
   def run(self):
     self.running = True
     self.feeds = dict()
+    self.feed_db = dict()
     self.update_outfeeds()
+    self._load_outfeed_db()
     if len(self.plugins) > 0:
       self.log(self.logger.INFO, 'starting plugins..')
       for plugin in self.plugins:
