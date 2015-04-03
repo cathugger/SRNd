@@ -136,7 +136,8 @@ class censor(BaseHTTPRequestHandler):
       elif path.startswith('/restore?'):
         self.handle_restore(path[9:])
       elif path.startswith('/info'):
-        self.send_info(path[6:])
+        data = parse_qs(urlparse(unquote(path)).query)
+        self.send_info({x: ''.join(data[x]).encode('ascii', 'ignore') for x in data})
       elif path.startswith('/notimplementedyet'):
         self._send_error('not implemented yet')
       else:
@@ -187,12 +188,12 @@ class censor(BaseHTTPRequestHandler):
 
   def post_vars_init(self):
     post_vars = FieldStorage(
-      fp=self.rfile,
-      headers=self.headers,
-      environ={
-        'REQUEST_METHOD':'POST',
-        'CONTENT_TYPE':self.headers['Content-Type'],
-      }
+        fp=self.rfile,
+        headers=self.headers,
+        environ={
+            'REQUEST_METHOD':'POST',
+            'CONTENT_TYPE':self.headers['Content-Type'],
+        }
     )
     return post_vars
 
@@ -862,29 +863,56 @@ class censor(BaseHTTPRequestHandler):
       table.append('<OPTION value="{0}"{1}>{2}</OPTION>'.format(item, check_this, select_data[item]))
     return ''.join(table)
 
-  def send_info(self, data):
-    data = {\
-      'navigation': self.__get_navigation('info'),
-      'status': '',
-      'start_time_human': None,
-      'start_time_raw': None,
-      'cpu_usage': None,
-      'ram_human': None,
-      'ram_raw': None,
-      'disk_free_human': None,
-      'disk_free': None,
-      'disk_used_human': None,
-      'disk_used': None,
-      'plugins': None,
-      'infeeds_count': None,
-      'infeeds': '',
-      'outfeeds_count': None,
-      'outfeeds': ''}
+  def _srnd_control(self, data):
+    status = list()
+    # reload outfeed
+    if data['action'] == 'reload' and data.get('hook') == 'outfeed':
+      # is None - all outfeed
+      target = 'outfeed-' + data['target'] if 'target' in data else None
+      if not self.origin.SRNd_ctl({'action': 'die', 'hook': 'outfeed', 'targets': target}):
+        status.append('kill outfeed(s)')
+      if not self.origin.SRNd_ctl({'action': 'update', 'hook': 'outfeed'}):
+        status.append('update outfeeds')
+      if not self.origin.SRNd_ctl({'action': 'update', 'hook': 'hooks'}):
+        status.append('update hooks')
+      if not self.origin.SRNd_ctl({'action': 'sync', 'hook': 'outfeed', 'targets': target}):
+        status.append('resync outfeed(s)')
+    #kill outfeed
+    elif data['action'] == 'die' and data.get('hook') == 'outfeed' and 'target' in data:
+      if not self.origin.SRNd_ctl({'action': 'die', 'hook': 'outfeed', 'targets': 'outfeed-' + data['target']}):
+        status.append('kill outfeed')
+    if not status:
+      self.send_redirect(self.path.split('?', 1)[0], 'Success!', 2)
+    else:
+      self.send_redirect(self.path.split('?', 1)[0], 'WARNING! Requests not fulfilled: {}'.format(', '.join(status)), 8)
+
+  def send_info(self, url_query):
+    data = {
+        'navigation': self.__get_navigation('info'),
+        'status': '',
+        'start_time_human': None,
+        'start_time_raw': None,
+        'cpu_usage': None,
+        'ram_human': None,
+        'ram_raw': None,
+        'disk_free_human': None,
+        'disk_free': None,
+        'disk_used_human': None,
+        'disk_used': None,
+        'plugins': None,
+        'infeeds_count': None,
+        'infeeds': '',
+        'outfeeds_count': None,
+        'outfeeds': ''
+    }
     if self.origin.SRNd_info is None:
       data['status'] = '<b>Add to censor config for enabling this:</b> #start_param SRNd_info=info<br /><br />'
     elif not self.__check_legal_access('srnd-acl-mod'):
       data['status'] = '<b>Not authorized, flag srnd-acl-mod missing</b><br /><br />'
     else:
+      if 'action' in url_query and self.origin.SRNd_ctl is not None:
+        self._srnd_control(url_query)
+        return
       feed_data = self.origin.SRNd_info({'command': 'status', 'data': 'feeds'})
       for target in ('infeeds', 'outfeeds'):
         feeds = list()
@@ -892,6 +920,7 @@ class censor(BaseHTTPRequestHandler):
           feed_data[target][feed]['name'] = feed
           feed_data[target][feed]['transfer_human'] = self.__sizeof_human_readable(feed_data[target][feed]['transfer'])
           feed_data[target][feed]['speed_human'] = self.__sizeof_human_readable(int(feed_data[target][feed]['transfer'] / feed_data[target][feed]['transfer_time']))
+          feed_data[target][feed]['actions'] = self.origin.t_engine_info_feed_actions.substitute(name=feed) if target == 'outfeeds' else ''
           feeds.append(self.origin.t_engine_info_feed_row.substitute(feed_data[target][feed]))
         data[target] = '\n'.join(feeds)
 
@@ -1119,9 +1148,8 @@ class censor(BaseHTTPRequestHandler):
   @staticmethod
   def __get_navigation(current, add_after=None):
     out = list()
-    #out.append('<div class="navigation">')
     for item in (('key_stats', 'key stats'), ('commands', 'c&c'), ('moderation_log', 'moderation log'), ('pic_log', 'pic log'),
-        ('message_log', 'message log'), ('stats', 'stats'), ('settings', 'settings'), ('postman', 'postman'), ('info', 'info')):
+                 ('message_log', 'message log'), ('stats', 'stats'), ('settings', 'settings'), ('postman', 'postman'), ('info', 'info')):
       if item[0] == current:
         out.append(item[1])
       else:
@@ -1354,6 +1382,7 @@ class censor_httpd(threading.Thread):
       else:
         self.log(self.logger.WARNING, "'%s' is not a valid value for reject_debug. only true and false allowed. setting value to false.")
     self.httpd.SRNd_info = args.get('srnd_info', None)
+    self.httpd.SRNd_ctl = args['srnd'].internal_ctl if 'srnd' in args and self.httpd.SRNd_info is not None else None
     help_lang = args.get('help', 'en')
     self.httpd.log = self.log
     self.httpd.logger = self.logger
@@ -1421,10 +1450,10 @@ class censor_httpd(threading.Thread):
     f.close()
     f = open(os.path.join(template_directory, 'message_log.tmpl'), 'r')
     self.httpd.t_engine_message_log = string.Template(
-      string.Template(f.read()).safe_substitute(
-        evil_mod=template_evil_mod,
-        search_form=template_search_form
-      )
+        string.Template(f.read()).safe_substitute(
+            evil_mod=template_evil_mod,
+            search_form=template_search_form
+        )
     )
     f.close()
     f = open(os.path.join(template_directory, 'message_log_row.tmpl'), 'r')
@@ -1447,16 +1476,16 @@ class censor_httpd(threading.Thread):
     f.close()
     f = open(os.path.join(template_directory, 'log_row_ignored.tmpl'), 'r')
     self.httpd.t_engine_log_ignored = string.Template(
-      string.Template(template_log_row).safe_substitute(
-        log_type=f.read().rstrip()
-      )
+        string.Template(template_log_row).safe_substitute(
+            log_type=f.read().rstrip()
+        )
     )
     f.close()
     f = open(os.path.join(template_directory, 'log_row_accepted.tmpl'), 'r')
     self.httpd.t_engine_log_accepted = string.Template(
-      string.Template(template_log_row).safe_substitute(
-        log_type=f.read().rstrip()
-      )
+        string.Template(template_log_row).safe_substitute(
+            log_type=f.read().rstrip()
+        )
     )
     f.close()
     f = open(os.path.join(template_directory, 'commands.tmpl'), 'r')
@@ -1472,6 +1501,8 @@ class censor_httpd(threading.Thread):
       self.httpd.t_engine_info = string.Template(f.read())
     with open(os.path.join(template_directory, 'info_feed_row.tmpl'), 'r') as f:
       self.httpd.t_engine_info_feed_row = string.Template(f.read())
+    with open(os.path.join(template_directory, 'info_feed_actions.tmpl'), 'r') as f:
+      self.httpd.t_engine_info_feed_actions = string.Template(f.read())
     with open(os.path.join(template_directory, 'help.tmpl'), 'r') as f:
       self.httpd.t_engine_help = string.Template(f.read())
 
