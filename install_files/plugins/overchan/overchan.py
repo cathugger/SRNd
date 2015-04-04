@@ -2,7 +2,6 @@
 import base64
 import codecs
 import os
-import re
 import sqlite3
 import string
 import threading
@@ -12,7 +11,6 @@ import math
 import mimetypes
 mimetypes.init()
 import json
-from srnd.utils import basicHTMLencode, generate_pubkey_short_utf_8, html_minifer, css_minifer
 from binascii import unhexlify
 from calendar import timegm
 from datetime import datetime, timedelta
@@ -28,6 +26,10 @@ else:
 
 import Image
 import nacl.signing
+
+from srnd.utils import basicHTMLencode, generate_pubkey_short_utf_8, html_minifer, css_minifer
+from overchan_markup import OverchanMarkup
+
 
 try:
   import cv2
@@ -76,25 +78,6 @@ class main(threading.Thread):
       self.log(self.logger.ERROR, '{}. Thumbnail for video will not be created. See http://docs.opencv.org/'.format(cv2_load_result))
 
     self.sync_on_startup = self.config['sync_on_startup']
-
-    self._compite_regexp()
-
-    self.upper_table = {'0': '1',
-                        '1': '2',
-                        '2': '3',
-                        '3': '4',
-                        '4': '5',
-                        '5': '6',
-                        '6': '7',
-                        '7': '8',
-                        '8': '9',
-                        '9': 'a',
-                        'a': 'b',
-                        'b': 'c',
-                        'c': 'd',
-                        'd': 'e',
-                        'e': 'f',
-                        'f': 'g'}
 
     if __name__ == '__main__':
       self._load_templates()
@@ -590,6 +573,8 @@ class main(threading.Thread):
     self._load_templates()
     self.cache_init()
 
+    self.markup_parser = OverchanMarkup(overchandb=self.sqlite, dropperdb=self.dropperdb, fake_id=self.config['fake_id'], get_board_data=self.get_board_data)
+
     # index generation happens only at startup
     self.generate_index()
 
@@ -1006,118 +991,6 @@ class main(threading.Thread):
     if local_name is not None:
       nickname = '<span class="zoi">%s</span>' % local_name
     return '%s%s' % (op_flag, nickname)
-
-  def upp_it(self, data):
-    if data[-1] not in self.upper_table:
-      return data
-    return data[:-1] + self.upper_table[data[-1]]
-
-  def linkit(self, rematch):
-    row = self.sqlite.execute("SELECT article_uid, parent, group_id FROM articles WHERE article_hash >= ? and article_hash < ?", (rematch.group(2), self.upp_it(rematch.group(2)))).fetchall()
-    if not row or len(row) > 1:
-      # hash not found or multiple matches for that 10 char hash
-      return rematch.group(0)
-    message_id, parent_id, group_id = row[0]
-    if self.__current_markup_parser_group_id is not None and group_id != self.__current_markup_parser_group_id:
-      another_board = u' [%s]' % self.get_board_data(int(group_id), 'board')[:20]
-    else:
-      another_board = ''
-    if self.config['fake_id']:
-      article_name = self.message_uid_to_fake_id(message_id)
-    else:
-      article_name = rematch.group(2)
-    if parent_id == "":
-      # article is root post
-      return u'<a onclick="return highlight(\'{0}\');" href="thread-{0}.html">{1}{2}{3}</a>'.format(rematch.group(2), rematch.group(1), article_name, another_board)
-    # article has a parent
-    # FIXME: cache results somehow?
-    parent = sha1(parent_id).hexdigest()[:10]
-    return u'<a onclick="return highlight(\'{0}\');" href="thread-{1}.html#{0}">{2}{3}{4}</a>'.format(rematch.group(2), parent, rematch.group(1), article_name, another_board)
-
-  @staticmethod
-  def quoteit(rematch):
-    return u'<span class="quote">%s</span>' % rematch.group(0).rstrip("\r")
-
-  @staticmethod
-  def clickit(rematch):
-    return u'<a href="%s%s">%s%s</a>' % (rematch.group(1), rematch.group(2), rematch.group(1), rematch.group(2))
-
-  @staticmethod
-  def codeit(text):
-    return u'<pre class="code">{}</pre>'.format(text)
-
-  @staticmethod
-  def sjisit(text):
-    return u'<pre class="aa">{}</pre>'.format(text)
-
-  @staticmethod
-  def spoilit(rematch):
-    return u'<span class="spoiler">%s</span>' % rematch.group(1)
-
-  @staticmethod
-  def _regexp_large_spoiler(rematch):
-    return u'<details class="details">{}</details>'.format(rematch.group(1))
-
-  @staticmethod
-  def boldit(rematch):
-    return u'<b>%s</b>' % rematch.group(1)
-
-  @staticmethod
-  def italit(rematch):
-    return u'<i>%s</i>' % rematch.group(1)
-
-  @staticmethod
-  def strikeit(rematch):
-    return u'<strike>%s</strike>' % rematch.group(1)
-
-  @staticmethod
-  def underlineit(rematch):
-    return u'<span style="border-bottom: 1px solid">%s</span>' % rematch.group(1)
-
-  def markup_parser(self, message, group_id=None):
-    self.__current_markup_parser_group_id = group_id
-    # perform parsing
-    for regexp, handler in self._regexp['unbreakable_markup']:
-      if re.search(regexp, message):
-        # list indices: 0 - before [code], 1 - inside [code]...[/code], 2 - after [/code]
-        message_parts = re.split(regexp, message, maxsplit=1)
-        message = self.markup_parser(message_parts[0], group_id) + handler(message_parts[1]) + self.markup_parser(message_parts[2], group_id)
-        return message
-    for regexp, handler in self._regexp['regular_markup']:
-      message = regexp.sub(handler, message)
-    return message
-
-  def _compite_regexp(self):
-    self._regexp = dict()
-    # AHTUNG: consistency is important!
-    self._regexp['unbreakable_markup'] = (
-        # make code blocks
-        (re.compile(r'\[code](?!\[/code])(.+?)\[/code]', re.DOTALL), self.codeit),
-        # make aa blocks
-        (re.compile(r'\[aa](?!\[/aa])(.+?)\[/aa]', re.DOTALL), self.sjisit)
-    )
-    self._regexp['regular_markup'] = (
-        # make [aa][/aa]
-        # make >>post_id links
-        (re.compile(r"(&gt;&gt;)([0-9a-f]{10})"), self.linkit),
-        # make >quotes
-        (re.compile(r"^&gt;(?!&gt;[0-9a-f]{10}).*", re.MULTILINE), self.quoteit),
-        # make spoilers
-        (re.compile(r"%% (?!\s) (.+?) (?!\s) %%", re.VERBOSE), self.spoilit),
-        # make <details> for [spoiler]
-        (re.compile(r'\[spoiler](?!\[/spoiler])(.+?)\[/spoiler]', re.DOTALL), self._regexp_large_spoiler),
-        # make <b>
-        (re.compile(r"(?<![0-9a-zA-Z\x80-\x9f\xe0-\xfc*_/()]) \*\* (?![\s*_]) (.+?) (?<![\s*_]) \*\* (?![0-9a-zA-Z\x80-\x9f\xe0-\xfc*_/()])", re.VERBOSE), self.boldit),
-        (re.compile(r"(?<![0-9a-zA-Z\x80-\x9f\xe0-\xfc*_/()]) __ (?![\s*_]) (.+?) (?<![\s*_]) __ (?![0-9a-zA-Z\x80-\x9f\xe0-\xfc*_/()])", re.VERBOSE), self.boldit),
-        # make <i>
-        (re.compile(r"(?<![0-9a-zA-Z\x80-\x9f\xe0-\xfc*_/()]) \* (?![\s*_]) (.+?) (?<![\s*_]) \* (?![0-9a-zA-Z\x80-\x9f\xe0-\xfc*_/()])", re.VERBOSE), self.italit),
-        # make <strike>
-        (re.compile(r"(?<![0-9a-zA-Z\x80-\x9f\xe0-\xfc*_/()\-]) -- (?![\s*_-]) (.+?) (?<![\s*_-]) -- (?![0-9a-zA-Z\x80-\x9f\xe0-\xfc*_/()\-])", re.VERBOSE), self.strikeit),
-        # make underlined text
-        (re.compile(r"(?<![0-9a-zA-Z\x80-\x9f\xe0-\xfc*_/()]) _ (?![\s*_]) (.+?) (?<![\s*_]) _ (?![0-9a-zA-Z\x80-\x9f\xe0-\xfc*_/()])", re.VERBOSE), self.underlineit),
-        # Make http:// urls in posts clickable
-        (re.compile(r"(http://|https://|ftp://|mailto:|news:|irc:|magnet:\?|maggot://)([^\s\[\]<>'\"]*)"), self.clickit)
-    )
 
   def move_censored_article(self, message_id):
     if os.path.exists(os.path.join('articles', 'censored', message_id)):
@@ -1714,7 +1587,7 @@ class main(threading.Thread):
         message = data[4][:max_chars] + '\n[..] <a href="thread-%s.html"><i>message too large</i></a>' % message_id_hash[:10]
     else:
       message = data[4]
-    message = self.markup_parser(message, group_id)
+    message = self.markup_parser.parse(message, group_id)
     if father == '':
       child_count = int(self.sqlite.execute('SELECT count(article_uid) FROM articles WHERE parent = ? AND parent != article_uid', (data[0],)).fetchone()[0])
       if self.config['bump_limit'] > 0 and child_count >= self.config['bump_limit']:
@@ -2005,7 +1878,7 @@ class main(threading.Thread):
         else:
           board_name = full_board_name.split('.', 1)[-1]
     if not self.config['use_unsecure_aliases']:
-      board_description = self.markup_parser(basicHTMLencode(board_description))
+      board_description = self.markup_parser.parse(basicHTMLencode(board_description))
     if boardlist:
       boardlist[-1] = boardlist[-1][:-1]
     return ''.join(boardlist), full_board_name_unquoted, board_name_unquoted, board_name, board_description
@@ -2090,7 +1963,7 @@ class main(threading.Thread):
         message = row[1][:1000] + '\n[..] <a href="thread-%s.html"><i>message too large</i></a>' % parent
       else:
         message = row[1]
-      message = self.markup_parser(message)
+      message = self.markup_parser.parse(message)
       t_engine_mappings_news['subject'] = 'Breaking news' if row[0] == 'None' or row[0] == '' else row[0]
       t_engine_mappings_news['sent'] = datetime.utcfromtimestamp(row[2] + self.config['utc_time_offset']).strftime(self.config['datetime_format'])
       if row[3] != '':
