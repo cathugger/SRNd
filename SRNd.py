@@ -907,7 +907,7 @@ class SRNd(threading.Thread):
       self._sync_on_startup(hook=args.get('hook'), targets=args.get('targets'))
       return True
     # shutdown
-    elif args['action'] == 'die' and args.get('hook') in ('infeed', 'outfeed', 'plugins'):
+    elif args['action'] == 'die' and args.get('hook') in ('infeed', 'outfeed', 'plugin'):
       wait_count = 8
       wait_time = 0.5
       status = False
@@ -920,13 +920,17 @@ class SRNd(threading.Thread):
               c_count += 1
               time.sleep(wait_time)
             status = c_count < wait_count
-      if args.get('hook') == 'plugins':
+      if args.get('hook') == 'plugin':
         for plugin in [xx for xx in self.plugins]:
           if plugin in args.get('targets', plugin):
             status = True
             self.plugins[plugin].shutdown()
-            self.plugins[plugin].join()
+            c_count = 0
+            while self.plugins[plugin].isAlive() and c_count < wait_count:
+              c_count += 1
+              time.sleep(wait_time)
             del self.plugins[plugin]
+            status = c_count < wait_count
       return status
     self.log(self.logger.WARNING, 'Invalid control request: {}'.format(args))
     return False
