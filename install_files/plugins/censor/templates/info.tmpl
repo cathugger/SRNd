@@ -13,7 +13,14 @@ ${status}      <b>Start time: </b>${start_time_human} (${start_time_raw})<br />
       <b>RAM usage: </b>${ram_human} (${ram_raw})<br />
       <b>Disk free: </b>${disk_free_human} (${disk_free})<br />
       <b>Disk used: </b>${disk_used_human} (${disk_used})<br />
-      <b>Active plugins: </b>${plugins}
+    </div>
+    <br />
+    <div class="box">
+      <b>Active plugins: </b>${plugins_count}
+      <table border="0px" class="datatable">
+        <tr><th>name</th><th>&nbsp;queue</th><th>&nbsp;transfer</th><th>&nbsp;speed</th><th>&nbsp;status</th><th>&nbsp;actions</th></tr>
+${plugins}
+      </table>
     </div>
     <br />
     <div class="box">
@@ -27,9 +34,16 @@ ${infeeds}
     <div class="box">
       <b>Outfeeds: </b>${outfeeds_count}
       <table border="0px" class="datatable">
-        <tr><th>name</th><th>&nbsp;queue</th><th>&nbsp;transfer</th><th>&nbsp;speed</th><th>&nbsp;status</th><th>&nbsp;<a href="?action=reload&hook=outfeed">reload all</a></th></tr>
+        <tr><th>name</th><th>&nbsp;queue</th><th>&nbsp;transfer</th><th>&nbsp;speed</th><th>&nbsp;status</th><th><a href="?action=reload&hook=outfeed">reloads</a></th></tr>
 ${outfeeds}
       </table>
+    </div>
+    <br />
+    <div class="box">
+      <b>Active Hooks: </b>${hooks_count} <a href="?action=reload&hook=hooks">reloads</a>
+      <span class="message_span">
+${hooks}
+      </span>
     </div>
 ${help}
   </body>

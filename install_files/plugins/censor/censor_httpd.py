@@ -868,7 +868,7 @@ class censor(BaseHTTPRequestHandler):
     # reload outfeed
     if data['action'] == 'reload' and data.get('hook') == 'outfeed':
       # is None - all outfeed
-      target = 'outfeed-' + data['target'] if 'target' in data else None
+      target = '-'.join((data['hook'], data['target'])) if 'target' in data else None
       if not self.origin.SRNd_ctl({'action': 'die', 'hook': 'outfeed', 'targets': target}):
         status.append('kill outfeed(s)')
       if not self.origin.SRNd_ctl({'action': 'update', 'hook': 'outfeed'}):
@@ -877,10 +877,20 @@ class censor(BaseHTTPRequestHandler):
         status.append('update hooks')
       if not self.origin.SRNd_ctl({'action': 'sync', 'hook': 'outfeed', 'targets': target}):
         status.append('resync outfeed(s)')
-    #kill outfeed
-    elif data['action'] == 'die' and data.get('hook') == 'outfeed' and 'target' in data:
-      if not self.origin.SRNd_ctl({'action': 'die', 'hook': 'outfeed', 'targets': 'outfeed-' + data['target']}):
-        status.append('kill outfeed')
+    # kill outfeed or plugin
+    elif data['action'] == 'die' and data.get('hook') in ('outfeed', 'plugin') and data.get('target') is not None:
+      target = '-'.join((data['hook'], data['target']))
+      if data['target'] != 'censor' and not self.origin.SRNd_ctl({'action': 'die', 'hook': data['hook'], 'targets': target}):
+        status.append('kill {}'.format(data['hook']))
+      # thread not killing self
+      elif data['target'] == 'censor':
+        status.append('What is dead may never die.')
+      if not self.origin.SRNd_ctl({'action': 'update', 'hook': 'hooks'}):
+        status.append('update hooks')
+    # reload hooks
+    elif data['action'] == 'reload' and data.get('hook') == 'hooks':
+      if not self.origin.SRNd_ctl({'action': 'update', 'hook': 'hooks'}):
+        status.append('update hooks')
     if not status:
       self.send_redirect(self.path.split('?', 1)[0], 'Success!', 2)
     else:
@@ -899,11 +909,14 @@ class censor(BaseHTTPRequestHandler):
         'disk_free': None,
         'disk_used_human': None,
         'disk_used': None,
-        'plugins': None,
+        'plugins': '',
+        'plugins_count': 0,
         'infeeds_count': None,
         'infeeds': '',
         'outfeeds_count': None,
-        'outfeeds': ''
+        'outfeeds': '',
+        'hooks_count': 0,
+        'hooks': ''
     }
     if self.origin.SRNd_info is None:
       data['status'] = '<b>Add to censor config for enabling this:</b> #start_param SRNd_info=info<br /><br />'
@@ -924,7 +937,37 @@ class censor(BaseHTTPRequestHandler):
           feeds.append(self.origin.t_engine_info_feed_row.substitute(feed_data[target][feed]))
         data[target] = '\n'.join(feeds)
 
-      data['plugins'] = ', '.join([x[7:] if x.lower().startswith('plugin-') else x for x in self.origin.SRNd_info({'command': 'status', 'data': 'plugins'}).get('active', {})])
+      plugins = list()
+      for plugin in [x[7:] if x.lower().startswith('plugin-') else x for x in self.origin.SRNd_info({'command': 'status', 'data': 'plugins'}).get('active', {})]:
+        data['plugins_count'] += 1
+        plugins.append(
+            self.origin.t_engine_info_feed_row.substitute(
+                name=plugin,
+                queue='None',
+                transfer_human='None',
+                speed_human='None',
+                state='work',
+                actions='<a href="?action=die&hook=plugin&target={}">bye</a>'.format(plugin)
+            )
+        )
+      data['plugins'] = '\n'.join(plugins)
+      hooks_data = self.origin.SRNd_info({'command': 'status', 'data': 'hooks'})
+      hooks = list()
+      if len(hooks_data['whitelist']) > 0:
+        hooks.append('whitelist:')
+        for target in hooks_data['whitelist']:
+          hooks.append(' {}'.format(target))
+          data['hooks_count'] += len(hooks_data['whitelist'][target])
+          hooks.extend(['   {}'.format(xx) for xx in hooks_data['whitelist'][target]])
+        hooks.append('')
+      if len(hooks_data['blacklist']) > 0:
+        hooks.append('blacklist:')
+        for target in hooks_data['blacklist']:
+          hooks.append(' {}'.format(target))
+          data['hooks_count'] += len(hooks_data['blacklist'][target])
+          hooks.extend(['   {}'.format(xx) for xx in hooks_data['blacklist'][target]])
+        hooks.append('')
+      data['hooks'] = '\n'.join(hooks)
 
       stats = self.origin.SRNd_info({'command': 'stats'})
       data['start_time_human'] = datetime.utcfromtimestamp(stats['start_up_timestamp']).strftime('%d.%m.%y %H:%M')
