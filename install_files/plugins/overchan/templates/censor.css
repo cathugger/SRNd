@@ -14,6 +14,7 @@
   }
   .box {
     border: 1px dotted #AFAFAF;
+    padding: 3px;
   }
   .data_center {
     text-align: center;
