@@ -273,6 +273,11 @@
     color: #5F89AC;
     text-decoration: none;
   }
+  .details {
+    color: #354C60;
+    margin-left: 0.5em;
+    display: block;
+  }
   .menu-footer {
     font-size: 0.7em;
     text-align: center;

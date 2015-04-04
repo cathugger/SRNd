@@ -1055,6 +1055,10 @@ class main(threading.Thread):
     return u'<span class="spoiler">%s</span>' % rematch.group(1)
 
   @staticmethod
+  def _regexp_large_spoiler(rematch):
+    return u'<details class="details">{}</details>'.format(rematch.group(1))
+
+  @staticmethod
   def boldit(rematch):
     return u'<b>%s</b>' % rematch.group(1)
 
@@ -1100,6 +1104,8 @@ class main(threading.Thread):
         (re.compile(r"^&gt;(?!&gt;[0-9a-f]{10}).*", re.MULTILINE), self.quoteit),
         # make spoilers
         (re.compile(r"%% (?!\s) (.+?) (?!\s) %%", re.VERBOSE), self.spoilit),
+        # make <details> for [spoiler]
+        (re.compile(r'\[spoiler](?!\[/spoiler])(.+?)\[/spoiler]', re.DOTALL), self._regexp_large_spoiler),
         # make <b>
         (re.compile(r"(?<![0-9a-zA-Z\x80-\x9f\xe0-\xfc*_/()]) \*\* (?![\s*_]) (.+?) (?<![\s*_]) \*\* (?![0-9a-zA-Z\x80-\x9f\xe0-\xfc*_/()])", re.VERBOSE), self.boldit),
         (re.compile(r"(?<![0-9a-zA-Z\x80-\x9f\xe0-\xfc*_/()]) __ (?![\s*_]) (.+?) (?<![\s*_]) __ (?![0-9a-zA-Z\x80-\x9f\xe0-\xfc*_/()])", re.VERBOSE), self.boldit),
