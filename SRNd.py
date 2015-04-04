@@ -486,8 +486,9 @@ class SRNd(threading.Thread):
           name = '{0}-{1}'.format(hook_name, hook)
         else:
           name = 'outfeed-%s-%s' % self._extract_outfeed_data(hook)
-        # FIXME ignore new plugin hooks after startup, needs a boolean somewhere
-        # FIXME if hook_type == "plugins" and "plugin-{0}".format(hook) not in self.
+        # ignore hooks for inactive plugins and outfeeds
+        if (hook_name == 'outfeed' and name not in self.feeds) or (hook_name == 'plugin' and name not in self.plugins):
+          continue
         # read hooks into self.hooks[group_name] = hook_name
         rules = self._read_hook_rules(link)
         # whitelist update
