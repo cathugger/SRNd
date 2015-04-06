@@ -100,6 +100,12 @@ class SRNd(threading.Thread):
     # init db manager
     if not os.path.exists(self._db_dir):
       os.makedirs(self._db_dir)
+    # fix permissin for chroot
+    if self.setuid != '':
+      os.chown(self._db_dir, self.uid, self.gid)
+    else:
+      os.chown(self._db_dir, os.geteuid(), os.getegid())
+
     self._db_manager = __import__('srnd.db_utils').db_utils.DatabaseManager(self._db_dir)
     self._auto_db_migration()
 
