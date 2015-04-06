@@ -11,18 +11,13 @@ import math
 import mimetypes
 mimetypes.init()
 import json
+import Queue
 from binascii import unhexlify
 from calendar import timegm
 from datetime import datetime, timedelta
 from email.feedparser import FeedParser
 from email.utils import parsedate_tz
 from hashlib import sha1, sha512
-
-if __name__ == '__main__':
-  import fcntl
-  import signal
-else:
-  import Queue
 
 import Image
 import nacl.signing
@@ -47,10 +42,7 @@ class main(threading.Thread):
     self.log(self.logger.CRITICAL, message)
     self.log(self.logger.CRITICAL, 'terminating..')
     self.should_terminate = True
-    if __name__ == '__main__':
-      exit(1)
-    else:
-      raise Exception(message)
+    raise Exception(message)
 
   def __init__(self, thread_name, logger, args):
     threading.Thread.__init__(self)
@@ -79,19 +71,9 @@ class main(threading.Thread):
 
     self.sync_on_startup = self.config['sync_on_startup']
 
-    if __name__ == '__main__':
-      self._load_templates()
-      i = open(os.path.join(self.config['template_directory'], self.config['csss'][0]), 'r')
-      o = open(os.path.join(self.config['output_directory'], 'styles.css'), 'w')
-      o.write(i.read())
-      o.close()
-      i.close()
-      if not self.init_standalone():
-        exit(1)
-    else:
-      if not self.init_plugin():
-        self.should_terminate = True
-        return
+    if not self.init_plugin():
+      self.should_terminate = True
+      return
 
   def _init_config(self, args, add_default=True):
     cfg_new = dict()
@@ -375,23 +357,6 @@ class main(threading.Thread):
       self.die('error: can\'t load PIL library, err %s' %  e)
       return False
     self.queue = Queue.Queue()
-    return True
-
-  def init_standalone(self):
-    self.log(self.logger.INFO, 'initializing as standalone..')
-    signal.signal(signal.SIGIO, self.signal_handler)
-    try:
-      fd = os.open(self.config['watching'], os.O_RDONLY)
-    except OSError as e:
-      if e.errno == 2:
-        self.die(e)
-        exit(1)
-      else:
-        raise e
-    fcntl.fcntl(fd, fcntl.F_SETSIG, 0)
-    fcntl.fcntl(fd, fcntl.F_NOTIFY,
-                fcntl.DN_MODIFY | fcntl.DN_CREATE | fcntl.DN_MULTISHOT)
-    self.past_init()
     return True
 
   def gen_template_thumbs(self, sources):
@@ -861,8 +826,6 @@ class main(threading.Thread):
 
   def run(self):
     if self.should_terminate:
-      return
-    if  __name__ == '__main__':
       return
     self.log(self.logger.INFO, 'starting up as plugin..')
     self.past_init()
@@ -2014,15 +1977,4 @@ class main(threading.Thread):
     self.log(self.logger.INFO, 'generating {}/top.html at {:0.4f}s'.format(self.config['output_directory'], (time.time() - start_time)))
 
 if __name__ == '__main__':
-  # FIXME fix this shit
-  overchan = main('overchan', None, {'watching': 'test-articles'})
-  while True:
-    try:
-      print "signal.pause()"
-      signal.pause()
-    except KeyboardInterrupt as e:
-      print 'bye'
-      exit(0)
-    except Exception as e:
-      print "Exception:", e
-      exit(0)
+  print "[%s] %s. %s" % ("overchan", "this plugin can't run as standalone version.", "bye")
