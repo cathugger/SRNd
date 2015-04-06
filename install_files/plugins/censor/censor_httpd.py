@@ -546,7 +546,7 @@ class censor(BaseHTTPRequestHandler):
     log_body['pagination'] += '&nbsp;<a href="moderation_log?%i">next</a></div>' % ((page+1)*page_corrector)
     log_body['navigation'] = self.__get_navigation('moderation_log', add_after=log_body['pagination'])
     table = list()
-    for row in self.origin.sqlite_censor.execute("SELECT key, local_name, command, data, reason, comment, timestamp FROM log, commands, keys, reasons WHERE\
+    for row in self.origin.sqlite_censor.execute("SELECT key, local_name, command, data, reason, comment, timestamp, log.source FROM log, commands, keys, reasons WHERE\
         log.accepted = ? AND keys.id = log.key_id AND commands.id = log.command_id AND reasons.id = log.reason_id ORDER BY log.id DESC LIMIT ?, ?", \
         (log_accepted, (page-1)*pagecount, pagecount)).fetchall():
       log_row = dict()
@@ -556,7 +556,7 @@ class censor(BaseHTTPRequestHandler):
         log_row['key_or_nick'] = self.hidden_line(row[0])
       log_row['key'] = row[0]
       log_row['action'] = row[2]
-      log_row['reason'] = row[4]
+      log_row['reason'] = row[4] if row[7] == 'local' else '<a href="showmessage?{}" target="_blank">{}</a>'.format(row[7], row[4])
       log_row['comment'] = row[5][:60]
       log_row['date'] = datetime.utcfromtimestamp(row[6]).strftime('%d.%m.%y %H:%M')
       data = basicHTMLencode(self.hidden_line(row[3], 64))

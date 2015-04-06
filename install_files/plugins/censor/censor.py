@@ -70,7 +70,7 @@ class main(threading.Thread):
     self.log(self.logger.DEBUG, 'initializing censor_httpd..')
     args['censor'] = self
     self.httpd = censor_httpd.censor_httpd("censor_httpd", self.logger, args)
-    self.db_version = 10
+    self.db_version = 11
     self.all_flags = "4095"
     self.queue = Queue.Queue()
     self.command_mapper = dict()
@@ -183,8 +183,8 @@ class main(threading.Thread):
       self.censordb.execute('INSERT INTO commands (command, flag) VALUES (?,?)', ("handle-srnd-cmd", str(2048)))
       # evil cmd replace srnd cmd.
       self.censordb.execute('CREATE TABLE evil_to_srnd (evil text PRIMARY KEY, srnd text, comment DEFAULT "")')
-      for evil, srnd, comm in (('purge',      'delete', ''), ('purge_desthash', 'delete',                     ''), ('sticky', 'overchan-sticky', 'sticky\unsticky thread request'), \
-                               ('purge_root', 'delete', ''), ('delete_a',       'overchan-delete-attachment', ''), ('close',  'overchan-close',  'closing\opening thread request')):
+      for evil, srnd, comm in (('purge',      'delete', ''), ('purge_desthash', 'delete',                     ''), ('sticky', 'overchan-sticky', r'sticky\unsticky thread request'), \
+                               ('purge_root', 'delete', ''), ('delete_a',       'overchan-delete-attachment', ''), ('close',  'overchan-close',  r'closing\opening thread request')):
         self.censordb.execute("INSERT INTO evil_to_srnd VALUES (?, ?, ?)", (evil, srnd, comm))
       # received 0 - local, 1 - local and remote. send - 0 local, 1 - remote if secret key present else local. replayable (work from articles)- 0 not replay cmd , 1 - replay cmd
       self.censordb.execute("CREATE TABLE cmd_map (id INTEGER PRIMARY KEY, command text, received INTEGER DEFAULT -1, send INTEGER DEFAULT -1, replayable INTEGER DEFAULT -1)")
@@ -199,6 +199,12 @@ class main(threading.Thread):
       self.censordb.execute("INSERT INTO reasons VALUES (NULL,?)", ("disable",))
       self.censordb.execute('UPDATE cmd_map SET command = "overchan-delete-attachment" WHERE command = "overchan-delete-attach"')
       self.censordb.execute('UPDATE config SET value = "10" WHERE key = "db_version"')
+      self.censordb.commit()
+      current_version = 10
+    if current_version == 10:
+      self.log(self.logger.INFO, "updating db from version %i to version %i" % (current_version, 11))
+      self.censordb.execute('ALTER TABLE log ADD COLUMN source TEXT DEFAULT "local"')
+      self.censordb.execute('UPDATE config SET value = "11" WHERE key = "db_version"')
       self.censordb.commit()
 
   def run(self):
@@ -240,7 +246,7 @@ class main(threading.Thread):
           key_id = self.get_key_id(public_key)
           timestamp = int(time.time())
           for line in data.split("\n"):
-            self.handle_line(line, key_id, timestamp, False, True)
+            self.handle_line(line, key_id, timestamp)
         else:
           self.log(self.logger.WARNING, 'unknown source: %s' % source)
       except Queue.Empty as e:
@@ -413,7 +419,7 @@ class main(threading.Thread):
       if len(line) == 1:
         continue
       line = line.split('\n')[0]
-      self.handle_line(line, key_id, sent, is_replay, False)
+      self.handle_line(line, key_id, sent, is_replay, message_id)
 
   def redistribute_command(self, group, line, comment, timestamp):
     # TODO add universal redistributor? Add SRNd queue? Currents methods thread-safe?
@@ -424,7 +430,7 @@ class main(threading.Thread):
         else:
           self.log(self.logger.ERROR, 'unknown plugin hook detected. wtf? {}'.format(hook))
 
-  def handle_line(self, line, key_id, timestamp, is_replay, is_local):
+  def handle_line(self, line, key_id, timestamp, is_replay=False, source='local'):
     command = line.lower().split(" ", 1)[0]
     if '#' in line:
       line, comment = line.split("#", 1)
@@ -432,9 +438,9 @@ class main(threading.Thread):
     else:
       comment = ''
     if not command in self.command_mapper:
-      self.log(self.logger.INFO, "got unknown command: %s" % line)
+      self.log(self.logger.WARNING, 'got unknown command: "{}", source: "{}"'.format(line, source))
       return
-    accepted, reason_id = self.allowed(key_id, command, is_replay, is_local)
+    accepted, reason_id = self.allowed(key_id, command, is_replay, source == 'local')
     if self.command_cache[command][0] != -1:
       command_id = self.command_cache[command][0]
     else:
@@ -447,10 +453,10 @@ class main(threading.Thread):
           self.redistribute_command(group, line, comment, timestamp)
     else:
       data = line.lower().split(" ", 1)[-1].split(" ", 1)[0]
-      self.log(self.logger.DEBUG, "not authorized for '%s': %i" % (command, key_id))
+      self.log(self.logger.DEBUG, 'not authorized for "{}": {}. source: {}'.format(command, key_id, source))
     try:
-      self.censordb.execute('INSERT INTO log (accepted, command_id, data, key_id, reason_id, comment, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)', \
-        (accepted, command_id, data.decode('UTF-8'), key_id, reason_id, basicHTMLencode(comment).decode('UTF-8'), int(time.time())))
+      self.censordb.execute('INSERT INTO log (accepted, command_id, data, key_id, reason_id, comment, timestamp, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', \
+        (accepted, command_id, data.decode('UTF-8'), key_id, reason_id, basicHTMLencode(comment).decode('UTF-8'), int(time.time()), source))
       self.censordb.commit()
     except sqlite3.Error:
       pass
