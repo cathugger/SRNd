@@ -430,7 +430,13 @@ class main(threading.Thread):
         else:
           self.log(self.logger.ERROR, 'unknown plugin hook detected. wtf? {}'.format(hook))
 
-  def handle_line(self, line, key_id, timestamp, is_replay=False, source='local'):
+  def handle_line(self, line, key_id, timestamp, is_replay=False, message_id=None):
+    if message_id is None:
+      is_local = True
+      source = 'local'
+    else:
+      is_local = False
+      source = message_id
     command = line.lower().split(" ", 1)[0]
     if '#' in line:
       line, comment = line.split("#", 1)
@@ -440,7 +446,7 @@ class main(threading.Thread):
     if not command in self.command_mapper:
       self.log(self.logger.WARNING, 'got unknown command: "{}", source: "{}"'.format(line, source))
       return
-    accepted, reason_id = self.allowed(key_id, command, is_replay, source == 'local')
+    accepted, reason_id = self.allowed(key_id, command, is_replay, is_local)
     if self.command_cache[command][0] != -1:
       command_id = self.command_cache[command][0]
     else:
