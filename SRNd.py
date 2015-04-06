@@ -919,18 +919,18 @@ class SRNd(threading.Thread):
             while feed_ in self.feeds and c_count < wait_count:
               c_count += 1
               time.sleep(wait_time)
-            status = c_count < wait_count
+            status = feed_ not in self.feeds
       if args.get('hook') == 'plugin':
         for plugin in [xx for xx in self.plugins]:
           if plugin in args.get('targets', plugin):
-            status = True
             self.plugins[plugin].shutdown()
             c_count = 0
             while self.plugins[plugin].isAlive() and c_count < wait_count:
               c_count += 1
               time.sleep(wait_time)
-            del self.plugins[plugin]
-            status = c_count < wait_count
+            if not self.plugins[plugin].isAlive():
+              del self.plugins[plugin]
+              status = True
       return status
     self.log(self.logger.WARNING, 'Invalid control request: {}'.format(args))
     return False
