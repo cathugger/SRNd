@@ -666,12 +666,12 @@ class main(threading.Thread):
     self.dropperdb.close()
     self.log(self.logger.INFO, 'bye')
 
-  def move_censored_article(self, message_id):
-    if os.path.exists(os.path.join('articles', 'censored', message_id)):
+  def move_bad_article(self, message_id, to_path=os.path.join('articles', 'censored')):
+    if os.path.exists(os.path.join(to_path, message_id)):
       self.log(self.logger.DEBUG, "already move, still handing over to redistribute further")
     elif os.path.exists(os.path.join("articles", message_id)):
-      self.log(self.logger.DEBUG, "moving %s to articles/censored/" % message_id)
-      os.rename(os.path.join("articles", message_id), os.path.join("articles", "censored", message_id))
+      self.log(self.logger.DEBUG, 'moving {} to {}/'.format(message_id, to_path))
+      os.rename(os.path.join("articles", message_id), os.path.join(to_path, message_id))
       for row in self.dropperdb.execute('SELECT group_name, article_id from articles, groups WHERE message_id=? and groups.group_id = articles.group_id', (message_id,)).fetchall():
         self.log(self.logger.DEBUG, "deleting groups/%s/%i" % (row[0], row[1]))
         try:
@@ -679,8 +679,8 @@ class main(threading.Thread):
           os.unlink(os.path.join("groups", str(row[0]), str(row[1])))
         except OSError as e:
           self.log(self.logger.WARNING, "could not delete %s: %s" % (os.path.join("groups", str(row[0]), str(row[1])), e))
-    elif not os.path.exists(os.path.join('articles', 'censored', message_id)):
-      f = open(os.path.join('articles', 'censored', message_id), 'w')
+    elif not os.path.exists(os.path.join(to_path, message_id)):
+      f = open(os.path.join(to_path, message_id), 'w')
       f.close()
     return True
 
@@ -829,9 +829,10 @@ class main(threading.Thread):
       line = fd.readline()
 
     if not header_found:
-      #self.log(self.logger.WARNING, '%s malformed article' % message_id)
-      #return False
-      raise Exception('%s malformed article' % message_id)
+      fd.close()
+      to_path = os.path.join('articles', 'invalid')
+      self.log(self.logger.WARNING, '{} malformed article: Header not found. Move in {}'.format(message_id, to_path))
+      return self.move_bad_article(message_id, to_path)
     if signature:
       if public_key != '':
         self.log(self.logger.DEBUG, 'got signature with length %i and content \'%s\'' % (len(signature), signature))
@@ -946,7 +947,7 @@ class main(threading.Thread):
     if (not subject or subject == 'None') and (message == image_name == public_key == '') and (parent and parent != message_id) and (not sender or sender == 'Anonymous'):
       self.log(self.logger.INFO, 'censored empty child message  %s' % message_id)
       self.delete_orphan_attach(image_name, thumb_name)
-      return self.move_censored_article(message_id)
+      return self.move_bad_article(message_id)
 
     for group in groups:
       group_flags = self.sqlite.execute("SELECT flags FROM groups WHERE group_name=?", (group,)).fetchone()
@@ -957,11 +958,11 @@ class main(threading.Thread):
         if (group_flags & self.cache['flags']['spam-fix']) != 0 and len(message) < 5:
           self.log(self.logger.INFO, 'Spamprotect group %s, censored %s' % (group, message_id))
           self.delete_orphan_attach(image_name, thumb_name)
-          return self.move_censored_article(message_id)
+          return self.move_bad_article(message_id)
         elif (group_flags & self.cache['flags']['news']) != 0 and (not parent or parent == message_id) \
             and (public_key == '' or not self.check_moder_flags(public_key, 'overchan-news-add')):
           self.delete_orphan_attach(image_name, thumb_name)
-          return self.move_censored_article(message_id)
+          return self.move_bad_article(message_id)
         elif (group_flags & self.cache['flags']['sage']) != 0:
           sage = True
 
@@ -971,12 +972,12 @@ class main(threading.Thread):
       if parent_result and parent_result[0] != 0:
         self.log(self.logger.INFO, 'censored article %s for closed thread.' % message_id)
         self.delete_orphan_attach(image_name, thumb_name)
-        return self.move_censored_article(message_id)
+        return self.move_bad_article(message_id)
       elif parent_result is None and os.path.isfile(os.path.join("articles", "censored", parent)):
         # root post censored. Delete child post
         self.log(self.logger.INFO, 'Thread starting {} deleted. Delete a {}'.format(parent, message_id))
         self.delete_orphan_attach(image_name, thumb_name)
-        return self.move_censored_article(message_id)
+        return self.move_bad_article(message_id)
 
     group_ids = list()
     for group in groups:
