@@ -888,7 +888,7 @@ class SRNd(threading.Thread):
     self.feed_db.clear()
 
   def _load_outfeed_db(self, targets=None):
-    for target in self.feeds:
+    for target in (xx for xx in self.feeds if xx.startswith('outfeed-')):
       if self.feeds[target].sync_on_startup and targets is None or target in targets:
         self.feed_db[target] = self._trackdb_reder('{0}.trackdb'.format(target))
 
