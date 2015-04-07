@@ -63,9 +63,10 @@ class feed(threading.Thread):
         '101 i support to the following:',
         'VERSION 2',
         'IMPLEMENTATION artificial NNTP processing unit SRNd v0.1',
-        'POST'
-        'IHAVE'
-        'STREAMING'
+        'POST',
+        'IHAVE',
+        'STREAMING',
+        'SUPPORT'
         ]
     self.welcome = '200 welcome much to artificial NNTP processing unit some random NNTPd v0.1, posting allowed'
     self.current_group_id = -1
@@ -75,6 +76,7 @@ class feed(threading.Thread):
     self.articles_to_receive = set()
     self.byte_transfer = 1
     self.time_transfer = 0.1
+    self._max_send_size = None
     self._db_connector = db_connector
 
   def _outstream_flags_init(self):
@@ -440,7 +442,16 @@ class feed(threading.Thread):
         data += '\r\n'
       yield data
 
+  def _disallow_to_send(self, message_id):
+    if self._max_send_size is not None and self._max_send_size < os.path.getsize(os.path.join('articles', message_id)):
+      self.log(self.logger.INFO, 'not sending article {}. Server allow max file size {} bytes'.format(message_id, self._max_send_size))
+      return True
+    return False
+
   def send_article(self, message_id, state='sending_article'):
+    if self._disallow_to_send(message_id):
+      self.update_trackdb('000 {} disallow to send'.format(message_id))
+      return
     self.log(self.logger.INFO, 'sending article %s' % message_id)
     start_time = time.time()
     buff = 16384
@@ -478,6 +489,10 @@ class feed(threading.Thread):
       f.write('{0}\n'.format(message_id))
       f.close()
 
+  def _send_MODESTREAM(self):
+    self.send('MODE STREAM\r\n')
+    self.send('MODE STREAM\r\n')
+
   def handle_line(self, line):
     self.log(self.logger.VERBOSE, 'in: %s' % line)
     commands = line.upper().split(' ')
@@ -486,15 +501,22 @@ class feed(threading.Thread):
       return
     if self.outstream:
       if not self.outstream_ready:
+        if commands[0] == '101':
+          # check CAPABILITES
+          self.waitfor = 'CAPABILITIES'
+          self.multiline = True
         if commands[0] == '200':
-          # TODO check CAPABILITES
           self.cooldown_counter = 0
-          self.send('MODE STREAM\r\n')
-          self.send('MODE STREAM\r\n')
+          # send CAPABILITES
+          self.send('CAPABILITIES\r\n')
         elif commands[0] == '203':
           # MODE STREAM test successfull
           self.outstream_stream = True
           self.outstream_ready = True
+        elif commands[0] == '191':
+          # SUPPORT 191 = receive varlist
+          self.waitfor = 'SUPPORT'
+          self.multiline = True
         elif commands[0] == '501' or commands[0] == '500':
           if self.outstream_currently_testing == '':
             # MODE STREAM test failed
@@ -580,6 +602,16 @@ class feed(threading.Thread):
     elif commands[0] == 'CAPABILITIES':
       for cap in self.caps:
         self.send(cap + '\r\n')
+      self.send('.\r\n')
+    elif commands[0] == 'SUPPORT':
+      # 191 - initial SUPPORT reply
+      self.send('191 i support:\r\n')
+      # send support options. Format '<KEY> <value>\r\n'
+      # read direct option from infeeds config and send is as
+      if self.infeeds_config is not None:
+        for conf_key in self.infeeds_config.get('config', []):
+          if conf_key.upper().startswith('SUPPORT_'):
+            self.send('{} {}\r\n'.format(conf_key.upper()[8:], self.infeeds_config['config'][conf_key]))
       self.send('.\r\n')
     elif commands[0] == 'MODE' and len(commands) == 2 and commands[1] == 'STREAM':
       self.send('203 stream as you like\r\n')
@@ -693,16 +725,62 @@ class feed(threading.Thread):
         return True
     return False
 
+  def _check_SUPPORT(self, varlist):
+    for line in varlist:
+      key, val = line.split(' ', 1)
+      self.log(self.logger.DEBUG, 'Server support key="{}", value="{}"'.format(key, val))
+      if key == 'MAX_SEND_SIZE':
+        try:
+          self._max_send_size = int(val)
+        except ValueError:
+          pass
+        else:
+          if self._max_send_size < 20:
+            self._max_send_size = None
+        if self._max_send_size is None:
+          self.log(self.logger.WARNING, 'Error parsing MAX_SEND_SIZE: abnormal value "{}"'.format(val))
+        else:
+          self.log(self.logger.INFO, 'Server support maximum filesize: {} bytes'.format(self._max_send_size))
+    # initial start streaming
+    self._send_MODESTREAM()
+
+  def _check_CAPABILITIES(self, caps):
+    self.log(self.logger.DEBUG, 'Server caps: {}'.format(caps))
+    # WTF? Stop serving
+    if 'STREAMING' not in caps:
+      # hack for old servers
+      if 'STREAMING' not in caps[-1]:
+        self.log(self.logger.CRITICAL, "Server doesn't support STREAMING! EXTERMINATED!")
+        self.shutdown()
+        return
+    # server support SUPPORT, send it and wait response 191
+    if 'SUPPORT' in caps:
+      self.send('SUPPORT\r\n')
+    else:
+      # server don't support SUPPORT, go stream
+      self._send_MODESTREAM()
+
   def handle_multiline(self, handle_incoming):
     # TODO if variant != POST think about using message_id in handle_singleline for self.outfile = open(tmp/$message_id, 'w')
     # TODO also in handle_singleline: if os.path.exists(tmp/$message_id): retry later
-
-    self.byte_transfer += handle_incoming.read_byte
-    self.time_transfer += handle_incoming.transfer_time
-    if self.waitfor != 'article':
+    if  self.waitfor == 'SUPPORT':
+      self.waitfor = ''
+      self._check_SUPPORT(handle_incoming.header)
+      return
+    elif self.waitfor == 'CAPABILITIES':
+      self.waitfor = ''
+      self._check_CAPABILITIES(handle_incoming.header)
+      return
+    elif self.waitfor == 'article':
+      self.byte_transfer += handle_incoming.read_byte
+      self.time_transfer += handle_incoming.transfer_time
+    else:
       self.log(self.logger.INFO, 'should handle multi line while waiting for %s:' % self.waitfor)
       self.log(self.logger.INFO, ''.join(handle_incoming.header))
       self.log(self.logger.INFO, 'should handle multi line end')
+      self.waitfor = ''
+      self.variant = ''
+      return
     error = ''
     add_headers = list()
     self.articles_to_receive.discard(handle_incoming.message_id)
