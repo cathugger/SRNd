@@ -685,7 +685,7 @@ class SRNd(threading.Thread):
             self.log(self.logger.INFO, 'starting outfeed {} using proxy: {}'.format(name, str(proxy)))
         try:
           self.log(self.logger.DEBUG, 'starting outfeed: %s' % name)
-          self.feeds[name] = feed.feed(self, self.logger, outstream=True, host=host, port=port, sync_on_startup=sync_on_startup, proxy=proxy, debug=debuglevel, db_connector=self._db_manager.connect)
+          self.feeds[name] = feed.feed(self, self.logger, config={'config': start_params}, outstream=True, host=host, port=port, sync_on_startup=sync_on_startup, proxy=proxy, debug=debuglevel, db_connector=self._db_manager.connect)
           self.feeds[name].start()
         except Exception as e:
           self.log(self.logger.WARNING, 'could not start outfeed %s: %s' % (name, e))
@@ -990,7 +990,7 @@ class SRNd(threading.Thread):
             con = self.socket.accept()
             name = 'infeed-{0}-{1}'.format(con[1][0], con[1][1])
             if name not in self.feeds:
-              self.feeds[name] = feed.feed(self, self.logger, connection=con, debug=self.infeed_debug, db_connector=self._db_manager.connect, infeeds_config=self.infeeds_config)
+              self.feeds[name] = feed.feed(self, self.logger, config=self.infeeds_config, connection=con, debug=self.infeed_debug, db_connector=self._db_manager.connect)
               self.feeds[name].start()
             else:
               self.log(self.logger.WARNING, 'got connection from %s but its still in feeds. wtf?' % name)
@@ -1067,6 +1067,14 @@ class SRNd(threading.Thread):
   def relay_dropper_handler(self, signum, frame):
     #TODO: remove, this is not needed anymore at all?
     self.dropper.handler_progress_incoming(signum, frame)
+
+  def rename_infeed(self, old_name, new_name):
+    if not (old_name.startswith('infeed-') and new_name.startswith('infeed-')):
+      return False
+    if old_name in self.feeds and new_name not in self.feeds:
+      self.feeds[new_name] = self.feeds.pop(old_name)
+      return True
+    return False
 
   def watching(self):
     return self.dropper.watching

@@ -9,19 +9,12 @@ import string
 import threading
 import time
 import traceback
+from hashlib import sha512
+from binascii import hexlify, unhexlify
+
+import nacl.signing
 
 import sockssocket
-
-# send article:
-# f = open(os.path.join('invalid', item), 'r')
-# for line in f:
-#   if line[0] == '.': print '.' + line[:-1]
-#   else: print line[:-1]
-# f.close()
-
-# FIXME implement self.log
-# FIXME for all self.log use for line in "{0}".format(message).split('\n'):
-# FIXME for outfeeds add full_sync (every restart? just once? what about stats directory?)
 
 
 class feed(threading.Thread):
@@ -30,16 +23,17 @@ class feed(threading.Thread):
     if loglevel >= self.loglevel:
       self.logger.log(self.name, message, loglevel)
 
-  def __init__(self, master, logger, db_connector, connection=None, outstream=False, host=None, port=None, sync_on_startup=False, proxy=None, debug=2, infeeds_config=None):
+  def __init__(self, master, logger, config, db_connector, connection=None, outstream=False, host=None, port=None, sync_on_startup=False, proxy=None, debug=2):
     threading.Thread.__init__(self)
-    self.infeeds_config = infeeds_config
+    self.infeed_hooks = config.get('rules', None)
+    self.config = config.get('config', {})
     self.outstream = outstream
     self.loglevel = debug
-    #self.logger = logger
     self.logger = logger
     self.state = 'init'
     self.SRNd = master
     self.proxy = proxy
+    self._srnd_auth = self._srnd_auth_init()
     if outstream:
       self.host = host
       self.port = port
@@ -51,6 +45,7 @@ class feed(threading.Thread):
       self.rechecking = dict()
       self.rechecking_step = 0
     else:
+      self._auth_data = dict()
       self.socket = connection[0]
       self.fileno = self.socket.fileno()
       self.host = connection[1][0]
@@ -66,9 +61,11 @@ class feed(threading.Thread):
         'POST',
         'IHAVE',
         'STREAMING',
-        'SUPPORT'
+        'SUPPORT',
+        'SRNDAUTH'
         ]
     self.welcome = '200 welcome much to artificial NNTP processing unit some random NNTPd v0.1, posting allowed'
+    self._srndauth_requ = ('X-PUBKEY-ED25519', 'X-SIGNATURE-ED25519-SHA512')
     self.current_group_id = -1
     self.current_article_id = -1
     self.sync_on_startup = sync_on_startup
@@ -78,6 +75,9 @@ class feed(threading.Thread):
     self.time_transfer = 0.1
     self._max_send_size = None
     self._db_connector = db_connector
+
+  def _srnd_auth_init(self):
+    return self.outstream or self.config.get('srndauth_required', 'false').lower() in ('false', 'no')
 
   def _outstream_flags_init(self):
     self.outstream_stream = False
@@ -423,7 +423,8 @@ class feed(threading.Thread):
         self.log(self.logger.DEBUG, 'no response for {} - re-adding in queue'.format(add_article))
         self.add_article(add_article)
 
-  def _read_and_prepare(self, fd, buffsize):
+  @staticmethod
+  def _read_and_prepare(fd, buffsize):
     data = ''
     while True:
       data_in = fd.read(buffsize)
@@ -501,11 +502,20 @@ class feed(threading.Thread):
       return
     if self.outstream:
       if not self.outstream_ready:
-        if commands[0] == '101':
+        if commands[0] == 'SRNDAUTH':
+          self.cooldown_counter = 0
+          # server required SRDNAUTH
+          if len(commands) == 2:
+            self._outfeed_SRNDAUTH(commands[1])
+          else:
+            self.log(self.logger.ERROR, 'Recived incorrect SRNDAUTH. Authentication is not possible: {}'.format(line))
+            self.cooldown_counter = 3
+            self.con_broken = True
+        elif commands[0] == '101':
           # check CAPABILITES
           self.waitfor = 'CAPABILITIES'
           self.multiline = True
-        if commands[0] == '200':
+        elif commands[0] == '200':
           self.cooldown_counter = 0
           # send CAPABILITES
           self.send('CAPABILITIES\r\n')
@@ -517,6 +527,11 @@ class feed(threading.Thread):
           # SUPPORT 191 = receive varlist
           self.waitfor = 'SUPPORT'
           self.multiline = True
+        elif commands[0] == '281':
+          # SRNDAUTH 281 - access granted. send CAPABILITES, again
+          if len(commands) > 1:
+            self.log(self.logger.INFO, 'successful login using key {}'.format(commands[1].lower()))
+          self.send('CAPABILITIES\r\n')
         elif commands[0] == '501' or commands[0] == '500':
           if self.outstream_currently_testing == '':
             # MODE STREAM test failed
@@ -538,6 +553,14 @@ class feed(threading.Thread):
           self.send('.\r\n')
           self.outstream_ihave = True
           self.outstream_ready = True
+        elif commands[0] in ('481', '482'):
+          # SRNDAUTH 481 - key not allowed at this server
+          self.log(self.logger.WARNING, 'You key not allowed at this server')
+        elif commands[0] == '482':
+          # SRNDAUTH 482 - bad key or signature
+          self.log(self.logger.WARNING, 'bad key or signature')
+        else:
+          self.log(self.logger.WARNING, 'got unknown command: {}'.format(line))
         # FIXME how to treat try later for IHAVE and CHECK?
         return
       if commands[0] == '200':
@@ -599,6 +622,12 @@ class feed(threading.Thread):
         else:
           self.log(self.logger.ERROR, 'unknown response to POST: %s' % line)
       return
+    elif not self._srnd_auth:
+      # authentication required
+      if commands[0] == 'SRNDAUTH':
+        self._infeed_SRNDAUTH(commands[1:])
+      else:
+        self._infeed_SRNDAUTH([])
     elif commands[0] == 'CAPABILITIES':
       for cap in self.caps:
         self.send(cap + '\r\n')
@@ -608,10 +637,9 @@ class feed(threading.Thread):
       self.send('191 i support:\r\n')
       # send support options. Format '<KEY> <value>\r\n'
       # read direct option from infeeds config and send is as
-      if self.infeeds_config is not None:
-        for conf_key in self.infeeds_config.get('config', []):
-          if conf_key.upper().startswith('SUPPORT_'):
-            self.send('{} {}\r\n'.format(conf_key.upper()[8:], self.infeeds_config['config'][conf_key]))
+      for conf_key in self.config:
+        if conf_key.upper().startswith('SUPPORT_'):
+          self.send('{} {}\r\n'.format(conf_key.upper()[8:], self.config[conf_key]))
       self.send('.\r\n')
     elif commands[0] == 'MODE' and len(commands) == 2 and commands[1] == 'STREAM':
       self.send('203 stream as you like\r\n')
@@ -707,14 +735,14 @@ class feed(threading.Thread):
         else:
           self.send('430 i do not know much in {0}\r\n'.format(arg))
     else:
-      self.send('501 i much recommend in speak to the proper NNTP based on CAPABILITIES\r\n')
+      self.send('501 {} unknown. I much recommend in speak to the proper NNTP based on CAPABILITIES\r\n'.format(commands[0]))
 
   def _allow_groups(self, newsgroups):
-    if newsgroups == '' or self.infeeds_config is None:
+    if newsgroups == '' or self.infeed_hooks is None:
       return True
     groups = newsgroups.split(';') if ';' in newsgroups else newsgroups.split(',')
     for group in groups:
-      if not self._isgroup_in_rules(group, self.infeeds_config['rules']['whitelist']) or self._isgroup_in_rules(group, self.infeeds_config['rules']['blacklist']):
+      if not self._isgroup_in_rules(group, self.infeed_hooks['whitelist']) or self._isgroup_in_rules(group, self.infeed_hooks['blacklist']):
         return False
     return True
 
@@ -848,6 +876,91 @@ class feed(threading.Thread):
       self.log(self.logger.INFO, 'got duplicate article: %s does already exist. removing temporary file' % target)
     self.waitfor = ''
     self.variant = ''
+
+  def _check_sign(self, data):
+    try:
+      nacl.signing.VerifyKey(unhexlify(data[self._srndauth_requ[0]])).verify(sha512(data['secret']).digest(), unhexlify(data[self._srndauth_requ[1]]))
+    except Exception as e:
+      self.log(self.logger.DEBUG, 'could not verify signature: {}'.format(e))
+      return False
+    else:
+      return True
+
+  def _check_access_by_key(self, key):
+    #TODO: Implement This
+    return len(key) == 64
+
+  def _infeed_SRNDAUTH(self, cmd_list):
+    # empty, bad or first request
+    if len(cmd_list) != 2 or 'secret' not in self._auth_data or cmd_list[0] not in self._srndauth_requ:
+      #reinit and send
+      self._auth_data = dict()
+      self._auth_data['secret'] = ''.join(random.choice(string.ascii_uppercase+string.digits) for x in range(333))
+      self.send('SRNDAUTH {}\r\n'.format(self._auth_data['secret']))
+    else:
+      self._auth_data[cmd_list[0]] = cmd_list[1].lower()
+    # sleep 4-10s
+    time.sleep(random.uniform(4, 10))
+    # recive all data - check key
+    if len(self._auth_data) == 3:
+      if self._check_sign(self._auth_data):
+        if self._check_access_by_key(self._auth_data[self._srndauth_requ[0]]):
+          self._srnd_auth = True
+          self.send('281 {} access granted\r\n'.format(self._auth_data[self._srndauth_requ[0]]))
+        else:
+          self.send('481 {} key not allowed at this server\r\n'.format(self._auth_data[self._srndauth_requ[0]]))
+          self.log(self.logger.WARNING, '{} not allowed at this server'.format(self._auth_data[self._srndauth_requ[0]]))
+      else:
+        self.send('482 bad key or signature\r\n')
+        self.log(self.logger.WARNING, 'bad key or signature, key="{}" signature="{}"'.format(self._auth_data[self._srndauth_requ[0]], self._auth_data[[1]]))
+      del self._auth_data['secret']
+      del self._auth_data[self._srndauth_requ[1]]
+      if self._srnd_auth:
+        self._set_infeed_pretty_name()
+        self.log(self.logger.INFO, 'access granted for {}'.format(self._auth_data[self._srndauth_requ[0]]))
+      else:
+        del self._auth_data[self._srndauth_requ[0]]
+
+  def _set_infeed_pretty_name(self):
+    # rename infeed using pubkey
+    if self.config.get('pretty_name', 'false').lower() in ('true', 'yes'):
+      new_name = 'infeed-' + self._auth_data[self._srndauth_requ[0]]
+      if self.SRNd.rename_infeed(self.name, new_name):
+        self.name = new_name
+      else:
+        self.log(self.logger.WARNING, 'Error rename to {}'.format(new_name))
+
+  def _outfeed_SRNDAUTH(self, secret):
+    if 'srndauth_key' not in self.config:
+      self.log(self.logger.ERROR, 'Server required SRDNAUTH and srndauth_key not in outfeed config.')
+      self.shutdown()
+      return
+    pubkey = self._key_from_private(self.config['srndauth_key'])
+    if pubkey is None:
+      self.log(self.logger.ERROR, 'Private key invalid. Check srndauth_key in outfeed config')
+      self.shutdown()
+      return
+    if len(secret) != 333:
+      self.log(self.logger.WARNING, 'Response secret {} != 333. Authentication is not possible.'.format(len(secret)))
+      self.cooldown_counter = 3
+      self.con_broken = True
+      return
+    sign = self._create_sign(self.config['srndauth_key'], secret)
+    if sign is not None:
+      self.send('SRNDAUTH {} {}\r\n'.format(self._srndauth_requ[0], pubkey))
+      self.send('SRNDAUTH {} {}\r\n'.format(self._srndauth_requ[1], sign))
+
+  @staticmethod
+  def _create_sign(priv_key, secret):
+    keypair = nacl.signing.SigningKey(unhexlify(priv_key))
+    return hexlify(keypair.sign(sha512(secret).digest()).signature)
+
+  @staticmethod
+  def _key_from_private(priv_key):
+    try:
+      return hexlify(nacl.signing.SigningKey(unhexlify(priv_key)).verify_key.encode())
+    except:
+      return None
 
 class HandleIncoming(object):
   def __init__(self, infeed_name='_unnamed_', tmp_path=os.path.join('incoming', 'tmp')):
