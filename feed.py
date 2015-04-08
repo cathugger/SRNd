@@ -553,7 +553,7 @@ class feed(threading.Thread):
           self.send('.\r\n')
           self.outstream_ihave = True
           self.outstream_ready = True
-        elif commands[0] in ('481', '482'):
+        elif commands[0] == '481':
           # SRNDAUTH 481 - key not allowed at this server
           self.log(self.logger.WARNING, 'You key not allowed at this server')
         elif commands[0] == '482':
@@ -791,7 +791,7 @@ class feed(threading.Thread):
   def handle_multiline(self, handle_incoming):
     # TODO if variant != POST think about using message_id in handle_singleline for self.outfile = open(tmp/$message_id, 'w')
     # TODO also in handle_singleline: if os.path.exists(tmp/$message_id): retry later
-    if  self.waitfor == 'SUPPORT':
+    if self.waitfor == 'SUPPORT':
       self.waitfor = ''
       self._check_SUPPORT(handle_incoming.header)
       return
