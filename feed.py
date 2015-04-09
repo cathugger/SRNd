@@ -26,14 +26,16 @@ class feed(threading.Thread):
   def __init__(self, master, logger, config, db_connector, connection=None, outstream=False, host=None, port=None, sync_on_startup=False, proxy=None, debug=2):
     threading.Thread.__init__(self)
     self.infeed_hooks = config.get('rules', None)
-    self.config = config.get('config', {})
+    self.config = config['config']
     self.outstream = outstream
     self.loglevel = debug
     self.logger = logger
     self.state = 'init'
     self.SRNd = master
     self.proxy = proxy
-    self._srnd_auth = self._srnd_auth_init()
+    self._srnd_auth = False
+    self._caps_cache = None
+    self._handshake_state = False
     if outstream:
       self.host = host
       self.port = port
@@ -61,9 +63,11 @@ class feed(threading.Thread):
         'POST',
         'IHAVE',
         'STREAMING',
-        'SUPPORT',
-        'SRNDAUTH'
+        'SUPPORT'
         ]
+    # append caps
+    if self.config['srndauth_required'] > 0:
+      self.caps.append('SRNDAUTH')
     self.welcome = '200 welcome much to artificial NNTP processing unit some random NNTPd v0.1, posting allowed'
     self._srndauth_requ = ('X-PUBKEY-ED25519', 'X-SIGNATURE-ED25519-SHA512')
     self.current_group_id = -1
@@ -76,10 +80,10 @@ class feed(threading.Thread):
     self._max_send_size = None
     self._db_connector = db_connector
 
-  def _srnd_auth_init(self):
-    return self.outstream or self.config.get('srndauth_required', 'false').lower() in ('false', 'no')
-
   def _outstream_flags_init(self):
+    self._handshake_state = False
+    self._srnd_auth = False
+    self._caps_cache = None
     self.outstream_stream = False
     self.outstream_ihave = False
     self.outstream_post = False
@@ -336,41 +340,35 @@ class feed(threading.Thread):
         for part in parts:
           if not self.multiline:
             self.handle_line(part)
-          elif len(part) != 1:
+          elif len(part) != 1 or part[0] != '.':
             incoming_file.add(part)
             self.log(self.logger.VERBOSE, 'multiline in: %s' % part)
           else:
-            if part[0] == '.':
-              incoming_file.complit()
-              self.handle_multiline(incoming_file)
-              incoming_file.bye()
-              self.multiline = False
-              incoming_file = HandleIncoming(infeed_name=self.name)
-            else:
-              incoming_file.add(part)
-              self.log(self.logger.VERBOSE, 'multiline in: %s' % part)
-          if not self.multiline:
-            self.state = 'idle'
+            incoming_file.complit()
+            self.handle_multiline(incoming_file)
+            incoming_file.bye()
+            self.multiline = False
+            incoming_file = HandleIncoming(infeed_name=self.name)
+        if not self.multiline and self._handshake_state:
+          self.state = 'idle'
         continue
-      else:
-        #print "[{0}] timeout hit, state = {1}".format(self.name, self.state)
-        if self.outstream_ready and self.state == 'idle':
-          #print "[{0}] queue size: {1}".format(self.name, self.queue.qsize())
-          self._recheck_sending()
-          if self.outstream_stream:
-            if len(self.articles_to_send) > 0:
-              self._worker_send_article_stream()
-            else:
-              self._worker_send_check_stream()
-            self.state = 'idle'
-          elif self.queue.qsize() > 0 and not self.con_broken:
-            #print "[{0}] got message-id {1}".format(self.name, self.message_id)
-            if self.outstream_ihave:
-              self._send_new_check('IHAVE')
-            elif self.outstream_post:
-              self.message_id = self.queue.get()
-              self.send('POST\r\n')
-          self._bump_outstream_qsize()
+      elif self.outstream_ready and self.state == 'idle':
+        #print "[{0}] queue size: {1}".format(self.name, self.queue.qsize())
+        self._recheck_sending()
+        if self.outstream_stream:
+          if len(self.articles_to_send) > 0:
+            self._worker_send_article_stream()
+          else:
+            self._worker_send_check_stream()
+          self.state = 'idle'
+        elif self.queue.qsize() > 0 and not self.con_broken:
+          #print "[{0}] got message-id {1}".format(self.name, self.message_id)
+          if self.outstream_ihave:
+            self._send_new_check('IHAVE')
+          elif self.outstream_post:
+            self.message_id = self.queue.get()
+            self.send('POST\r\n')
+        self._bump_outstream_qsize()
     self.log(self.logger.INFO, 'client disconnected')
     incoming_file.bye()
     self.socket.close()
@@ -494,6 +492,13 @@ class feed(threading.Thread):
     self.send('MODE STREAM\r\n')
     self.send('MODE STREAM\r\n')
 
+  def _get_CAPABILITIES(self):
+    if self._caps_cache is None:
+      self.send('CAPABILITIES\r\n')
+    else:
+      # CAPABILITIES already reading. Use cache
+      self._check_CAPABILITIES(self._caps_cache)
+
   def handle_line(self, line):
     self.log(self.logger.VERBOSE, 'in: %s' % line)
     commands = line.upper().split(' ')
@@ -504,7 +509,7 @@ class feed(threading.Thread):
       if not self.outstream_ready:
         if commands[0] == 'SRNDAUTH':
           self.cooldown_counter = 0
-          # server required SRDNAUTH
+          # server allowed\required SRDNAUTH
           if len(commands) == 2:
             self._outfeed_SRNDAUTH(commands[1])
           else:
@@ -517,21 +522,26 @@ class feed(threading.Thread):
           self.multiline = True
         elif commands[0] == '200':
           self.cooldown_counter = 0
-          # send CAPABILITES
-          self.send('CAPABILITIES\r\n')
+          # check server CAPABILITES
+          self._get_CAPABILITIES()
         elif commands[0] == '203':
           # MODE STREAM test successfull
           self.outstream_stream = True
           self.outstream_ready = True
+          self._handshake_state = True
         elif commands[0] == '191':
           # SUPPORT 191 = receive varlist
           self.waitfor = 'SUPPORT'
           self.multiline = True
         elif commands[0] == '281':
-          # SRNDAUTH 281 - access granted. send CAPABILITES, again
-          if len(commands) > 1:
-            self.log(self.logger.INFO, 'successful login using key {}'.format(commands[1].lower()))
-          self.send('CAPABILITIES\r\n')
+          # SRNDAUTH 281 - access granted. check server CAPABILITES
+          if len(commands) > 1 and len(commands[1]) == 64:
+            rec_key = commands[1].lower()
+          else:
+            rec_key = 'you key'
+          self.log(self.logger.INFO, 'successful login using {}'.format(rec_key))
+          self._srnd_auth = True
+          self._get_CAPABILITIES()
         elif commands[0] == '501' or commands[0] == '500':
           if self.outstream_currently_testing == '':
             # MODE STREAM test failed
@@ -541,6 +551,7 @@ class feed(threading.Thread):
             # IHAVE test failed
             self.outstream_post = True
             self.outstream_ready = True
+            self._handshake_state = True
             if self.queue.qsize() > 0:
               self.message_id = self.queue.get()
               self.send('POST\r\n')
@@ -548,17 +559,25 @@ class feed(threading.Thread):
           # IHAVE test successfull
           self.outstream_ihave = True
           self.outstream_ready = True
+          self._handshake_state = True
         elif commands[0] == '335':
           # IHAVE test successfull
           self.send('.\r\n')
           self.outstream_ihave = True
           self.outstream_ready = True
+          self._handshake_state = True
         elif commands[0] == '481':
           # SRNDAUTH 481 - key not allowed at this server
-          self.log(self.logger.WARNING, 'You key not allowed at this server')
+          if len(commands) > 1 and len(commands[1]) == 64:
+            rec_key = commands[1].lower()
+          else:
+            rec_key = 'You key'
+          self.log(self.logger.WARNING, '{} not allowed at this server'.format(rec_key))
+          self.state = 'SRNDAUTH_reject'
         elif commands[0] == '482':
           # SRNDAUTH 482 - bad key or signature
           self.log(self.logger.WARNING, 'bad key or signature')
+          self.state = 'SRNDAUTH_error'
         else:
           self.log(self.logger.WARNING, 'got unknown command: {}'.format(line))
         # FIXME how to treat try later for IHAVE and CHECK?
@@ -622,26 +641,35 @@ class feed(threading.Thread):
         else:
           self.log(self.logger.ERROR, 'unknown response to POST: %s' % line)
       return
-    elif not self._srnd_auth:
-      # authentication required
+    elif commands[0] == 'CAPABILITIES':
+      # send CAPABILITIES. Work before authentication
+      self.send('\r\n'.join(('\r\n'.join(self.caps), '.\r\n')), 'CAPABILITIES')
+    elif not self._srnd_auth and (self.config['srndauth_required'] == 2 or (commands[0] == 'SRNDAUTH' and self.config['srndauth_required'] == 1)):
+      # not authenticated and (authentication required or (cliens send SRNDAUTH and authentication allow))
       if commands[0] == 'SRNDAUTH':
         self._infeed_SRNDAUTH(commands[1:])
       else:
         self._infeed_SRNDAUTH([])
-    elif commands[0] == 'CAPABILITIES':
-      for cap in self.caps:
-        self.send(cap + '\r\n')
-      self.send('.\r\n')
+    elif commands[0] == 'SRNDAUTH':
+      # already authenticated or authentication disallow. WTF?
+      if self._srnd_auth:
+        if self._srndauth_requ[0] in self._auth_data:
+          self.send('281 {} already authenticated\r\n'.format(self._auth_data[self._srndauth_requ[0]]), 'SRNDAUTH_double')
+        else:
+          self.log(self.logger.ERROR, 'Internal error: self._srnd_auth=True and {} not in self._auth_data'.format(self._srndauth_requ[0]))
+      else:
+        self.send('501 {} not support. I much recommend in speak to the proper NNTP based on CAPABILITIES\r\n'.format(commands[0]), 'SRNDAUTH_501')
     elif commands[0] == 'SUPPORT':
       # 191 - initial SUPPORT reply
-      self.send('191 i support:\r\n')
+      self.send('191 i support:\r\n', 'SUPPORT')
       # send support options. Format '<KEY> <value>\r\n'
       # read direct option from infeeds config and send is as
       for conf_key in self.config:
-        if conf_key.upper().startswith('SUPPORT_'):
-          self.send('{} {}\r\n'.format(conf_key.upper()[8:], self.config[conf_key]))
-      self.send('.\r\n')
+        if conf_key.startswith('support_'):
+          self.send('{} {}\r\n'.format(conf_key.upper()[8:], self.config[conf_key]), 'SUPPORT')
+      self.send('.\r\n', 'SUPPORT')
     elif commands[0] == 'MODE' and len(commands) == 2 and commands[1] == 'STREAM':
+      self._handshake_state = True
       self.send('203 stream as you like\r\n')
     #elif commands[0] == 'MODE' and commands[1] == 'READER':
     #  self.send('502 i recommend in check to the CAPABILITIES\r\n')
@@ -672,11 +700,13 @@ class feed(threading.Thread):
       self.message_id_takethis = line.split(' ', 1)[1]
       self.multiline = True
     elif commands[0] == 'POST':
+      self._handshake_state = True
       self.send('340 go ahead, send to the article\r\n')
       self.waitfor = 'article'
       self.variant = 'POST'
       self.multiline = True
     elif commands[0] == 'IHAVE':
+      self._handshake_state = True
       arg = line.split(' ', 1)[1]
       if '/' in arg:
         self.send('435 illegal message-id\r\n')
@@ -695,6 +725,7 @@ class feed(threading.Thread):
       self.variant = 'IHAVE'
       self.multiline = True
     elif commands[0] == 'STAT':
+      self._handshake_state = True
       if len(commands) == 1:
         # STAT without arguments
         if self.current_group_id == -1:
@@ -773,7 +804,6 @@ class feed(threading.Thread):
     self._send_MODESTREAM()
 
   def _check_CAPABILITIES(self, caps):
-    self.log(self.logger.DEBUG, 'Server caps: {}'.format(caps))
     # WTF? Stop serving
     if 'STREAMING' not in caps:
       # hack for old servers
@@ -781,11 +811,14 @@ class feed(threading.Thread):
         self.log(self.logger.CRITICAL, "Server doesn't support STREAMING! EXTERMINATED!")
         self.shutdown()
         return
+    # server support SRNDAUTH and key present and not authenticate. authentication
+    if 'SRNDAUTH' in caps and self.config['srndauth_key'] is not None and not self._srnd_auth:
+      self.send('SRNDAUTH\r\n')
     # server support SUPPORT, send it and wait response 191
-    if 'SUPPORT' in caps:
+    elif 'SUPPORT' in caps:
       self.send('SUPPORT\r\n')
     else:
-      # server don't support SUPPORT, go stream
+      # old server, go stream
       self._send_MODESTREAM()
 
   def handle_multiline(self, handle_incoming):
@@ -797,6 +830,9 @@ class feed(threading.Thread):
       return
     elif self.waitfor == 'CAPABILITIES':
       self.waitfor = ''
+      # save caps in cache
+      self._caps_cache = list(handle_incoming.header)
+      self.log(self.logger.DEBUG, 'Server caps: {}'.format(handle_incoming.header))
       self._check_CAPABILITIES(handle_incoming.header)
       return
     elif self.waitfor == 'article':
@@ -896,7 +932,7 @@ class feed(threading.Thread):
       #reinit and send
       self._auth_data = dict()
       self._auth_data['secret'] = ''.join(random.choice(string.ascii_uppercase+string.digits) for x in range(333))
-      self.send('SRNDAUTH {}\r\n'.format(self._auth_data['secret']))
+      self.send('SRNDAUTH {}\r\n'.format(self._auth_data['secret']), 'SRNDAUTH')
     else:
       self._auth_data[cmd_list[0]] = cmd_list[1].lower()
     # sleep 4-10s
@@ -906,33 +942,33 @@ class feed(threading.Thread):
       if self._check_sign(self._auth_data):
         if self._check_access_by_key(self._auth_data[self._srndauth_requ[0]]):
           self._srnd_auth = True
-          self.send('281 {} access granted\r\n'.format(self._auth_data[self._srndauth_requ[0]]))
+          self.send('281 {} access granted\r\n'.format(self._auth_data[self._srndauth_requ[0]]), 'SRNDAUTH_ok')
         else:
-          self.send('481 {} key not allowed at this server\r\n'.format(self._auth_data[self._srndauth_requ[0]]))
+          self.send('481 {} key not allowed at this server\r\n'.format(self._auth_data[self._srndauth_requ[0]]), 'SRNDAUTH_reject')
           self.log(self.logger.WARNING, '{} not allowed at this server'.format(self._auth_data[self._srndauth_requ[0]]))
       else:
-        self.send('482 bad key or signature\r\n')
+        self.send('482 bad key or signature\r\n', 'SRNDAUTH_error')
         self.log(self.logger.WARNING, 'bad key or signature, key="{}" signature="{}"'.format(self._auth_data[self._srndauth_requ[0]], self._auth_data[[1]]))
-      del self._auth_data['secret']
-      del self._auth_data[self._srndauth_requ[1]]
+      del self._auth_data['secret'], self._auth_data[self._srndauth_requ[1]]
       if self._srnd_auth:
-        self._set_infeed_pretty_name()
+        if self.config['pretty_name']:
+          # rename infeed using pubkey
+          self._set_infeed_pretty_name()
         self.log(self.logger.INFO, 'access granted for {}'.format(self._auth_data[self._srndauth_requ[0]]))
       else:
         del self._auth_data[self._srndauth_requ[0]]
 
   def _set_infeed_pretty_name(self):
-    # rename infeed using pubkey
-    if self.config.get('pretty_name', 'false').lower() in ('true', 'yes'):
-      new_name = 'infeed-' + self._auth_data[self._srndauth_requ[0]]
-      if self.SRNd.rename_infeed(self.name, new_name):
-        self.name = new_name
-      else:
-        self.log(self.logger.WARNING, 'Error rename to {}'.format(new_name))
+    new_name = 'infeed-' + self._auth_data[self._srndauth_requ[0]]
+    if self.SRNd.rename_infeed(self.name, new_name):
+      self.name = new_name
+    else:
+      self.log(self.logger.WARNING, 'Error rename to {}'.format(new_name))
 
   def _outfeed_SRNDAUTH(self, secret):
-    if 'srndauth_key' not in self.config:
-      self.log(self.logger.ERROR, 'Server required SRDNAUTH and srndauth_key not in outfeed config.')
+    if
+    if self.config['srndauth_key'] is None:
+      self.log(self.logger.ERROR, 'Server required SRDNAUTH and srndauth_key not in outfeed config or invalid.')
       self.shutdown()
       return
     pubkey = self._key_from_private(self.config['srndauth_key'])
@@ -947,8 +983,8 @@ class feed(threading.Thread):
       return
     sign = self._create_sign(self.config['srndauth_key'], secret)
     if sign is not None:
-      self.send('SRNDAUTH {} {}\r\n'.format(self._srndauth_requ[0], pubkey))
-      self.send('SRNDAUTH {} {}\r\n'.format(self._srndauth_requ[1], sign))
+      self.send('SRNDAUTH {} {}\r\n'.format(self._srndauth_requ[0], pubkey), 'SRNDAUTH')
+      self.send('SRNDAUTH {} {}\r\n'.format(self._srndauth_requ[1], sign), 'SRNDAUTH')
 
   @staticmethod
   def _create_sign(priv_key, secret):

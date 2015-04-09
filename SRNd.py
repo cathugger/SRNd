@@ -462,7 +462,9 @@ class SRNd(threading.Thread):
     if not os.path.isfile(cfg_file):
       with open(cfg_file, 'w') as f:
         f.write('# see docs/hooks.txt for a detailed description about the hook configuration syntax.\n\n')
-        f.write('# All infeeds use this config\n\n\n\n')
+        f.write('# All infeeds use this config\n\n')
+        f.write('# 0 - SRNDAUTH disallowed, 1 - SRNDAUTH allowed, 2 - SRNDAUTH required (WARNING! Not work with original srnd)\n')
+        f.write('#start_param srndauth_required=0\n\n\n')
         f.write('# allow all groups\n')
         f.write('*\n')
     rules = self._read_hook_rules(cfg_file)
@@ -478,7 +480,7 @@ class SRNd(threading.Thread):
         output_log.append('blacklist')
         output_log.extend([' {}'.format(x) for x in rules['blacklist']])
       self.log(self.logger.INFO, '\n'.join(output_log))
-    return {'rules': rules, 'config': self._config_reader(cfg_file)}
+    return {'rules': rules, 'config': self._feed_config_sanitize(self._config_reader(cfg_file))}
 
   def update_hooks(self):
     self.log(self.logger.INFO, 'reading hook configuration..')
@@ -685,7 +687,18 @@ class SRNd(threading.Thread):
             self.log(self.logger.INFO, 'starting outfeed {} using proxy: {}'.format(name, str(proxy)))
         try:
           self.log(self.logger.DEBUG, 'starting outfeed: %s' % name)
-          self.feeds[name] = feed.feed(self, self.logger, config={'config': start_params}, outstream=True, host=host, port=port, sync_on_startup=sync_on_startup, proxy=proxy, debug=debuglevel, db_connector=self._db_manager.connect)
+          self.feeds[name] = feed.feed(
+              self,
+              self.logger,
+              config={'config': self._feed_config_sanitize(start_params)},
+              outstream=True,
+              host=host,
+              port=port,
+              sync_on_startup=sync_on_startup,
+              proxy=proxy,
+              debug=debuglevel,
+              db_connector=self._db_manager.connect
+          )
           self.feeds[name].start()
         except Exception as e:
           self.log(self.logger.WARNING, 'could not start outfeed %s: %s' % (name, e))
@@ -1075,6 +1088,26 @@ class SRNd(threading.Thread):
       self.feeds[new_name] = self.feeds.pop(old_name)
       return True
     return False
+
+  def _feed_config_sanitize(self, config):
+    # 0 - disallow 1 - allow 2 - required
+    try:
+      srndauth_required = int(config.get('srndauth_required', 0))
+    except ValueError:
+      srndauth_required = None
+    if srndauth_required is None or 2 < srndauth_required < 0:
+      self.log(self.logger.WARNING, 'abnormal value srndauth_required={}. Set 0 - diwallow'.format(srndauth_required))
+      srndauth_required = 0
+    config['srndauth_required'] = srndauth_required
+    if 'pretty_name' in config and config['pretty_name'].lower() in ('true', 'yes', '1'):
+      config['pretty_name'] = True
+    else:
+      config['pretty_name'] = False
+    config['srndauth_key'] = config.get('srndauth_key', None)
+    if config['srndauth_key'] is not None and len(config['srndauth_key']) != 64:
+      self.log(self.logger.WARNING, 'len srndauth_key != 64. Set None')
+      config['srndauth_key'] = None
+    return config
 
   def watching(self):
     return self.dropper.watching
