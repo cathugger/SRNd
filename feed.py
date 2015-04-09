@@ -180,7 +180,7 @@ class feed(threading.Thread):
     self.sqlite_dropper = self._db_connector('dropper', timeout=60)
     self.running = True
     connected = False
-    self.multiline = False
+    self.in_buffer = InBuffer()
     self.multiline_out = False
     self.cooldown_period = 60
     self.cooldown_counter = 0
@@ -237,7 +237,6 @@ class feed(threading.Thread):
     poll = poll.poll
     incoming_file = HandleIncoming(infeed_name=self.name)
     self.con_broken = False
-    in_buffer = ''
     while self.running:
       if self.con_broken:
         if not self.outstream:
@@ -270,6 +269,14 @@ class feed(threading.Thread):
             self.log(self.logger.INFO, 'reconnecting..')
             try:
               self.socket.connect((self.host, self.port))
+            except socket.error as e:
+              # FIXME: check sockssocket sources again, might be required to recreate the proxy with break as well
+              self.log(self.logger.ERROR, 'unhandled reconnect socks.error: %s' % e)
+            except sockssocket.ProxyError as e:
+              self.log(self.logger.ERROR, 'unhandled reconnect ProxyError: %s' % e)
+              #if self.debug > 1: print "[%s] recreating proxy socket" % self.name
+              break
+            else:
               if self.cooldown_counter == 10:
                 self.log(self.logger.DEBUG, 'connection established via proxy %s' % str(self.proxy))
               else:
@@ -279,24 +286,17 @@ class feed(threading.Thread):
               poll = select.poll()
               poll.register(self.socket.fileno(), select.POLLIN | select.POLLPRI)
               poll = poll.poll
-              in_buffer = ''
-              self.multiline = False
+              self.in_buffer.reset()
               self.reconnect = False
               self.state = 'idle'
-            except socket.error as e:
-              # FIXME: check sockssocket sources again, might be required to recreate the proxy with break as well
-              self.log(self.logger.ERROR, 'unhandled reconnect socks.error: %s' % e)
-            except sockssocket.ProxyError as e:
-              self.log(self.logger.ERROR, 'unhandled reconnect ProxyError: %s' % e)
-              #if self.debug > 1: print "[%s] recreating proxy socket" % self.name
-              break
           if not self.running: break
           if not connected: continue
       if poll(self.polltimeout):
-        self.state = 'receiving_article' if self.multiline else 'receiving'
-        cur_len = len(in_buffer)
+        self.state = 'receiving_article' if self.in_buffer.multiline else 'receiving'
         try:
-          in_buffer += self.socket.recv(self.buffersize)
+          if not self.in_buffer.add(self.socket.recv(self.buffersize)):
+            self.con_broken = True
+            continue
         except socket.error as e:
           self.log(self.logger.DEBUG, 'exception at socket.recv(): socket.error.errno: %s, socket.error: %s' % (e.errno, e))
           if e.errno == 11:
@@ -319,37 +319,20 @@ class feed(threading.Thread):
           self.log(self.logger.ERROR, 'exception at socket.recv(); sockssocket.proxy error.errno: %i, sockssocket.proxy error: %s' % (e.errno, e))
           self.con_broken = True
           continue
-            #if self.debug > 1: print "[{0}] connection problem: {1}".format(self.name, e)
-            #self.con_broken = True
-            #break
-        received = len(in_buffer) - cur_len
-        #print "[{0}] received: {1}".format(self.name, received)
-        if received == 0:
-          self.con_broken = True
-          continue
-        if not '\r\n' in in_buffer:
-          continue
-        parts = in_buffer.split('\r\n')
-        if in_buffer[-2:] == '\r\n':
-          in_buffer = ''
-          #print "[{0}] received full message with {1} parts".format(self.name, len(parts) - 1)
-        else:
-          in_buffer = parts[-1]
-          #print "[{0}] received incomplete message with {1} valid parts".format(self.name, len(parts) - 1)
-        del parts[-1]
-        for part in parts:
-          if not self.multiline:
-            self.handle_line(part)
-          elif len(part) != 1 or part[0] != '.':
-            incoming_file.add(part)
-            self.log(self.logger.VERBOSE, 'multiline in: %s' % part)
-          else:
+        for line in self.in_buffer.read():
+          # multiline data complit. Processing
+          if line is False:
             incoming_file.complit()
             self.handle_multiline(incoming_file)
             incoming_file.bye()
-            self.multiline = False
             incoming_file = HandleIncoming(infeed_name=self.name)
-        if not self.multiline and self._handshake_state:
+          elif self.in_buffer.multiline:
+            self.log(self.logger.VERBOSE, 'multiline in: %s' % line)
+            incoming_file.add(line)
+          else:
+            self.handle_line(line)
+
+        if not self.in_buffer.multiline and self._handshake_state:
           self.state = 'idle'
         continue
       elif self.outstream_ready and self.state == 'idle':
@@ -519,7 +502,7 @@ class feed(threading.Thread):
         elif commands[0] == '101':
           # check CAPABILITES
           self.waitfor = 'CAPABILITIES'
-          self.multiline = True
+          self.in_buffer.set_multiline()
         elif commands[0] == '200':
           self.cooldown_counter = 0
           # check server CAPABILITES
@@ -532,7 +515,7 @@ class feed(threading.Thread):
         elif commands[0] == '191':
           # SUPPORT 191 = receive varlist
           self.waitfor = 'SUPPORT'
-          self.multiline = True
+          self.in_buffer.set_multiline()
         elif commands[0] == '281':
           # SRNDAUTH 281 - access granted. check server CAPABILITES
           if len(commands) > 1 and len(commands[1]) == 64:
@@ -698,13 +681,13 @@ class feed(threading.Thread):
       self.waitfor = 'article'
       self.variant = 'TAKETHIS'
       self.message_id_takethis = line.split(' ', 1)[1]
-      self.multiline = True
+      self.in_buffer.set_multiline()
     elif commands[0] == 'POST':
       self._handshake_state = True
       self.send('340 go ahead, send to the article\r\n')
       self.waitfor = 'article'
       self.variant = 'POST'
-      self.multiline = True
+      self.in_buffer.set_multiline()
     elif commands[0] == 'IHAVE':
       self._handshake_state = True
       arg = line.split(' ', 1)[1]
@@ -723,7 +706,7 @@ class feed(threading.Thread):
       self.send('335 go ahead, send to the article\r\n'.format(arg))
       self.waitfor = 'article'
       self.variant = 'IHAVE'
-      self.multiline = True
+      self.in_buffer.set_multiline()
     elif commands[0] == 'STAT':
       self._handshake_state = True
       if len(commands) == 1:
@@ -966,7 +949,6 @@ class feed(threading.Thread):
       self.log(self.logger.WARNING, 'Error rename to {}'.format(new_name))
 
   def _outfeed_SRNDAUTH(self, secret):
-    if
     if self.config['srndauth_key'] is None:
       self.log(self.logger.ERROR, 'Server required SRDNAUTH and srndauth_key not in outfeed config or invalid.')
       self.shutdown()
@@ -1094,3 +1076,38 @@ class HandleIncoming(object):
     self._no_data = True
     if os.path.isfile(self._article_path):
       os.remove(self._article_path)
+
+class InBuffer(object):
+  def __init__(self):
+    self.reset()
+
+  def set_multiline(self):
+    self.multiline = True
+
+  def add(self, data):
+    # no data. Need reconnection
+    if len(data) == 0:
+      return False
+    self._buffer += data
+    if not '\r\n' in self._buffer:
+      return True
+    split_data = self._buffer.split('\r\n')
+    self._buffer = split_data.pop(-1)
+    self._data.extend(split_data)
+    return True
+
+  def read(self):
+    if self._data:
+      for line in self._data:
+        if len(line) == 1 and line[0] == '.':
+          self.multiline = False
+          # multiline is complit
+          yield False
+        else:
+          yield line
+      del self._data[:]
+
+  def reset(self):
+    self._buffer = ''
+    self.multiline = False
+    self._data = []
