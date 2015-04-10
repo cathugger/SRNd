@@ -19,7 +19,7 @@ except ImportError:
 
 import dropper
 import feeds.feed as feed
-from feeds.outfeed import OutFeed, MultiInFeed
+from feeds.feed_wrapper import OutFeed, MultiInFeed
 
 class SRNd(threading.Thread):
 
