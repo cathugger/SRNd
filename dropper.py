@@ -1,7 +1,7 @@
 #!/usr/bin/python
 import threading
-import sqlite3
 import os
+import sqlite3
 import time
 import random
 import string
@@ -36,7 +36,7 @@ class dropper(threading.Thread):
                (message_id text PRIMARY KEY, message_id_hash text, sender_desthash text)''')
     try:
       self.sqlite_hasher.execute('ALTER TABLE article_hashes ADD COLUMN sender_desthash text DEFAULT ""')
-    except:
+    except sqlite3.OperationalError:
       pass
     self.sqlite_hasher.execute('CREATE INDEX IF NOT EXISTS article_desthash_idx ON article_hashes(sender_desthash);')
     self.sqlite_hasher.execute('CREATE INDEX IF NOT EXISTS article_hash_idx ON article_hashes(message_id_hash);')
@@ -44,9 +44,8 @@ class dropper(threading.Thread):
     self.reqs = ['message-id', 'newsgroups', 'date', 'subject', 'from', 'path', 'x-i2p-desthash']
     try:
       db_version = int(self.sqlite.execute("SELECT value FROM config WHERE key = ?", ("db_version",)).fetchone()[0])
-    except Exception as e:
+    except sqlite3.OperationalError:
       db_version = 0
-      self.log(self.logger.ERROR, 'error while fetching db_version: {}'.format(e))
     if db_version < self.db_version:
       self.update_db(db_version)
     self.running = False
@@ -78,13 +77,14 @@ class dropper(threading.Thread):
       return
     self.busy = True
     for item in os.listdir('incoming'):
+      if not self.running:
+        break
       link = os.path.join('incoming', item)
       if os.path.isfile(link):
         self.log(self.logger.DEBUG, 'processing new article: {}'.format(link))
         fd = open(link, 'r')
         try:
-          header = self._read_header(fd)
-          desthash, message_id, groups, compile_header, article_path = self.sanitize(header)
+          desthash, message_id, groups, compile_header, article_path = self.sanitize(fd)
         except Exception as e:
           fd.close()
           self.log(self.logger.WARNING, 'article is invalid. {}: {}'.format(item, e))
@@ -105,9 +105,10 @@ class dropper(threading.Thread):
             if int(self.sqlite.execute('SELECT count(message_id) FROM articles WHERE message_id = ?', (message_id,)).fetchone()[0]) != 0:
               self.log(self.logger.INFO, 'article \'{}\' was blacklisted and is moved back into incoming/. processing again'.format(message_id))
         self._article_path_up(article_path)
-        self.write(desthash, message_id, groups, compile_header, fd)
+        self.write_article(message_id, compile_header, fd)
         fd.close()
         os.remove(link)
+        self.data_update(message_id, groups, desthash)
     self.busy = False
     if self.retry:
       self.retry = False
@@ -131,9 +132,10 @@ class dropper(threading.Thread):
       raise Exception('no body in article')
     return header
 
-  def sanitize(self, header):
+  def sanitize(self, fd):
     # change required if necessary
     # don't read vars at all
+    header = self._read_header(fd)
     self.log(self.logger.DEBUG, 'sanitizing article..')
     found = {req: False for req in self.reqs}
     vals = dict()
@@ -192,7 +194,7 @@ class dropper(threading.Thread):
     compile_header = ''.join(('\n'.join(additional_headers), ''.join(header), '\n'))
     return desthash, vals['message-id'], vals['newsgroups'], compile_header, article_path
 
-  def write(self, desthash, message_id, groups, compile_header, fd_article):
+  def write_article(self, message_id, compile_header, fd_article):
     link = os.path.join('articles', message_id)
     self.log(self.logger.DEBUG, 'writing article {}'.format(link))
     if os.path.exists(link):
@@ -203,12 +205,12 @@ class dropper(threading.Thread):
       o.write(compile_header)
       for body_line in fd_article:
         o.write(body_line)
-    try:
-      self.sqlite_hasher.execute('INSERT INTO article_hashes VALUES (?, ?, ?)', (message_id, sha1(message_id).hexdigest(), desthash))
-      self.sqlite_hasher.commit()
-    except:
-      pass
-    article_link = '../../' + link
+
+  def data_update(self, message_id, groups, desthash):
+    self.sqlite_hasher.execute('INSERT OR IGNORE INTO article_hashes VALUES (?, ?, ?)', (message_id, sha1(message_id).hexdigest(), desthash))
+    self.sqlite_hasher.commit()
+
+    current_time = int(time.time())
     for group in groups:
       self.log(self.logger.DEBUG, 'creating link for {}'.format(group))
       group_dir = os.path.join('groups', group)
@@ -216,40 +218,39 @@ class dropper(threading.Thread):
         # FIXME don't rely on exists(group_dir) if directory is out of sync with database
         # TODO try to read article_id as well
         article_id = 1
-        try:
-          self.sqlite.execute('INSERT INTO groups VALUES (?, ?, ?, ?, ?, ?, ?, ?)', (None, group, 1, 1, 0, 'y', int(time.time()), int(time.time())))
-        except sqlite3.Error:
-          pass
+        self.sqlite.execute('INSERT OR IGNORE INTO groups VALUES (?, ?, ?, ?, ?, ?, ?, ?)', (None, group, 1, 1, 0, 'y', current_time, current_time))
         group_id = int(self.sqlite.execute('SELECT group_id FROM groups WHERE group_name = ?', (group,)).fetchone()[0])
-        try:
-          self.sqlite.execute('INSERT INTO articles VALUES (?, ?, ?, ?)', (message_id, group_id, article_id, int(time.time())))
-        except sqlite3.Error:
-          pass
+        self.sqlite.execute('INSERT OR IGNORE INTO articles VALUES (?, ?, ?, ?)', (message_id, group_id, article_id, current_time))
         self.log(self.logger.DEBUG, 'creating directory {}'.format(group_dir))
         os.mkdir(group_dir)
       else:
         # FIXME don't rely on exists(group_dir) if directory is out of sync with database
         try:
           group_id = int(self.sqlite.execute('SELECT group_id FROM groups WHERE group_name = ?', (group,)).fetchone()[0])
-        except TypeError, e:
+        except TypeError:
           if self.loglevel < self.logger.CRITICAL:
             self.log(self.logger.ERROR, 'unable to get group_id for group {}'.format(group))
             sys.exit(1)
-        try:
-          article_id = int(self.sqlite.execute('SELECT article_id FROM articles WHERE message_id = ? AND group_id = ?', (message_id, group_id)).fetchone()[0])
-        except TypeError:
+        article_id = self.sqlite.execute('SELECT article_id FROM articles WHERE message_id = ? AND group_id = ?', (message_id, group_id)).fetchone()
+        if article_id is None:
           article_id = int(self.sqlite.execute('SELECT highest_id FROM groups WHERE group_name = ?', (group,)).fetchone()[0]) + 1
-          self.sqlite.execute('INSERT INTO articles VALUES (?, ?, ?, ?)', (message_id, group_id, article_id, int(time.time())))
-          self.sqlite.execute('UPDATE groups SET highest_id = ?, article_count = article_count + 1, last_update = ? WHERE group_id = ?', (article_id, int(time.time()), group_id))
+          self.sqlite.execute('INSERT INTO articles VALUES (?, ?, ?, ?)', (message_id, group_id, article_id, current_time))
+          self.sqlite.execute('UPDATE groups SET highest_id = ?, article_count = article_count + 1, last_update = ? WHERE group_id = ?', (article_id, current_time, group_id))
+        else:
+          article_id = article_id[0]
       self.sqlite.commit()
+
+      article_link = '../../' + os.path.join('articles', message_id)
       group_link = os.path.join(group_dir, str(article_id))
       try:
         os.symlink(article_link, group_link)
-      except:
-        # FIXME: except os.error as e; e.errno == 17 (file already exists). errno portable?
-        target = os.path.basename(os.readlink(group_link))
-        if target != message_id:
-          self.log(self.logger.ERROR, 'found a strange group link which should point to "{}" but instead points to "{}". Won\'t overwrite this link.'.format(message_id, target))
+      except OSError as e:
+        if e.errno == 17: # OSError: [Errno 17] File exists
+          target = os.path.basename(os.readlink(group_link))
+          if target != message_id:
+            self.log(self.logger.ERROR, 'found a strange group link which should point to "{}" but instead points to "{}". Won\'t overwrite this link.'.format(message_id, target))
+        else:
+          self.log(self.logger.ERROR, 'unhandled error when create symlink ({} -> {}): {}'.format(article_link, group_link, e))
       self.redistribute_command(group, message_id, article_link)
 
   def redistribute_command(self, group, message_id, article_link):
@@ -274,7 +275,8 @@ class dropper(threading.Thread):
 
   def _article_path_up(self, article_path):
     article_path = article_path.split('!')
-    if len(article_path) < 2: return
+    if len(article_path) < 2:
+      return
     for src in range(len(article_path) - 1, 0, -1):
       dst = src - 1
       if len(article_path[src]) > 2 and len(article_path[dst]) > 2:
