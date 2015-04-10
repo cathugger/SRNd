@@ -84,7 +84,6 @@ class dropper(threading.Thread):
         fd = open(link, 'r')
         try:
           header = self._read_header(fd)
-          self.validate(header)
           desthash, message_id, groups, compile_header, article_path = self.sanitize(header)
         except Exception as e:
           fd.close()
@@ -132,21 +131,6 @@ class dropper(threading.Thread):
       raise Exception('no body in article')
     return header
 
-  def validate(self, header):
-    # check for header / body part exists in message
-    # check if newsgroup exists in message
-    # read required headers into self.dict
-    self.log(self.logger.DEBUG, 'validating article..')
-    for line in header:
-      if line.lower().startswith('message-id:') and '/' in line:
-        raise Exception('illegal message-id \'%s\': contains /' % line.rstrip())
-      #elif line.lower().startswith('from:'):
-        # FIXME parse and validate from
-      #  pass
-      elif line.lower().startswith('newsgroups:') and '/' in line:
-        raise Exception('illegal newsgroups \'%s\': contains /' % line.rstrip())
-    return True
-
   def sanitize(self, header):
     # change required if necessary
     # don't read vars at all
@@ -157,8 +141,7 @@ class dropper(threading.Thread):
     article_path = ''
     # FIXME*3 read Path from config
     for index in xrange(0, len(header)):
-      # ignore already found keys
-      for key in [xx for xx in found if not found[xx]]:
+      for key in self.reqs:
         if header[index].lower().startswith(key + ':'):
           if key == 'path':
             article_path = ''.join((self.SRNd.instance_name, '!', header[index].split(' ', 1)[1].strip()))
@@ -197,7 +180,11 @@ class dropper(threading.Thread):
           additional_headers.append('Path: ' + self.SRNd.instance_name)
       else:
         if req == 'newsgroups':
+          if '/' in vals[req]:
+            raise Exception('illegal newsgroups \'%s\': contains /' % vals[req])
           vals[req] = vals[req].split(',')
+        elif req == 'message-id' and '/' in vals[req]:
+          raise Exception('illegal message-id \'%s\': contains /' % vals[req])
     if len(vals['newsgroups']) == 0:
       raise Exception('Newsgroup is missing or empty')
     if len(additional_headers) > 0:
