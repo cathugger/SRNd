@@ -702,6 +702,7 @@ class SRNd(threading.Thread):
           self.feeds[name].start()
         except Exception as e:
           self.log(self.logger.WARNING, 'could not start outfeed %s: %s' % (name, e))
+          self.log(self.logger.WARNING, traceback.format_exc())
         else:
           counter_new += 1
     counter_removed = 0
