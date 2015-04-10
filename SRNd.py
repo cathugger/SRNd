@@ -19,7 +19,7 @@ except ImportError:
 
 import dropper
 import feeds.feed as feed
-from feeds.outfeed import OutFeed
+from feeds.outfeed import OutFeed, MultiInFeed
 
 class SRNd(threading.Thread):
 
@@ -769,10 +769,10 @@ class SRNd(threading.Thread):
 
   def _get_feed_stat(self, name):
     return {
-        "state": self.feeds[name].state,
-        "queue": self.feeds[name].qsize,
-        "transfer": self.feeds[name].byte_transfer,
-        "transfer_time": self.feeds[name].time_transfer
+        "state": self.feeds[name].get_status('state'),
+        "queue": self.feeds[name].get_status('qsize'),
+        "transfer": self.feeds[name].get_status('byte_transfer'),
+        "transfer_time": self.feeds[name].get_status('time_transfer')
     }
 
   def ctl_socket_handler_status(self, data, fd=None):
@@ -1082,13 +1082,24 @@ class SRNd(threading.Thread):
     #TODO: remove, this is not needed anymore at all?
     self.dropper.handler_progress_incoming(signum, frame)
 
-  def rename_infeed(self, old_name, new_name):
-    if not (old_name.startswith('infeed-') and new_name.startswith('infeed-')):
-      return False
-    if old_name in self.feeds and new_name not in self.feeds:
+  def rename_infeed(self, old_name, new_name, allow_multiconn=True):
+    if not (old_name.startswith('infeed-') and new_name.startswith('infeed-') and old_name in self.feeds):
+      return None
+    if new_name in self.feeds:
+      if not allow_multiconn:
+        # multiconnection not allowed for this key\name\whatever
+        return None
+      if not isinstance(self.feeds[new_name], MultiInFeed):
+        # convert normal infeed to MultiInFeed.
+        # pop old infeed from self.feeds, create instance MultiInFeed, append old infeed to multiinfeed
+        darling = self.feeds.pop(new_name)
+        self.feeds[new_name] = MultiInFeed(logger=self.logger, debug=self.infeed_debug, master=self, wrapper_name=new_name)
+        self.feeds[new_name].append_infeed(darling, new_name)
+      return self.feeds[new_name].append_infeed(self.feeds.pop(old_name))
+    else:
       self.feeds[new_name] = self.feeds.pop(old_name)
-      return True
-    return False
+      return new_name
+    return None
 
   def _feed_config_sanitize(self, config):
     # 0 - disallow 1 - allow 2 - required
@@ -1108,6 +1119,18 @@ class SRNd(threading.Thread):
     if config['srndauth_key'] is not None and len(config['srndauth_key']) != 64:
       self.log(self.logger.WARNING, 'len srndauth_key != 64. Set None')
       config['srndauth_key'] = None
+    if 'multiconn' in config:
+      multiconn = config['multiconn']
+      try:
+        config['multiconn'] = int(config['multiconn'])
+      except ValueError:
+        config['multiconn'] = None
+      else:
+        if 10 < config['multiconn'] < 2:
+          config['multiconn'] = None
+      if config['multiconn'] is None:
+        self.log(self.logger.WARNING, 'abnormal value multiconn="{}". Set 1 - only one outfeed'.format(multiconn))
+        config['multiconn'] = 1
     return config
 
   def watching(self):

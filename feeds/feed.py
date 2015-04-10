@@ -852,7 +852,7 @@ class feed(threading.Thread):
         error += 'no message-id in article, '
       else:
         rnd = ''.join(random.choice(string.ascii_lowercase) for x in range(10))
-        handle_incoming.message_id = '{0}{1}@POSTED.SRNd'.format(rnd, int(time.time()))
+        handle_incoming.message_id = '<{0}{1}@POSTED.SRNd>'.format(rnd, int(time.time()))
         add_headers.append('Message-ID: {0}'.format(handle_incoming.message_id))
     elif '/' in handle_incoming.message_id:
       error += '/ in message-id, '
@@ -952,8 +952,9 @@ class feed(threading.Thread):
 
   def _set_infeed_pretty_name(self):
     new_name = 'infeed-' + self._auth_data[self._srndauth_requ[0]]
-    if self.SRNd.rename_infeed(self.name, new_name):
-      self.name = new_name
+    new_name_ = self.SRNd.rename_infeed(self.name, new_name)
+    if new_name_ is not None:
+      self.name = new_name_
     else:
       self.log(self.logger.WARNING, 'Error rename to {}'.format(new_name))
 
@@ -1007,3 +1008,14 @@ class feed(threading.Thread):
     except:
       return None
 
+  def get_status(self, target=None):
+    if target == 'state':
+      return self.state
+    elif target == 'qsize':
+      return self.qsize
+    elif target == 'byte_transfer':
+      return self.byte_transfer
+    elif target == 'time_transfer':
+      return self.time_transfer
+    else:
+      return None
