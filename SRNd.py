@@ -18,7 +18,8 @@ except ImportError:
   psutil_import_result = False
 
 import dropper
-import feed
+import feeds.feed as feed
+from feeds.outfeed import OutFeed
 
 class SRNd(threading.Thread):
 
@@ -687,11 +688,10 @@ class SRNd(threading.Thread):
             self.log(self.logger.INFO, 'starting outfeed {} using proxy: {}'.format(name, str(proxy)))
         try:
           self.log(self.logger.DEBUG, 'starting outfeed: %s' % name)
-          self.feeds[name] = feed.feed(
+          self.feeds[name] = OutFeed(
               self,
               self.logger,
               config={'config': self._feed_config_sanitize(start_params)},
-              outstream=True,
               host=host,
               port=port,
               sync_on_startup=sync_on_startup,
