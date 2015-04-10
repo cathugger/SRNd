@@ -36,6 +36,8 @@ class feed(threading.Thread):
     self._srnd_auth = False
     self._caps_cache = None
     self._handshake_state = False
+    self._try_srndauth_bypass = False
+    self._support_vars = dict()
     if outstream:
       self.host = host
       self.port = port
@@ -77,10 +79,11 @@ class feed(threading.Thread):
     self.articles_to_receive = set()
     self.byte_transfer = 1
     self.time_transfer = 0.1
-    self._max_send_size = None
     self._db_connector = db_connector
 
   def _outstream_flags_init(self):
+    self._support_vars.clear()
+    self._try_srndauth_bypass = False
     self._handshake_state = False
     self._srnd_auth = False
     self._caps_cache = None
@@ -425,8 +428,8 @@ class feed(threading.Thread):
       yield data
 
   def _disallow_to_send(self, message_id):
-    if self._max_send_size is not None and self._max_send_size < os.path.getsize(os.path.join('articles', message_id)):
-      self.log(self.logger.INFO, 'not sending article {}. Server allow max file size {} bytes'.format(message_id, self._max_send_size))
+    if self._support_vars.get('MAX_SEND_SIZE') is not None and self._support_vars['MAX_SEND_SIZE'] < os.path.getsize(os.path.join('articles', message_id)):
+      self.log(self.logger.INFO, 'not sending article {}. Server allow max file size {} bytes'.format(message_id, self._support_vars['MAX_SEND_SIZE']))
       return True
     return False
 
@@ -497,8 +500,9 @@ class feed(threading.Thread):
             self._outfeed_SRNDAUTH(commands[1])
           else:
             self.log(self.logger.ERROR, 'Recived incorrect SRNDAUTH. Authentication is not possible: {}'.format(line))
-            self.cooldown_counter = 3
-            self.con_broken = True
+            if not self._srndauth_bypass():
+              self.cooldown_counter = 3
+              self.con_broken = True
         elif commands[0] == '101':
           # check CAPABILITES
           self.waitfor = 'CAPABILITIES'
@@ -512,6 +516,8 @@ class feed(threading.Thread):
           self.outstream_stream = True
           self.outstream_ready = True
           self._handshake_state = True
+          if self._try_srndauth_bypass:
+            self.log(self.logger.WARNING, 'successful login, SRNDAUTH breaking. FIX IT!')
         elif commands[0] == '191':
           # SUPPORT 191 = receive varlist
           self.waitfor = 'SUPPORT'
@@ -557,10 +563,12 @@ class feed(threading.Thread):
             rec_key = 'You key'
           self.log(self.logger.WARNING, '{} not allowed at this server'.format(rec_key))
           self.state = 'SRNDAUTH_reject'
+          self._srndauth_bypass()
         elif commands[0] == '482':
           # SRNDAUTH 482 - bad key or signature
           self.log(self.logger.WARNING, 'bad key or signature')
           self.state = 'SRNDAUTH_error'
+          self._srndauth_bypass()
         else:
           self.log(self.logger.WARNING, 'got unknown command: {}'.format(line))
         # FIXME how to treat try later for IHAVE and CHECK?
@@ -627,6 +635,11 @@ class feed(threading.Thread):
     elif commands[0] == 'CAPABILITIES':
       # send CAPABILITIES. Work before authentication
       self.send('\r\n'.join(('\r\n'.join(self.caps), '.\r\n')), 'CAPABILITIES')
+    elif commands[0] == 'QUIT':
+      self.send('205 bye bye\r\n')
+      self.state = 'closing down'
+      self.running = False
+      self.socket.shutdown(socket.SHUT_RDWR)
     elif not self._srnd_auth and (self.config['srndauth_required'] == 2 or (commands[0] == 'SRNDAUTH' and self.config['srndauth_required'] == 1)):
       # not authenticated and (authentication required or (cliens send SRNDAUTH and authentication allow))
       if commands[0] == 'SRNDAUTH':
@@ -656,11 +669,6 @@ class feed(threading.Thread):
       self.send('203 stream as you like\r\n')
     #elif commands[0] == 'MODE' and commands[1] == 'READER':
     #  self.send('502 i recommend in check to the CAPABILITIES\r\n')
-    elif commands[0] == 'QUIT':
-      self.send('205 bye bye\r\n')
-      self.state = 'closing down'
-      self.running = False
-      self.socket.shutdown(socket.SHUT_RDWR)
     elif commands[0] == 'CHECK' and len(commands) == 2:
       #TODO 431 message-id   Transfer not possible; try again later
       message_id = line.split(' ', 1)[1]
@@ -771,18 +779,20 @@ class feed(threading.Thread):
     for line in varlist:
       key, val = line.split(' ', 1)
       self.log(self.logger.DEBUG, 'Server support key="{}", value="{}"'.format(key, val))
+      self._support_vars[key] = val
       if key == 'MAX_SEND_SIZE':
         try:
-          self._max_send_size = int(val)
+          self._support_vars[key] = int(self._support_vars[key])
         except ValueError:
+          self._support_vars[key] = None
           pass
         else:
-          if self._max_send_size < 20:
-            self._max_send_size = None
-        if self._max_send_size is None:
+          if self._support_vars[key] < 20:
+            self._support_vars[key] = None
+        if self._support_vars[key] is None:
           self.log(self.logger.WARNING, 'Error parsing MAX_SEND_SIZE: abnormal value "{}"'.format(val))
         else:
-          self.log(self.logger.INFO, 'Server support maximum filesize: {} bytes'.format(self._max_send_size))
+          self.log(self.logger.INFO, 'Server support maximum filesize: {} bytes'.format(self._support_vars[key]))
     # initial start streaming
     self._send_MODESTREAM()
 
@@ -795,7 +805,7 @@ class feed(threading.Thread):
         self.shutdown()
         return
     # server support SRNDAUTH and key present and not authenticate. authentication
-    if 'SRNDAUTH' in caps and self.config['srndauth_key'] is not None and not self._srnd_auth:
+    if 'SRNDAUTH' in caps and self.config['srndauth_key'] is not None and not self._srnd_auth and not self._try_srndauth_bypass:
       self.send('SRNDAUTH\r\n')
     # server support SUPPORT, send it and wait response 191
     elif 'SUPPORT' in caps:
@@ -949,24 +959,42 @@ class feed(threading.Thread):
       self.log(self.logger.WARNING, 'Error rename to {}'.format(new_name))
 
   def _outfeed_SRNDAUTH(self, secret):
+    if self._try_srndauth_bypass:
+      self.log(self.logger.WARNING, 'Server require authentication. Work is not possible.')
+      self.send('QUIT\r\n')
+      self.cooldown_counter = 5
+      self.con_broken = True
+      return
     if self.config['srndauth_key'] is None:
       self.log(self.logger.ERROR, 'Server required SRDNAUTH and srndauth_key not in outfeed config or invalid.')
-      self.shutdown()
+      if not self._srndauth_bypass():
+        self.shutdown()
       return
     pubkey = self._key_from_private(self.config['srndauth_key'])
     if pubkey is None:
       self.log(self.logger.ERROR, 'Private key invalid. Check srndauth_key in outfeed config')
-      self.shutdown()
+      if not self._srndauth_bypass():
+        self.shutdown()
       return
     if len(secret) != 333:
       self.log(self.logger.WARNING, 'Response secret {} != 333. Authentication is not possible.'.format(len(secret)))
-      self.cooldown_counter = 3
-      self.con_broken = True
+      if not self._srndauth_bypass():
+        self.cooldown_counter = 3
+        self.con_broken = True
       return
     sign = self._create_sign(self.config['srndauth_key'], secret)
     if sign is not None:
       self.send('SRNDAUTH {} {}\r\n'.format(self._srndauth_requ[0], pubkey), 'SRNDAUTH')
       self.send('SRNDAUTH {} {}\r\n'.format(self._srndauth_requ[1], sign), 'SRNDAUTH')
+
+  def _srndauth_bypass(self):
+    # if SRNDAUTH fail, send MODE STREAM once - if server set 1 its work
+    if self._try_srndauth_bypass:
+      return False
+    self.log(self.logger.WARNING, 'SRNDAUTH error - try handshake without authentication')
+    self._try_srndauth_bypass = True
+    self._get_CAPABILITIES()
+    return True
 
   @staticmethod
   def _create_sign(priv_key, secret):
