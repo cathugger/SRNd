@@ -70,8 +70,8 @@ class main(threading.Thread):
     self.log(self.logger.DEBUG, 'initializing censor_httpd..')
     args['censor'] = self
     self.httpd = censor_httpd.censor_httpd("censor_httpd", self.logger, args)
-    self.db_version = 11
-    self.all_flags = "4095"
+    self.db_version = 12
+    self.all_flags = "6143"
     self.queue = Queue.Queue()
     self.command_mapper = dict()
     self.command_mapper['delete'] = self.handle_delete
@@ -205,6 +205,12 @@ class main(threading.Thread):
       self.log(self.logger.INFO, "updating db from version %i to version %i" % (current_version, 11))
       self.censordb.execute('ALTER TABLE log ADD COLUMN source TEXT DEFAULT "local"')
       self.censordb.execute('UPDATE config SET value = "11" WHERE key = "db_version"')
+      self.censordb.commit()
+      current_version = 11
+    if current_version == 11:
+      self.log(self.logger.INFO, "updating db from version %i to version %i" % (current_version, 12))
+      self.censordb.execute('INSERT INTO commands (command, flag) VALUES (?,?)', ("srnd-infeed-access", str(4096)))
+      self.censordb.execute('UPDATE config SET value = "12" WHERE key = "db_version"')
       self.censordb.commit()
 
   def run(self):

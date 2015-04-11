@@ -33,6 +33,7 @@ class feed(threading.Thread):
     self.state = 'init'
     self.SRNd = master
     self.proxy = proxy
+    self._db_connector = db_connector
     self._srnd_auth = False
     self._caps_cache = None
     self._handshake_state = False
@@ -56,6 +57,9 @@ class feed(threading.Thread):
       self.port = connection[1][1]
       self.polltimeout = -1
       self.name = 'infeed-{0}-{1}'.format(self.host, self.port)
+      # get flag srnd-infeed-access from db
+      self._srnd_infeed_access = self._db_connector('censor', timeout=60).fetchone('SELECT flag FROM commands WHERE command="srnd-infeed-access"')
+      self._srnd_infeed_access = 0 if self._srnd_infeed_access is None else int(self._srnd_infeed_access[0])
     #self.socket.setblocking(0)
     self.buffersize = 2**16
     self.caps = [
@@ -79,7 +83,6 @@ class feed(threading.Thread):
     self.articles_to_receive = set()
     self.byte_transfer = 1
     self.time_transfer = 0.1
-    self._db_connector = db_connector
 
   def _outstream_flags_init(self):
     self._support_vars.clear()
@@ -153,8 +156,10 @@ class feed(threading.Thread):
     return sent
 
   def shutdown(self):
-    # FIXME socket.shutdown() needed if running == False?
     self.running = False
+    self._socket_shutdown()
+
+  def _socket_shutdown(self):
     try:
       self.socket.shutdown(socket.SHUT_RDWR)
     except socket.error as e:
@@ -248,11 +253,7 @@ class feed(threading.Thread):
         else:
           connected = False
           self._outstream_flags_init()
-          try:
-            self.socket.shutdown(socket.SHUT_RDWR)
-          except socket.error as e:
-            #if self.debug > 4: print "[{0}] {1}".format(self.name, e)
-            pass
+          self._socket_shutdown()
           self.socket.close()
           self.init_socket()
           while self.running and not connected:
@@ -626,10 +627,7 @@ class feed(threading.Thread):
           # POST 440 == posting not allowed
           self.log(self.logger.ERROR, 'remote host does not allow MODE STREAM, IHAVE or POST. shutting down')
           self.running = False
-          try:
-            self.socket.shutdown(socket.SHUT_RDWR)
-          except:
-            pass
+          self._socket_shutdown()
         else:
           self.log(self.logger.ERROR, 'unknown response to POST: %s' % line)
       return
@@ -640,7 +638,7 @@ class feed(threading.Thread):
       self.send('205 bye bye\r\n')
       self.state = 'closing down'
       self.running = False
-      self.socket.shutdown(socket.SHUT_RDWR)
+      self._socket_shutdown()
     elif not self._srnd_auth and (self.config['srndauth_required'] == 2 or (commands[0] == 'SRNDAUTH' and self.config['srndauth_required'] == 1)):
       # not authenticated and (authentication required or (cliens send SRNDAUTH and authentication allow))
       if commands[0] == 'SRNDAUTH':
@@ -915,9 +913,24 @@ class feed(threading.Thread):
     else:
       return True
 
-  def _check_access_by_key(self, key):
-    #TODO: Implement This
-    return len(key) == 64
+  def _get_infeed_name_by_key(self, key):
+    _censordb = self._db_connector('censor', timeout=60)
+    try:
+      # return new name if srnd-infeed-access present, else None
+      result = _censordb.fetchone('SELECT local_name FROM keys WHERE key = ? and (cast(flags as integer) & ?) = ?', (key, self._srnd_infeed_access, self._srnd_infeed_access))
+      if result is None:
+        return None
+      # remove bad chars
+      new_name = result[0].encode('ascii', 'ignore').replace(' ', '')
+      if len(new_name) < 3 or new_name.startswith('1'):
+        return key
+      # name must have unique
+      if int(_censordb.fetchone('SELECT count(local_name) FROM keys WHERE local_name = ?', (result[0],))[0]) == 1:
+        return new_name
+      else:
+        return key
+    finally:
+      _censordb.close()
 
   def _infeed_SRNDAUTH(self, cmd_list):
     # empty, bad or first request
@@ -932,8 +945,10 @@ class feed(threading.Thread):
     time.sleep(random.uniform(4, 10))
     # recive all data - check key
     if len(self._auth_data) == 3:
+      new_name = None
       if self._check_sign(self._auth_data):
-        if self._check_access_by_key(self._auth_data[self._srndauth_requ[0]]):
+        new_name = self._get_infeed_name_by_key(self._auth_data[self._srndauth_requ[0]])
+        if new_name is not None:
           self._srnd_auth = True
           self.send('281 {} access granted\r\n'.format(self._auth_data[self._srndauth_requ[0]]), 'SRNDAUTH_ok')
         else:
@@ -945,14 +960,14 @@ class feed(threading.Thread):
       del self._auth_data['secret'], self._auth_data[self._srndauth_requ[1]]
       if self._srnd_auth:
         if self.config['pretty_name']:
-          # rename infeed using pubkey
-          self._set_infeed_pretty_name()
-        self.log(self.logger.INFO, 'access granted for {}'.format(self._auth_data[self._srndauth_requ[0]]))
+          # rename infeed using pubkey or local_name
+          self._set_infeed_pretty_name(new_name)
+        self.log(self.logger.INFO, 'access granted for {}'.format(new_name))
       else:
         del self._auth_data[self._srndauth_requ[0]]
 
-  def _set_infeed_pretty_name(self):
-    new_name = 'infeed-' + self._auth_data[self._srndauth_requ[0]]
+  def _set_infeed_pretty_name(self, to_name):
+    new_name = 'infeed-' + to_name
     new_name_ = self.SRNd.rename_infeed(self.name, new_name)
     if new_name_ is not None:
       self.name = new_name_
