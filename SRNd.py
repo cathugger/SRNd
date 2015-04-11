@@ -175,6 +175,7 @@ class SRNd(threading.Thread):
     self.ctl_socket_handlers["stats"] = self.ctl_socket_handler_stats
     self.hooks = dict()
     self.hook_blacklist = dict()
+    self._feeds_lock = threading.Lock()
 
   def _auto_db_migration(self):
     # Work only for default plugins and db locations
@@ -1073,33 +1074,42 @@ class SRNd(threading.Thread):
     del self.ctl_socket_clients[fd]
 
   def terminate_feed(self, name):
-    if name in self.feeds:
-      del self.feeds[name]
-    else:
-      self.log(self.logger.WARNING, 'should remove %s but not in dict. wtf?' % name)
+    self._feeds_lock.acquire()
+    try:
+      if name in self.feeds:
+        del self.feeds[name]
+      else:
+        self.log(self.logger.WARNING, 'should remove %s but not in dict. wtf?' % name)
+    finally:
+      self._feeds_lock.release()
+
 
   def relay_dropper_handler(self, signum, frame):
     #TODO: remove, this is not needed anymore at all?
     self.dropper.handler_progress_incoming(signum, frame)
 
   def rename_infeed(self, old_name, new_name, allow_multiconn=True):
-    if not (old_name.startswith('infeed-') and new_name.startswith('infeed-') and old_name in self.feeds):
-      return None
-    if new_name in self.feeds:
-      if not allow_multiconn:
-        # multiconnection not allowed for this key\name\whatever
+    self._feeds_lock.acquire()
+    try:
+      if not (old_name.startswith('infeed-') and new_name.startswith('infeed-') and old_name in self.feeds):
         return None
-      if not isinstance(self.feeds[new_name], MultiInFeed):
-        # convert normal infeed to MultiInFeed.
-        # pop old infeed from self.feeds, create instance MultiInFeed, append old infeed to multiinfeed
-        darling = self.feeds.pop(new_name)
-        self.feeds[new_name] = MultiInFeed(logger=self.logger, debug=self.infeed_debug, master=self, wrapper_name=new_name)
-        self.feeds[new_name].append_infeed(darling, new_name)
-      return self.feeds[new_name].append_infeed(self.feeds.pop(old_name))
-    else:
-      self.feeds[new_name] = self.feeds.pop(old_name)
-      return new_name
-    return None
+      if new_name in self.feeds:
+        if not allow_multiconn:
+          # multiconnection not allowed for this key\name\whatever
+          return None
+        if not isinstance(self.feeds[new_name], MultiInFeed):
+          # convert normal infeed to MultiInFeed.
+          # pop old infeed from self.feeds, create instance MultiInFeed, append old infeed to multiinfeed
+          darling = self.feeds.pop(new_name)
+          self.feeds[new_name] = MultiInFeed(logger=self.logger, debug=self.infeed_debug, master=self, wrapper_name=new_name)
+          self.feeds[new_name].append_infeed(darling, new_name)
+        return self.feeds[new_name].append_infeed(self.feeds.pop(old_name))
+      else:
+        self.feeds[new_name] = self.feeds.pop(old_name)
+        return new_name
+      return None
+    finally:
+      self._feeds_lock.release()
 
   def _feed_config_sanitize(self, config):
     # 0 - disallow 1 - allow 2 - required

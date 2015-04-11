@@ -359,6 +359,7 @@ class feed(threading.Thread):
     incoming_file.bye()
     self.socket.close()
     self.sqlite_dropper.close()
+    self.state = 'die'
     self.SRNd.terminate_feed(self.name)
 
   def _worker_send_check_stream(self, max_check=50):

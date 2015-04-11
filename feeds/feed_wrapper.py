@@ -2,6 +2,7 @@
 
 import Queue
 import time
+import threading
 
 from feeds.feed import feed
 
@@ -18,6 +19,7 @@ class MultiFeed(object):
     self._feeds = list()
     self._feeds_count = 0
     self.terminated = False
+    self._feeds_lock = threading.Lock()
 
   def get_status(self, target=None):
     if target == 'state':
@@ -52,24 +54,32 @@ class MultiInFeed(MultiFeed):
     """Add infeed and return new infeed name"""
     if self.terminated:
       return None
-    # change master link
-    infeed_instance.SRNd = self
-    # rename infeed force
-    if name is not None:
-      infeed_instance.name = '{}-{}'.format(self.name, self._feeds_count)
-    self._feeds.append(infeed_instance)
-    self._feeds_count += 1
-    return '{}-{}'.format(self.name, self._feeds_count - 1)
+    self._feeds_lock.acquire()
+    try:
+      # change master link
+      infeed_instance.SRNd = self
+      # rename infeed force
+      if name is not None:
+        infeed_instance.name = '{}-{}'.format(self.name, self._feeds_count)
+      self._feeds.append(infeed_instance)
+      self._feeds_count += 1
+      return '{}-{}'.format(self.name, self._feeds_count - 1)
+    finally:
+      self._feeds_lock.release()
 
   def terminate_feed(self, name):
     if self.terminated:
       return
-    targets = [xx for xx in self._feeds if xx.name == name]
-    if len(targets) != 1:
-      self.log(self.logger.ERROR, 'Find {} infeed instance for {}.WTF?'.format(len(targets), name))
-      return False
-    self._feeds.pop(self._feeds.index(targets[0]))
-    self._feeds_count -= 1
+    self._feeds_lock.acquire()
+    try:
+      targets = [xx for xx in self._feeds if xx.name == name]
+      if len(targets) != 1:
+        self.log(self.logger.ERROR, 'Find {} infeed instance for {}.WTF?'.format(len(targets), name))
+        return False
+      self._feeds.pop(self._feeds.index(targets[0]))
+      self._feeds_count -= 1
+    finally:
+      self._feeds_lock.release()
     if self._feeds_count == 0:
       self.shutdown()
     return True
