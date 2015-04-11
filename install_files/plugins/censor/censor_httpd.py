@@ -14,7 +14,7 @@ import json
 from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer
 from binascii import hexlify, unhexlify
 from cgi import FieldStorage
-from datetime import datetime
+from datetime import datetime, timedelta
 from hashlib import sha1, sha512
 from urllib import unquote
 from urlparse import urlparse, parse_qs
@@ -902,6 +902,8 @@ class censor(BaseHTTPRequestHandler):
         'status': '',
         'start_time_human': None,
         'start_time_raw': None,
+        'uptime_human': None,
+        'uptime_raw': None,
         'cpu_usage': None,
         'ram_human': None,
         'ram_raw': None,
@@ -972,6 +974,8 @@ class censor(BaseHTTPRequestHandler):
       stats = self.origin.SRNd_info({'command': 'stats'})
       data['start_time_human'] = datetime.utcfromtimestamp(stats['start_up_timestamp']).strftime('%d.%m.%y %H:%M')
       data['start_time_raw'] = stats['start_up_timestamp']
+      data['uptime_raw'] = int(time.time()) - stats['start_up_timestamp']
+      data['uptime_human'] = timedelta(seconds=data['uptime_raw'])
       data['cpu_usage'] = stats['cpu']
       data['ram_human'] = self.__sizeof_human_readable(stats['ram'])
       data['ram_raw'] = stats['ram']
