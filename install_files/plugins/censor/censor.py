@@ -285,7 +285,7 @@ class main(threading.Thread):
     valid, received = int(signature_row[0]), int(signature_row[1])
     if not valid:
       return False
-    if recived:
+    if received:
       if self.ignore_old > 0 and current_time - received > self.ignore_old:
         return False
     else:
