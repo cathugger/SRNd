@@ -70,8 +70,8 @@ class main(threading.Thread):
     self.log(self.logger.DEBUG, 'initializing censor_httpd..')
     args['censor'] = self
     self.httpd = censor_httpd.censor_httpd("censor_httpd", self.logger, args)
-    self.db_version = 12
-    self.all_flags = "6143"
+    self.DATABASE_VERSION = 12
+    self.ALL_FLAGS = '8191'
     self.queue = Queue.Queue()
     self.command_mapper = dict()
     self.command_mapper['delete'] = self.handle_delete
@@ -94,13 +94,30 @@ class main(threading.Thread):
     self.queue.put((source, message_id))
     #self.log('this plugin does not handle any article. remove hook parts from {0}'.format(os.path.join('config', 'plugins', self.name.split('-', 1)[1])), 0)
 
-  def update_db(self, current_version):
-    self.log(self.logger.INFO, "should update db from version %i" % current_version)
-    if current_version == 0:
-      self.log(self.logger.INFO, "updating db from version %i to version %i" % (current_version, 1))
+  def update_censordb(self):
+    try:
+      db_version = int(self.censordb.execute('SELECT value FROM config WHERE key = "db_version"').fetchone()[0])
+    except sqlite3.OperationalError as e:
+      db_version = 0
+      self.log(self.logger.DEBUG, 'error while fetching db_version: {}. assuming new database'.format(e))
+    if db_version < self.DATABASE_VERSION:
+      self.log(self.logger.INFO, 'should update db from version {}'.format(db_version))
+      while db_version < self.DATABASE_VERSION:
+        self.log(self.logger.INFO, 'updating db from version {} to version {}'.format(db_version, db_version + 1))
+        self._update_db_from(db_version)
+        db_version += 1
+        self.censordb.execute('UPDATE config SET value = ? WHERE key = "db_version"', (db_version,))
+        self.censordb.commit()
+
+    if self.add_admin:
+      self.censordb.execute("INSERT OR IGNORE INTO keys VALUES (NULL,?,?,?)", (self.add_admin, "admin", self.ALL_FLAGS))
+      self.censordb.commit()
+
+  def _update_db_from(self, version):
+    if version == 0:
       # create configuration
       self.censordb.execute("CREATE TABLE config (key text PRIMARY KEY, value text)")
-      self.censordb.execute('INSERT INTO config VALUES ("db_version","1")')
+      self.censordb.execute('INSERT INTO config VALUES ("db_version","0")')
 
       # create flags
       self.censordb.execute("CREATE TABLE commands (id INTEGER PRIMARY KEY, command TEXT, flag text)")
@@ -128,55 +145,23 @@ class main(threading.Thread):
 
       # create log
       self.censordb.execute("CREATE TABLE log (id INTEGER PRIMARY KEY, command_id INTEGER, accepted INTEGER, data TEXT, key_id INTEGER, reason_id INTEGER, comment TEXT, timestamp INTEGER, UNIQUE(key_id, command_id, data))")
-
-      self.censordb.commit()
-      current_version = 1
-    if current_version == 1:
-      self.log(self.logger.INFO, "updating db from version %i to version %i" % (current_version, 2))
+    elif version == 1:
       self.censordb.execute("CREATE TABLE signature_cache (message_uid text PRIMARY KEY, valid INTEGER)")
-      self.censordb.execute('UPDATE config SET value = "2" WHERE key = "db_version"')
-      self.censordb.commit()
-      current_version = 2
-    if current_version == 2:
-      self.log(self.logger.INFO, "updating db from version %i to version %i" % (current_version, 3))
+    elif version == 2:
       self.censordb.execute("CREATE UNIQUE INDEX IF NOT EXISTS sig_cache_message_uid_idx ON signature_cache(message_uid);")
-      self.censordb.execute('UPDATE config SET value = "3" WHERE key = "db_version"')
-      self.censordb.commit()
-      current_version = 3
-    if current_version == 3:
-      self.log(self.logger.INFO, "updating db from version %i to version %i" % (current_version, 4))
+    elif version == 3:
       self.censordb.execute('INSERT INTO commands (command, flag) VALUES (?,?)', ("overchan-board-mod", str(0b1000000000)))
-      self.censordb.execute('UPDATE config SET value = "4" WHERE key = "db_version"')
-      self.censordb.commit()
-      current_version = 4
-    if current_version == 4:
-      self.log(self.logger.INFO, "updating db from version %i to version %i" % (current_version, 5))
+    elif version == 4:
       self.censordb.execute("DROP TABLE log")
       self.censordb.execute("CREATE TABLE log (id INTEGER PRIMARY KEY, command_id INTEGER, accepted INTEGER, data TEXT, key_id INTEGER, reason_id INTEGER, comment TEXT, timestamp INTEGER, UNIQUE(key_id, command_id, data, comment))")
-      self.censordb.execute('UPDATE config SET value = "5" WHERE key = "db_version"')
-      self.censordb.commit()
-      current_version = 5
-    if current_version == 5:
-      self.log(self.logger.INFO, "updating db from version %i to version %i" % (current_version, 6))
+    elif version == 5:
       self.censordb.execute('DELETE FROM commands WHERE command = "overchan-news-del"')
       self.censordb.execute('INSERT INTO commands (command, flag) VALUES (?,?)', ("overchan-close", str(0b10000)))
-      self.censordb.execute('UPDATE config SET value = "6" WHERE key = "db_version"')
-      self.censordb.commit()
-      current_version = 6
-    if current_version == 6:
-      self.log(self.logger.INFO, "updating db from version %i to version %i" % (current_version, 7))
+    elif version == 6:
       self.censordb.execute('ALTER TABLE signature_cache ADD COLUMN received INTEGER DEFAULT 0')
-      self.censordb.execute('UPDATE config SET value = "7" WHERE key = "db_version"')
-      self.censordb.commit()
-      current_version = 7
-    if current_version == 7:
-      self.log(self.logger.INFO, "updating db from version %i to version %i" % (current_version, 8))
+    elif version == 7:
       self.censordb.execute('INSERT INTO commands (command, flag) VALUES (?,?)', ("handle-postman-mod", str(1024)))
-      self.censordb.execute('UPDATE config SET value = "8" WHERE key = "db_version"')
-      self.censordb.commit()
-      current_version = 8
-    if current_version == 8:
-      self.log(self.logger.INFO, "updating db from version %i to version %i" % (current_version, 9))
+    elif version == 8:
       self.censordb.execute("INSERT INTO reasons VALUES (NULL,?)", ("local",))
       self.censordb.execute("INSERT INTO reasons VALUES (NULL,?)", ("remote",))
       self.censordb.execute("INSERT INTO reasons VALUES (NULL,?)", ("replay",))
@@ -191,27 +176,15 @@ class main(threading.Thread):
       for command, unikey in (('delete',       1), ('overchan-delete-attach', 1), ('handle-postman-mod', 0), ('overchan-sticky', 0), ('overchan-board-add', 0), \
                               ('srnd-acl-mod', 0), ('overchan-board-del',     0), ('overchan-board-mod', 0), ('handle-srnd-cmd', 0), ('overchan-close',     0)):
         self.censordb.execute("INSERT INTO cmd_map VALUES (NULL, ?, ?, ?, ?)", (command, unikey, unikey, unikey))
-      self.censordb.execute('UPDATE config SET value = "9" WHERE key = "db_version"')
-      self.censordb.commit()
-      current_version = 9
-    if current_version == 9:
-      self.log(self.logger.INFO, "updating db from version %i to version %i" % (current_version, 10))
+    elif version == 9:
       self.censordb.execute("INSERT INTO reasons VALUES (NULL,?)", ("disable",))
       self.censordb.execute('UPDATE cmd_map SET command = "overchan-delete-attachment" WHERE command = "overchan-delete-attach"')
-      self.censordb.execute('UPDATE config SET value = "10" WHERE key = "db_version"')
-      self.censordb.commit()
-      current_version = 10
-    if current_version == 10:
-      self.log(self.logger.INFO, "updating db from version %i to version %i" % (current_version, 11))
+    elif version == 10:
       self.censordb.execute('ALTER TABLE log ADD COLUMN source TEXT DEFAULT "local"')
-      self.censordb.execute('UPDATE config SET value = "11" WHERE key = "db_version"')
-      self.censordb.commit()
-      current_version = 11
-    if current_version == 11:
-      self.log(self.logger.INFO, "updating db from version %i to version %i" % (current_version, 12))
+    elif version == 11:
       self.censordb.execute('INSERT INTO commands (command, flag) VALUES (?,?)', ("srnd-infeed-access", str(4096)))
-      self.censordb.execute('UPDATE config SET value = "12" WHERE key = "db_version"')
-      self.censordb.commit()
+    else:
+      raise Exception('Handler for update from {} version not present in code. Fix it!'.format(version))
 
   def run(self):
     #if self.should_terminate:
@@ -226,20 +199,11 @@ class main(threading.Thread):
     self.allowed_cache = dict()
     self.key_cache = dict()
     self.command_cache = dict()
+
+    self.update_censordb()
+
     self.httpd.start()
-    try:
-      db_version = int(self.censordb.execute("SELECT value FROM config WHERE key = ?", ("db_version",)).fetchone()[0])
-    except Exception as e:
-      db_version = 0
-      self.log(self.logger.DEBUG, "error while fetching db_version: %s. assuming new database" % e)
-    if db_version < self.db_version:
-      self.update_db(db_version)
-    if self.add_admin != "":
-      try:
-        self.censordb.execute("INSERT INTO keys VALUES (NULL,?,?,?)", (self.add_admin, "admin", self.all_flags))
-        self.censordb.commit()
-      except Exception as e:
-        pass
+
     self.running = True
     while self.running:
       try:
@@ -312,24 +276,32 @@ class main(threading.Thread):
     else:
       return 1, 6
 
+  def is_allow_message_id(self, message_id):
+    # True - valid and allow, False - disallow, None - new article
+    current_time = int(time.time())
+    signature_row = self.censordb.execute("SELECT valid, received FROM signature_cache WHERE message_uid = ?", (message_id,)).fetchone()
+    if signature_row is None:
+      return None
+    valid, received = int(signature_row[0]), int(signature_row[1])
+    if not valid:
+      return False
+    if recived:
+      if self.ignore_old > 0 and current_time - received > self.ignore_old:
+        return False
+    else:
+      # add missing time
+      self.censordb.execute('UPDATE signature_cache SET received = ? WHERE message_uid = ?', (current_time, message_id))
+      self.censordb.commit()
+    return True
+
   def process_article(self, message_id):
     self.log(self.logger.DEBUG, "processing %s.." % message_id)
     current_time = int(time.time())
-    try:
-      signature_row = self.censordb.execute("SELECT valid, received FROM signature_cache WHERE message_uid = ?", (message_id,)).fetchone()
-      valid, received = int(signature_row[0]), int(signature_row[1])
-    except:
-      pass
-    else:
-      if not valid:
-        return False
-      if received:
-        if self.ignore_old > 0 and current_time - received > self.ignore_old:
-          return False
-      else:
-        self.censordb.execute('UPDATE signature_cache SET received = ? WHERE message_uid = ?', (current_time, message_id))
-        self.censordb.commit()
-      f = open(os.path.join("articles", message_id), 'r')
+    valid = self.is_allow_message_id(message_id)
+    if valid is False:
+      return False
+    f = open(os.path.join("articles", message_id), 'r')
+    if valid is True:
       try:
         self.parse_article(f, message_id)
       except Exception as e:
@@ -338,7 +310,6 @@ class main(threading.Thread):
         f.close()
       return True
     public_key = None
-    f = open(os.path.join("articles", message_id), 'r')
     line = f.readline()
     while len(line) != 0:
       if len(line) == 1:
@@ -384,7 +355,7 @@ class main(threading.Thread):
     try:
       #self.log("should get key_id for public_key %s" % public_key, 1)
       key_id = int(self.censordb.execute("SELECT id FROM keys WHERE key = ?", (public_key,)).fetchone()[0])
-    except Exception as e:
+    except Exception:
       self.censordb.execute("INSERT INTO keys (key, local_name, flags) VALUES (?, ?, ?)", (public_key, '', '0'))
       self.censordb.commit()
       key_id = int(self.censordb.execute("SELECT id FROM keys WHERE key = ?", (public_key,)).fetchone()[0])
@@ -534,10 +505,9 @@ class main(threading.Thread):
     self.log(self.logger.DEBUG, "handle srnd-cmd: %s" % line)
     command, base64_blob = line.split(" ", 2)[1:]
     try:
-      send, received, replayable = [base64.urlsafe_b64decode(x) for x in base64_blob.split(':')]
-      send, received, replayable = int(send), int(received), int(replayable)
-    except:
-      self.log(self.logger.WARNING, 'handle srnd-cmd: get corrupted data for %s' % command)
+      send, received, replayable = [int(base64.urlsafe_b64decode(x)) for x in base64_blob.split(':')]
+    except Exception as e:
+      self.log(self.logger.WARNING, 'handle srnd-cmd: get corrupted data for {}: {}'.format(command, e))
       return command, None
     if send not in (-1, 0, 1) or received not in (-1, 0, 1) or replayable not in (0, 1):
       self.log(self.logger.WARNING, 'handle srnd-cmd: get invalid value for %s, send=%s, received=%s, replayable=%s' % (command, send, received, replayable))
@@ -546,18 +516,15 @@ class main(threading.Thread):
       self.log(self.logger.WARNING, 'handle srnd-cmd: modifying self is not allowed. This maybe suicide!')
       return command, None
 
-    try:
-      if int(self.censordb.execute('SELECT count(command) FROM cmd_map WHERE command = ?', (command,)).fetchone()[0]) == 1:
-        self.censordb.execute('UPDATE cmd_map SET send = ?, received = ?, replayable = ? WHERE command = ?', (send, received, replayable, command))
-        self.censordb.commit()
-        self.command_cache = dict()
-      else:
-        self.log(self.logger.WARNING, "handle srnd-cmd: command %s not found or duplicated" % (command,))
-    except Exception as e:
-      self.log(self.logger.WARNING, "handle srnd-cmd: db not upgraded: %s, line = '%s'" % (e, line))
+    if int(self.censordb.execute('SELECT count(command) FROM cmd_map WHERE command = ?', (command,)).fetchone()[0]) == 1:
+      self.censordb.execute('UPDATE cmd_map SET send = ?, received = ?, replayable = ? WHERE command = ?', (send, received, replayable, command))
+      self.censordb.commit()
+      self.command_cache = dict()
+    else:
+      self.log(self.logger.WARNING, "handle srnd-cmd: command %s not found or duplicated" % (command,))
     return command, None
 
-  def handle_delete(self, line, debug=False):
+  def handle_delete(self, line):
     command, message_id = line.split(" ", 1)
     self.log(self.logger.DEBUG, "should delete %s" % message_id)
 
