@@ -188,6 +188,7 @@ class feed(threading.Thread):
     if not self.outstream:
       self.log(self.logger.INFO, 'connection established')
       self.send(self.welcome + '\r\n')
+      self.state = 'idle'
     else:
       self.articles_to_send = set()
       cooldown_msg = ''
@@ -232,7 +233,7 @@ class feed(threading.Thread):
           else:
             self.log(self.logger.ERROR, 'unhandled initial connect ProxyError: %s' % uni_msg)
             self.log(self.logger.ERROR, traceback.format_exc())
-    self.state = 'idle'
+      self.state = 'wait_welcome'
     poll = select.poll()
     poll.register(self.socket.fileno(), select.POLLIN | select.POLLPRI)
     poll = poll.poll
@@ -285,7 +286,7 @@ class feed(threading.Thread):
               poll = poll.poll
               self.in_buffer.reset()
               self.reconnect = False
-              self.state = 'idle'
+              self.state = 'wait_welcome'
           if not self.running: break
           if not connected: continue
       if poll(self.polltimeout):
