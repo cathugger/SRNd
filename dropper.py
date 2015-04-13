@@ -21,6 +21,7 @@ class dropper(threading.Thread):
     self.socket = kwargs.get('listener', None)
     self.SRNd = kwargs.get('master', None)
     self.logger = kwargs.get('logger', None)
+    self.instance_name = kwargs.get('instance_name', 'SRNd')
     if self.SRNd is None:
       raise Exception('[dropper] init error: value master is None')
     if self.logger is None:
@@ -146,7 +147,7 @@ class dropper(threading.Thread):
       for key in self.reqs:
         if header[index].lower().startswith(key + ':'):
           if key == 'path':
-            article_path = ''.join((self.SRNd.instance_name, '!', header[index].split(' ', 1)[1].strip()))
+            article_path = ''.join((self.instance_name, '!', header[index].split(' ', 1)[1].strip()))
             header[index] = ''.join(('Path: ', article_path, '\n'))
           elif key == 'x-i2p-desthash':
             desthash = header[index].split(' ', 1)[1].strip()
@@ -163,7 +164,7 @@ class dropper(threading.Thread):
         if req == 'message-id':
           self.log(self.logger.VERBOSE, 'should generate message-id..')
           rnd = ''.join(random.choice(string.ascii_lowercase) for x in range(10))
-          vals[req] = '<{}{}@POSTED_dropper.{}>'.format(rnd, int(time.time()), self.SRNd.instance_name)
+          vals[req] = '<{}{}@POSTED_dropper.{}>'.format(rnd, int(time.time()), self.instance_name)
           additional_headers.append('Message-ID: {0}'.format(vals[req]))
         elif req == 'newsgroups':
           vals[req] = list()
@@ -179,7 +180,7 @@ class dropper(threading.Thread):
           additional_headers.append('From: Anonymous Coward <nobody@no.where>')
         elif req == 'path':
           self.log(self.logger.VERBOSE, 'should generate path..')
-          additional_headers.append('Path: ' + self.SRNd.instance_name)
+          additional_headers.append('Path: ' + self.instance_name)
       else:
         if req == 'newsgroups':
           if '/' in vals[req]:

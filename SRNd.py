@@ -24,26 +24,39 @@ from feeds.feed_wrapper import OutFeed, MultiInFeed
 class SRNd(threading.Thread):
 
   def log(self, loglevel, message):
-    if loglevel >= self.loglevel:
+    if loglevel >= self.config['srnd_debuglevel']:
       self.logger.log('SRNd', message, loglevel)
 
   def __init__(self, logger):
     self.logger = logger
-    # FIXME: read SRNd loglevel from SRNd.conf
-    self.loglevel = self.logger.INFO
-    self.read_and_parse_config()
+    self.config = {'srnd_debuglevel': self.logger.INFO}
     self.log(self.logger.VERBOSE,  'srnd test logging with VERBOSE')
     self.log(self.logger.DEBUG,    'srnd test logging with DEBUG')
     self.log(self.logger.INFO,     'srnd test logging with INFO')
     self.log(self.logger.WARNING,  'srnd test logging with WARNING')
     self.log(self.logger.ERROR,    'srnd test logging with ERROR')
     self.log(self.logger.CRITICAL, 'srnd test logging with CRITICAL')
+    # default config. key = (value, position). position need for write human readable config
+    def_config = {
+        'bind_ip': ('', 1),
+        'bind_port': (119, 2),
+        'bind_use_ipv6': (False, 3),
+        'data_dir': ('data', 4),
+        'db_dir': ('database', 5),
+        'use_chroot': (True, 6),
+        'setuid': ('news', 7),
+        'srnd_debuglevel': (self.logger.INFO, 8),
+        'infeed_debuglevel': (self.logger.INFO, 9),
+        'dropper_debuglevel': (self.logger.INFO, 10),
+        'instance_name': ('SRNd', 11)
+    }
+    self.config = self.init_srnd_config(def_config)
 
     self._init_sysinfo()
 
     # create some directories
     for directory in ('filesystem', 'outfeeds', 'plugins'):
-      dir_ = os.path.join(self.data_dir, 'config', 'hooks', directory)
+      dir_ = os.path.join(self.config['data_dir'], 'config', 'hooks', directory)
       if not os.path.exists(dir_):
         os.makedirs(dir_)
       os.chmod(dir_, 0o777) # FIXME think about this, o+r should be enough?
@@ -51,33 +64,33 @@ class SRNd(threading.Thread):
     # install / update plugins
     self.log(self.logger.INFO, "installing / updating plugins")
     for directory in os.listdir('install_files'):
-      copy_tree(os.path.join('install_files', directory), os.path.join(self.data_dir, directory), preserve_times=True, update=True)
-    if self.setuid != '':
+      copy_tree(os.path.join('install_files', directory), os.path.join(self.config['data_dir'], directory), preserve_times=True, update=True)
+    if self.config['setuid'] != '':
       self.log(self.logger.INFO, "fixing plugin permissions")
-      for directory in os.listdir(os.path.join(self.data_dir, 'plugins')):
+      for directory in os.listdir(os.path.join(self.config['data_dir'], 'plugins')):
         try:
-          os.chown(os.path.join(self.data_dir, 'plugins', directory), self.uid, self.gid)
+          os.chown(os.path.join(self.config['data_dir'], 'plugins', directory), self.config['uid'], self.config['gid'])
         except OSError as e:
           if e.errno == 1:
             # FIXME what does this errno actually mean? write actual descriptions for error codes -.-
-            self.log(self.logger.WARNING, "couldn't change owner of %s. %s will likely fail to create own directories." % (os.path.join(self.data_dir, 'plugins', directory), directory))
+            self.log(self.logger.WARNING, "couldn't change owner of %s. %s will likely fail to create own directories." % (os.path.join(self.config['data_dir'], 'plugins', directory), directory))
           else:
             # FIXME: exit might not allow logger to actually output the message.
-            self.log(self.logger.CRITICAL, "trying to chown plugin directory %s failed: %s" % (os.path.join(self.data_dir, 'plugins', directory), e))
+            self.log(self.logger.CRITICAL, "trying to chown plugin directory %s failed: %s" % (os.path.join(self.config['data_dir'], 'plugins', directory), e))
             exit(1)
     #add data_dir in syspath
-    sys.path.append(os.path.abspath(self.data_dir))
+    sys.path.append(os.path.abspath(self.config['data_dir']))
 
     # start listening
-    if self.ipv6:
+    if self.config['bind_use_ipv6']:
       self.socket = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
     else:
       self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
     try:
-      self.log(self.logger.INFO, 'start listening at %s:%i' % (self.ip, self.port))
-      self.socket.bind((self.ip, self.port))
+      self.log(self.logger.INFO, 'start listening at %s:%i' % (self.config['bind_ip'], self.config['bind_port']))
+      self.socket.bind((self.config['bind_ip'], self.config['bind_port']))
     except socket.error as e:
       if e.errno == 13:
         # FIXME: exit might not allow logger to actually output the message.
@@ -85,29 +98,29 @@ class SRNd(threading.Thread):
         You have three options:
          - run SRNd as root
          - assign CAP_NET_BIND_SERVICE to the user you intend to use
-         - use a port > 1024 by setting bind_port at %s''' % (e, os.path.join(self.data_dir, 'config', 'SRNd.conf')))
+         - use a port > 1024 by setting bind_port at %s''' % (e, os.path.join(self.config['data_dir'], 'config', 'SRNd.conf')))
         exit(2)
       elif e.errno == 98:
         # FIXME: exit might not allow logger to actually output the message.
-        self.log(self.logger.CRITICAL, '[error] %s:%i already in use, change to a different port by setting bind_port at %s' % (self.ip, self.port, os.path.join(self.data_dir, 'config', 'SRNd.conf')))
+        self.log(self.logger.CRITICAL, '%s:%i already in use, change to a different port by setting bind_port at %s' % (self.config['bind_ip'], self.config['bind_port'], os.path.join(self.config['data_dir'], 'config', 'SRNd.conf')))
         exit(2)
       else:
         raise e
     self.socket.listen(5)
 
     # create jail
-    os.chdir(self.data_dir)
+    os.chdir(self.config['data_dir'])
 
     # init db manager
-    if not os.path.exists(self._db_dir):
-      os.makedirs(self._db_dir)
+    if not os.path.exists(self.config['db_dir']):
+      os.makedirs(self.config['db_dir'])
     # fix permissin for chroot
-    if self.setuid != '':
-      os.chown(self._db_dir, self.uid, self.gid)
+    if self.config['setuid'] != '':
+      os.chown(self.config['db_dir'], self.config['uid'], self.config['gid'])
     else:
-      os.chown(self._db_dir, os.geteuid(), os.getegid())
+      os.chown(self.config['db_dir'], os.geteuid(), os.getegid())
 
-    self._db_manager = __import__('srnd.db_utils').db_utils.DatabaseManager(self._db_dir)
+    self._db_manager = __import__('srnd.db_utils').db_utils.DatabaseManager(self.config['db_dir'])
     self._auto_db_migration()
 
     # reading and starting plugins
@@ -115,7 +128,7 @@ class SRNd(threading.Thread):
     self.plugins = dict()
     self.update_plugins()
 
-    if self.chroot:
+    if self.config['use_chroot']:
       self.log(self.logger.INFO, 'chrooting..')
       try:
         os.chroot('.')
@@ -125,23 +138,23 @@ class SRNd(threading.Thread):
           print "        You have three options:"
           print "         - run SRNd as root"
           print "         - assign CAP_SYS_CHROOT to the user you intend to use"
-          print "         - disable chroot in {0} by setting chroot=False".format(os.path.join(self.data_dir, 'config', 'SRNd.conf'))
+          print "         - disable chroot in {0} by setting chroot=False".format(os.path.join(self.config['data_dir'], 'config', 'SRNd.conf'))
           exit(3)
         else:
           raise e
 
-    if self.setuid != '':
+    if self.config['setuid'] != '':
       self.log(self.logger.INFO, 'dropping privileges..')
       try:
-        os.setgid(self.gid)
-        os.setuid(self.uid)
+        os.setgid(self.config['gid'])
+        os.setuid(self.config['uid'])
       except OSError as e:
         if e.errno == 1:
           print "[error] current user account does not have CAP_SETUID/CAP_SETGID: ", e
           print "        You have three options:"
           print "         - run SRNd as root"
           print "         - assign CAP_SETUID and CAP_SETGID to the user you intend to use"
-          print "         - disable setuid in {0} by setting setuid=".format(os.path.join(self.data_dir, 'config', 'SRNd.conf'))
+          print "         - disable setuid in {0} by setting setuid=".format(os.path.join(self.config['data_dir'], 'config', 'SRNd.conf'))
           exit(4)
         else:
           raise e
@@ -165,8 +178,15 @@ class SRNd(threading.Thread):
         os.mkdir(directory)
     threading.Thread.__init__(self)
     self.name = "SRNd-listener"
-    # FIXME add config var for dropper_debug
-    self.dropper = dropper.dropper(thread_name='SRNd-dropper', logger=self.logger, listener=self.socket, master=self, debug=self.dropper_debug, db_connector=self._db_manager.connect)
+    self.dropper = dropper.dropper(
+        thread_name='SRNd-dropper',
+        logger=self.logger,
+        listener=self.socket,
+        master=self,
+        debug=self.config['dropper_debuglevel'],
+        db_connector=self._db_manager.connect,
+        instance_name=self.config['instance_name']
+    )
 
     self.start_up_timestamp = -1
     self.ctl_socket_handlers = dict()
@@ -184,7 +204,7 @@ class SRNd(threading.Thread):
         ('overchan.db3', os.path.join('plugins', 'overchan', 'overchan.db3')), ('pastes.db3', os.path.join('plugins', 'paste', 'pastes.db3'))
     )
     for target in targets:
-      new_location = os.path.join(self._db_dir, target[0])
+      new_location = os.path.join(self.config['db_dir'], target[0])
       if os.path.isfile(target[1]) and os.path.isfile(new_location):
         self.log(self.logger.ERROR, 'DB migrator: {0} duplicate found {1}. If you copy {2} manually, delete {1}. If not - WTF!'.format(new_location, target[1], target[0]))
       elif os.path.isfile(target[1]):
@@ -241,200 +261,132 @@ class SRNd(threading.Thread):
         self._sysinfo['pagesize'] = 4096
     self._sysinfo['statvfs'] = os.statvfs(os.getcwd())
 
-  def read_and_parse_config(self):
-    # read configuration
-    # FIXME think about path.. always use data/config/SRNd.conf unless argument states otherwise?
-    config_file = os.path.join('data', 'config', 'SRNd.conf')
-    writeConfig = False
-    if os.path.exists(config_file):
-      self.ip = ''
-      self.port = 0
-      self.hostname = ''
-      self.data_dir = ''
-      self.chroot = ''
-      self.setuid = ''
-      self.ipv6 = ''
-      self.infeed_debug = -1
-      self.dropper_debug = -1
-      self.instance_name = ''
-      self._db_dir = ''
-      f = open(config_file, 'r')
-      config = f.read()
-      f.close()
-      lines = config.split('\n')
-      for line in lines:
-        if len(line) == 0:
-          continue
-        if line[0] == '#':
-          continue
-        if not '=' in line:
-          self.log(self.logger.WARNING, 'no = in setting \'%s\'' % line)
-          continue
-        key = line.split('=', 1)[0]
-        value = line.split('=', 1)[1]
-        #self.config[key] = value
-        if key == 'bind_ip':
-          self.ip = value
-        elif key == 'bind_port':
-          try:
-            self.port = int(value)
-          except ValueError as e:
-            self.port = 0
-        elif key == 'bind_use_ipv6':
-          if value.lower() == 'true':
-            self.ipv6 = True
-          elif value.lower() == 'false':
-            self.ipv6 = False
-          else:
-            self.log(self.logger.WARNING, 'bind_user_ipv6: unknown value. only accepting true or false. using default of false')
-            self.ipv6 = False
-        elif key == 'data_dir':
-          self.data_dir = value
-        elif key == 'db_dir':
-          self._db_dir = value
-        elif key == 'use_chroot':
-          if value.lower() == 'true':
-            self.chroot = True
-          elif value.lower() == 'false':
-            self.chroot = False
-          else:
-            self.log(self.logger.WARNING, 'use_chroot: unknown value. only accepting true or false. using default of true')
-            self.chroot = True
-        elif key == 'setuid':
-          self.setuid = value
-        elif key == 'srnd_debuglevel':
-          error = False
-          try:
-            self.loglevel = int(value)
-            if self.loglevel > 5 or self.loglevel < 0:
-              error = True
-          except ValueError as e:
-            error = True
-          if error:
-            self.loglevel = 2
-            self.log(self.logger.WARNING, 'srnd_debuglevel: only accepting integer between 0 and 5. using default of 2')
-        elif key == 'infeed_debuglevel':
-          error = False
-          try:
-            self.infeed_debug = int(value)
-            if self.infeed_debug > 5 or self.infeed_debug < 0:
-              error = True
-          except ValueError as e:
-            error = True
-          if error:
-            self.infeed_debug = 2
-            self.log(self.logger.WARNING, 'infeed_debuglevel: only accepting integer between 0 and 5. using default of 2')
-        elif key == 'dropper_debuglevel':
-          error = False
-          try:
-            self.dropper_debug = int(value)
-            if self.dropper_debug > 5 or self.dropper_debug < 0:
-              error = True
-          except ValueError as e:
-            error = True
-          if error:
-            self.dropper_debug = 2
-            self.log(self.logger.WARNING, 'dropper_debuglevel: only accepting integer between 0 and 5. using default of 2')
-        elif key == 'instance_name':
-          error = False
-          if ' ' in value:
-            error = True
-          else:
-            self.instance_name = value
-          if error:
-            self.instance_name = 'SRNd'
-            self.log(self.logger.WARNING, 'instance_name contains a space. using default of \'SRNd\'')
+  def _sanitize_srnd_config(self, def_config, config):
+    """
+    Fix bad or missing value, delete unknown keys
+    It's modify config dict as mutable type.
+    return False if need rewrite config file
+    """
+    no_change = True
+    for key, value in [xx for xx in config.iteritems()]:
+      if key not in def_config:
+        # Unknown key, del? del!
+        del config[key]
+        no_change = False
+      elif isinstance(def_config[key][0], bool):
+        # cast bool
+        if value.lower() == 'true':
+          config[key] = True
+        elif value.lower() == 'false':
+          config[key] = False
+        else:
+          self.log(self.logger.WARNING, '{}: unknown value. only accepting true or false. using default of {}'.format(key, def_config[key][0]))
+          config[key] = def_config[key][0]
+          no_change = False
+      else:
+        # cast to type form type(default value)
+        try:
+          config[key] = type(def_config[key][0])(value)
+        except ValueError:
+          self.log(self.logger.WARNING, '{}: bad value type. only accepting {}, get {}. using default of {}'.format(key, type(def_config[key][0]), type(value), def_config[key][0]))
+          config[key] = def_config[key][0]
+          no_change = False
+    # add missing key
+    for key, value in def_config.iteritems():
+      if key not in config:
+        config[key] = value[0]
+        no_change = False
+    # deep check
+    for key in ('srnd_debuglevel', 'infeed_debuglevel', 'dropper_debuglevel'):
+      if config[key] < 0 or config[key] > 5:
+        self.log(self.logger.WARNING, '{}: only accepting integer between 0 and 5. using default of {}'.format(key, def_config[key][0]))
+        config[key] = def_config[key][0]
+        no_change = False
+    if ' ' in config['instance_name']:
+      self.log(self.logger.WARNING, "instance_name contains a space. using default of '{}'".format(def_config['instance_name'][0]))
+      config['instance_name'] = def_config['instance_name'][0]
+      no_change = False
+    return no_change
 
-      # initialize required variables if currently unset
-      if self.ip == '':
-        self.ip = ''
-        writeConfig = True
-      if self.port == 0:
-        self.port = 119
-        writeConfig = True
-      #if self.hostname == '':
-      #  self.config = 'some random NNTPd v 0.1'
-      #  writeConfig = True
-      if self.data_dir == '':
-        self.data_dir = 'data'
-        writeConfig = True
-      if self._db_dir == '':
-        self._db_dir = 'database'
-        writeConfig = True
-      if self.ipv6 == '':
-        self.ipv6 = False
-        writeConfig = True
-      if self.infeed_debug == -1:
-        self.infeed_debug = 2
-        writeConfig = True
-      if self.dropper_debug == -1:
-        self.dropper_debug = 2
-        writeConfig = True
-      if self.instance_name == '':
-        self.instance_name = 'SRNd'
-        writeConfig = True
-    else:
-      # initialize variables with sane defaults
-      self.ip = ''
-      self.port = 119
-      #self.config = 'some random NNTPd v 0.1'
-      self.data_dir = 'data'
-      self._db_dir = 'database'
-      self.chroot = True
-      self.setuid = 'news'
-      self.ipv6 = False
-      self.infeed_debug = 2
-      self.dropper_debug = 2
-      self.instance_name = 'SRNd'
-      writeConfig = True
-    if self.setuid != '':
-      try:
-        self.uid, self.gid = pwd.getpwnam(self.setuid)[2:4]
-      except KeyError as e:
-        # FIXME: user can't change config file as it might not exist at this point.
-        print "[error] '{0}' is not a valid user on this system.".format(self.setuid)
-        print "[error] either create {0} or change setuid at '{1}' into a valid username or an empty value to disable setuid".format(self.setuid, config_file)
-        exit(1)
-    else:
-      if self.chroot:
-        print "[error] You defined use_chroot=True and set setuid to an empty value."
-        print "[error] This would result in chrooting without dropping privileges which defeats the purpose of chrooting completely."
-        exit(3)
-    if writeConfig:
-      configPath = os.path.join(self.data_dir, 'config')
-      if not os.path.exists(configPath):
-        os.makedirs(configPath)
-        if self.setuid != '':
-          try:
-            os.chown(self.data_dir, self.uid, self.gid)
-            os.chown(configPath, self.uid, self.gid)
-          except OSError as e:
-            if e.errno == 1:
-              print "[warning] can't change ownership of newly generated data directory."
-              print "[warning] If you don't intend to run SRNd as root and let it chroot and setuid/gid itself (which is the recommend way to run SRNd), you"
-              print "[warning] need to modify the configuration file at {0} and set setuid to an empty value.".format(os.path.join(self.data_dir, 'config', 'SRNd.conf'))
-              print "[warning] If you want to run as root delete the data directory before you restart SRNd."
-            else:
-              print "[error] trying to chown configuration files failed: ", e
-              exit(1)
-      f = open(os.path.join(configPath, 'SRNd.conf'), 'w')
-      f.write('# changing this file requires a restart of SRNd\n')
-      f.write('# empty lines or lines starting with # are ignored\n')
-      f.write('# do not add whitespaces before or after =\n')
-      f.write('# additional data in this file will be overwritten every time a value has been changed\n')
+  def _read_srnd_config(self, config_file):
+    config = dict()
+    with open(config_file, 'r') as f:
+      for line in f:
+        if line[0] not in ('#', '\n'):
+          data = line.strip('\n').split('=', 1)
+          if len(data) == 1:
+            self.log(self.logger.WARNING, "no = in setting '{}'".format(line))
+          else:
+            config[data[0]] = data[1]
+    return config
+
+  def _write_srnd_config(self, config_list, data_dir, uid, gid):
+    config_head = (
+        '# changing this file requires a restart of SRNd',
+        '# empty lines or lines starting with # are ignored',
+        '# do not add whitespaces before or after =',
+        '# additional data in this file will be overwritten every time a value has been changed'
+    )
+    config_path = os.path.join(data_dir, 'config')
+    if not os.path.exists(config_path):
+      os.makedirs(config_path)
+      if uid is not None and gid is not None:
+        try:
+          os.chown(data_dir, uid, gid)
+          os.chown(config_path, uid, gid)
+        except OSError as e:
+          if e.errno == 1:
+            warnings = (
+                "can't change ownership of newly generated data directory.",
+                "If you don't intend to run SRNd as root and let it chroot and setuid/gid itself (which is the recommend way to run SRNd), you",
+                "need to modify the configuration file at {} and set setuid to an empty value.".format(os.path.join(config_path, 'SRNd.conf')),
+                "If you want to run as root delete the data directory before you restart SRNd."
+            )
+            self.log(self.logger.WARNING, '\n'.join(warnings))
+          else:
+            self.log(self.logger.CRITICAL, "trying to chown configuration files failed: {}".format(e))
+            exit(1)
+    with open(os.path.join(config_path, 'SRNd.conf'), 'w') as f:
+      f.write('\n'.join(config_head))
+      f.write('\n\n')
+      f.write('\n'.join(config_list))
       f.write('\n')
-      f.write('bind_ip={0}\n'.format(self.ip))
-      f.write('bind_port={0}\n'.format(self.port))
-      f.write('bind_use_ipv6={0}\n'.format(self.ipv6))
-      f.write('data_dir={0}\n'.format(self.data_dir))
-      f.write('db_dir={0}\n'.format(self._db_dir))
-      f.write('use_chroot={0}\n'.format(self.chroot))
-      f.write('setuid={0}\n'.format(self.setuid))
-      f.write('srnd_debuglevel={0}\n'.format(self.loglevel))
-      f.write('infeed_debuglevel={0}\n'.format(self.infeed_debug))
-      f.write('dropper_debuglevel={0}\n'.format(self.dropper_debug))
-      f.write('instance_name={0}\n'.format(self.instance_name))
-      f.close()
+
+  def init_srnd_config(self, def_config, config_file=os.path.join('data', 'config', 'SRNd.conf')):
+    config = self._read_srnd_config(config_file) if os.path.isfile(config_file) else dict()
+    no_change = self._sanitize_srnd_config(def_config, config)
+    # check setuid
+    uid = None
+    gid = None
+    if config['setuid']:
+      try:
+        uid, gid = pwd.getpwnam(config['setuid'])[2:4]
+      except KeyError:
+        # FIXME: user can't change config file as it might not exist at this point.
+        crits = (
+            "'{}' is not a valid user on this system.".format(config['setuid']),
+            "either create {} or change setuid at '{}' into a valid username or an empty value to disable setuid".format(config['setuid'], config_file)
+        )
+        self.log(self.logger.CRITICAL, '\n'.join(crits))
+        exit(1)
+    elif config['use_chroot']:
+      crits = (
+          "You defined use_chroot=True and set setuid to an empty value.",
+          "This would result in chrooting without dropping privileges which defeats the purpose of chrooting completely."
+      )
+      self.log(self.logger.CRITICAL, '\n'.join(crits))
+      exit(3)
+    if not no_change:
+      # create human readable config - sort from position in def_config
+      config_list = sorted([('='.join((key, str(value))), def_config[key][1]) for key, value in config.iteritems()], key=lambda line: line[1])
+      # remove positions
+      config_list = [line[0] for line in config_list]
+      self._write_srnd_config(config_list, config['data_dir'], uid, gid)
+    # add uid and gid in config if present. No write this in config file
+    if uid is not None and gid is not None:
+      config['uid'] = uid
+      config['gid'] = gid
+    return config
 
   @staticmethod
   def _list_config_files(path):
@@ -667,12 +619,12 @@ class SRNd(threading.Thread):
           proxy_conn[proxy_key] = start_params[proxy_key].lower()
       sync_on_startup = True if start_params.get('sync_on_startup', 'nope').lower() == 'true' else False
       try:
-        debuglevel = int(start_params.get('debug', self.loglevel))
+        debuglevel = int(start_params.get('debug', self.config['srnd_debuglevel']))
       except ValueError:
-        debuglevel = self.loglevel
+        debuglevel = self.config['srnd_debuglevel']
       else:
         if 9 < debuglevel < 0:
-          debuglevel = self.loglevel
+          debuglevel = self.config['srnd_debuglevel']
 
       host, port = self._extract_outfeed_data(outfeed)
       name = 'outfeed-{}-{}'.format(host, port)
@@ -1005,7 +957,7 @@ class SRNd(threading.Thread):
             con = self.socket.accept()
             name = 'infeed-{0}-{1}'.format(con[1][0], con[1][1])
             if name not in self.feeds:
-              self.feeds[name] = feed.feed(self, self.logger, config=self.infeeds_config, connection=con, debug=self.infeed_debug, db_connector=self._db_manager.connect)
+              self.feeds[name] = feed.feed(self, self.logger, config=self.infeeds_config, connection=con, debug=self.config['infeed_debuglevel'], db_connector=self._db_manager.connect)
               self.feeds[name].start()
             else:
               self.log(self.logger.WARNING, 'got connection from %s but its still in feeds. wtf?' % name)
@@ -1101,7 +1053,7 @@ class SRNd(threading.Thread):
           # convert normal infeed to MultiInFeed.
           # pop old infeed from self.feeds, create instance MultiInFeed, append old infeed to multiinfeed
           darling = self.feeds.pop(new_name)
-          self.feeds[new_name] = MultiInFeed(logger=self.logger, debug=self.infeed_debug, master=self, wrapper_name=new_name)
+          self.feeds[new_name] = MultiInFeed(logger=self.logger, debug=self.config['infeed_debuglevel'], master=self, wrapper_name=new_name)
           self.feeds[new_name].append_infeed(darling, new_name)
         return self.feeds[new_name].append_infeed(self.feeds.pop(old_name))
       else:
