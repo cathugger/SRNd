@@ -103,9 +103,10 @@ class HandleIncoming(object):
       line = line[1:]
     self._write(line)
     if not self.body_found:
-      if line.lower().startswith('message-id:'):
+      lower_line = line.lower()
+      if lower_line.startswith('message-id: '):
         self.message_id = line.split(' ', 1)[1]
-      elif line.lower().startswith('newsgroups:'):
+      elif lower_line.startswith('newsgroups: '):
         self.newsgroups = line.split(' ', 1)[1]
       self.header.append(line)
     self.read_byte += len(line) + 2
