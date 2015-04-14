@@ -378,7 +378,7 @@ class SRNd(threading.Thread):
       exit(3)
     if not no_change:
       # create human readable config - sort from position in def_config
-      config_list = sorted([('='.join((key, str(value))), def_config[key][1]) for key, value in config.iteritems()], key=lambda line: line[1])
+      config_list = sorted([('='.join((key, str(value))), def_config[key][1]) for key, value in config.iteritems()], key=lambda line_: line_[1])
       # remove positions
       config_list = [line[0] for line in config_list]
       self._write_srnd_config(config_list, config['data_dir'], uid, gid)
@@ -1057,7 +1057,6 @@ class SRNd(threading.Thread):
       else:
         self.feeds[new_name] = self.feeds.pop(old_name)
         return new_name
-      return None
     finally:
       self._feeds_lock.release()
 
