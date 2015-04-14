@@ -152,7 +152,7 @@ class BaseFeed(threading.Thread):
         self.log(self.logger.ERROR, traceback.format_exc())
         self.con_broken = True
     except sockssocket.ProxyError as e:
-      self.log(self.logger.ERROR, 'got an unknown sockssocket.proxy error at mode "{}". {}: {}'.format(mode, e.errno, e))
+      self.log(self.logger.ERROR, 'got an unknown sockssocket.proxy error at mode "{}". {}: {}'.format(mode, e.message[0], e.message[1]))
       self.log(self.logger.ERROR, traceback.format_exc())
       self.con_broken = True
     return 0
