@@ -8,7 +8,7 @@ import feeds.outfeed
 import feeds.infeed
 
 def OutFeed(master, logger, config, server, sync_on_startup, proxy, debug):
-  if 'multiconn' not in config or 10 < config['multiconn'] < 2:
+  if 'multiconn' not in config or config['multiconn'] < 2 or config['multiconn'] > 10:
     handler = feeds.outfeed.OutFeed
   else:
     handler = MultiOutFeed
