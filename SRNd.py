@@ -18,7 +18,7 @@ except ImportError:
   psutil_import_result = False
 
 import dropper
-import feeds.feed as feed
+from feeds.infeed import InFeed
 from feeds.feed_wrapper import OutFeed, MultiInFeed
 
 class SRNd(threading.Thread):
@@ -644,13 +644,11 @@ class SRNd(threading.Thread):
           self.feeds[name] = OutFeed(
               self,
               self.logger,
-              config={'config': self._feed_config_sanitize(start_params)},
-              host=host,
-              port=port,
+              config=self._feed_config_sanitize(start_params),
+              server=(host, port),
               sync_on_startup=sync_on_startup,
               proxy=proxy,
               debug=debuglevel,
-              db_connector=self._db_manager.connect
           )
           self.feeds[name].start()
         except Exception as e:
@@ -957,7 +955,7 @@ class SRNd(threading.Thread):
             con = self.socket.accept()
             name = 'infeed-{0}-{1}'.format(con[1][0], con[1][1])
             if name not in self.feeds:
-              self.feeds[name] = feed.feed(self, self.logger, config=self.infeeds_config, connection=con, debug=self.config['infeed_debuglevel'], db_connector=self._db_manager.connect)
+              self.feeds[name] = InFeed(self, self.logger, config=self.infeeds_config, connection=con, debug=self.config['infeed_debuglevel'], db_connector=self._db_manager.connect)
               self.feeds[name].start()
             else:
               self.log(self.logger.WARNING, 'got connection from %s but its still in feeds. wtf?' % name)

@@ -4,14 +4,15 @@ import Queue
 import time
 import threading
 
-from feeds.feed import feed
+import feeds.outfeed
+import feeds.infeed
 
-def OutFeed(master, logger, config, db_connector, host, port, sync_on_startup, proxy=None, debug=2):
-  if 'multiconn' not in config['config'] or 10 < config['config']['multiconn'] < 2:
-    handler = feed
+def OutFeed(master, logger, config, server, sync_on_startup, proxy, debug):
+  if 'multiconn' not in config or 10 < config['multiconn'] < 2:
+    handler = feeds.outfeed.OutFeed
   else:
     handler = MultiOutFeed
-  return handler(master=master, logger=logger, config=config, host=host, port=port, db_connector=db_connector, outstream=True, sync_on_startup=sync_on_startup, proxy=proxy, debug=debug)
+  return handler(master, logger, config, server, sync_on_startup, proxy, debug)
 
 class MultiFeed(object):
   """base wrapper"""
@@ -101,9 +102,9 @@ class MultiInFeed(MultiFeed):
       self.log(self.logger.ERROR, 'Not shutdown {} infeeds instance: {} work. Fix it'.format(self._feeds_count, len(status)))
     self._srnd.terminate_feed(self.name)
 
-class OutFeedInstance(feed):
+class OutFeedInstance(feeds.outfeed.OutFeed):
   def __init__(self, postfix, **kwargs):
-    feed.__init__(self, **kwargs)
+    feeds.outfeed.OutFeed.__init__(self, **kwargs)
     self.name += '-{}'.format(postfix)
 
   def update_trackdb(self, line):
@@ -120,26 +121,24 @@ class MultiOutFeed(MultiFeed):
     if loglevel >= self.loglevel:
       self.logger.log(self.name, message, loglevel)
 
-  def __init__(self, master, logger, config, host, port, db_connector, outstream, sync_on_startup, proxy, debug):
+  def __init__(self, master, logger, config, server, sync_on_startup, proxy, debug):
     MultiFeed.__init__(self)
     self.sync_on_startup = sync_on_startup
-    self.name = 'outfeed-{0}-{1}'.format(host, port)
+    # tuple(host, port)
+    self.name = 'outfeed-{}-{}'.format(*server)
     self.loglevel = debug
     self.logger = logger
     self._srnd = master
     self._trackdb_busy = False
     self.trackdb_queue = Queue.Queue()
-    self._feeds_count = config['config']['multiconn']
+    self._feeds_count = config['multiconn']
     for target in range(self._feeds_count):
       self._feeds.append(
           OutFeedInstance(
               master=self,
               logger=logger,
               config=config,
-              host=host,
-              port=port,
-              db_connector=db_connector,
-              outstream=outstream,
+              server=server,
               sync_on_startup=sync_on_startup,
               proxy=proxy,
               debug=debug,
