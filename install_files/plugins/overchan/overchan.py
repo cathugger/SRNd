@@ -772,7 +772,7 @@ class main(threading.Thread):
     sender = 'Anonymous'
     email = 'nobody@no.where'
     parent = ''
-    groups = list()
+    group_name = ''
     sage = False
     signature = None
     public_key = ''
@@ -804,19 +804,7 @@ class main(threading.Thread):
       elif lower_line.startswith('references:'):
         parent = line[:-1].split(' ')[1]
       elif lower_line.startswith('newsgroups:'):
-        group_in = lower_line[:-1].split(' ', 1)[1]
-        if ';' in group_in:
-          groups_in = group_in.split(';')
-          for group_in in groups_in:
-            if group_in.startswith('overchan.'):
-              groups.append(group_in)
-        elif ',' in group_in:
-          groups_in = group_in.split(',')
-          for group_in in groups_in:
-            if group_in.startswith('overchan.'):
-              groups.append(group_in)
-        else:
-          groups.append(group_in)
+        group_name = lower_line[:-1].partition(': ')[2].split(';')[0].split(',')[0]
       elif lower_line.startswith('x-sage:'):
         sage = True
       elif lower_line.startswith("x-pubkey-ed25519:"):
@@ -949,22 +937,21 @@ class main(threading.Thread):
       self.delete_orphan_attach(image_name, thumb_name)
       return self.move_bad_article(message_id)
 
-    for group in groups:
-      group_flags = self.sqlite.execute("SELECT flags FROM groups WHERE group_name=?", (group,)).fetchone()
-      if group_flags is None:
-        self.log(self.logger.WARNING, 'Message {} in nonexistent group {}'.format(message_id, group))
-      else:
-        group_flags = int(group_flags[0])
-        if (group_flags & self.cache['flags']['spam-fix']) != 0 and len(message) < 5:
-          self.log(self.logger.INFO, 'Spamprotect group %s, censored %s' % (group, message_id))
-          self.delete_orphan_attach(image_name, thumb_name)
-          return self.move_bad_article(message_id)
-        elif (group_flags & self.cache['flags']['news']) != 0 and (not parent or parent == message_id) \
-            and (public_key == '' or not self.check_moder_flags(public_key, 'overchan-news-add')):
-          self.delete_orphan_attach(image_name, thumb_name)
-          return self.move_bad_article(message_id)
-        elif (group_flags & self.cache['flags']['sage']) != 0:
-          sage = True
+    group_flags = self.sqlite.execute("SELECT flags FROM groups WHERE group_name=?", (group_name,)).fetchone()
+    if group_flags is None:
+      self.log(self.logger.WARNING, 'Message {} in nonexistent group {}'.format(message_id, group_name))
+    else:
+      group_flags = int(group_flags[0])
+      if (group_flags & self.cache['flags']['spam-fix']) != 0 and len(message) < 5:
+        self.log(self.logger.INFO, 'Spamprotect group %s, censored %s' % (group_name, message_id))
+        self.delete_orphan_attach(image_name, thumb_name)
+        return self.move_bad_article(message_id)
+      elif (group_flags & self.cache['flags']['news']) != 0 and (not parent or parent == message_id) \
+          and (public_key == '' or not self.check_moder_flags(public_key, 'overchan-news-add')):
+        self.delete_orphan_attach(image_name, thumb_name)
+        return self.move_bad_article(message_id)
+      elif (group_flags & self.cache['flags']['sage']) != 0:
+        sage = True
 
     parent_result = None
     if parent != '' and parent != message_id:
@@ -979,26 +966,24 @@ class main(threading.Thread):
         self.delete_orphan_attach(image_name, thumb_name)
         return self.move_bad_article(message_id)
 
-    group_ids = list()
-    for group in groups:
-      result = self.sqlite.execute('SELECT group_id FROM groups WHERE group_name=? AND (cast(flags as integer) & ?) = 0', (group, self.cache['flags']['blocked'])).fetchone()
-      if not result:
-        try:
-          self.sqlite.execute('INSERT INTO groups(group_name, article_count, last_update) VALUES (?,?,?)', (group, 1, int(time.time())))
-          self.sqlite.commit()
-        except sqlite3.Error:
-          self.log(self.logger.INFO, 'ignoring message for blocked group %s' % group)
-          continue
+    group_id = None
+    result = self.sqlite.execute('SELECT group_id FROM groups WHERE group_name=? AND (cast(flags as integer) & ?) = 0', (group_name, self.cache['flags']['blocked'])).fetchone()
+    if not result:
+      try:
+        self.sqlite.execute('INSERT INTO groups(group_name, article_count, last_update) VALUES (?,?,?)', (group_name, 1, int(time.time())))
+        self.sqlite.commit()
+      except sqlite3.Error:
+        self.log(self.logger.INFO, 'ignoring message for blocked group %s' % group_name)
+      else:
         self.__flush_board_cache()
         self.regenerate_all_html()
-        group_ids.append(int(self.sqlite.execute('SELECT group_id FROM groups WHERE group_name=?', (group,)).fetchone()[0]))
-      else:
-        group_ids.append(int(result[0]))
-    if len(group_ids) == 0:
-      self.log(self.logger.DEBUG, 'no groups left which are not blocked. ignoring %s' % message_id)
+        group_id = int(self.sqlite.execute('SELECT group_id FROM groups WHERE group_name=?', (group_name,)).fetchone()[0])
+    else:
+      group_id = int(result[0])
+    if group_id is None:
+      self.log(self.logger.DEBUG, 'no group left which are not blocked. ignoring %s' % message_id)
       return False
-    for group_id in group_ids:
-      self.overchan_generator.regenerate_boards.add(group_id)
+    self.overchan_generator.regenerate_boards.add(group_id)
 
     if parent != '' and parent != message_id:
       last_update = sent
@@ -1063,9 +1048,9 @@ class main(threading.Thread):
           self.log(self.logger.INFO, 'Attach %s restored. Restore %s thumblinks for this attach' % (image_name, censored_count))
           self.sqlite.execute('UPDATE articles SET thumblink = ? WHERE imagelink = ?', (thumb_name, image_name))
 
-    if image_name == '' and thumb_name == '' and self.config['replace_root_nope'] and (parent == '' or parent == message_id) and len(group_ids) > 0:
+    if image_name == '' and thumb_name == '' and self.config['replace_root_nope'] and (parent == '' or parent == message_id):
       # Get random image for root post
-      result = self.sqlite.execute('SELECT imagelink, thumblink FROM articles WHERE group_id = ? AND length(thumblink) > 40 ORDER BY RANDOM() LIMIT 1', (group_ids[0],)).fetchone()
+      result = self.sqlite.execute('SELECT imagelink, thumblink FROM articles WHERE group_id = ? AND length(thumblink) > 40 ORDER BY RANDOM() LIMIT 1', (group_id,)).fetchone()
       if result:
         image_name, thumb_name = result
         image_name_original = 'pic unrelated'
@@ -1089,9 +1074,8 @@ class main(threading.Thread):
     ]
     insert_request = 'INSERT INTO articles({}) VALUES ({})'.format(', '.join([x[0] for x in insert_list]), ','.join(['?'] * len(insert_list)))
     del insert_list[-1]
-    for group_id in group_ids:
-      self.sqlite.execute(insert_request, [x[1] for x in insert_list] + [group_id,])
-      self.sqlite.execute('UPDATE groups SET last_update=?, article_count = (SELECT count(article_uid) FROM articles WHERE group_id = ?) WHERE group_id = ?', (int(time.time()), group_id, group_id))
+    self.sqlite.execute(insert_request, [x[1] for x in insert_list] + [group_id,])
+    self.sqlite.execute('UPDATE groups SET last_update=?, article_count = (SELECT count(article_uid) FROM articles WHERE group_id = ?) WHERE group_id = ?', (int(time.time()), group_id, group_id))
     self.sqlite.commit()
     return True
 
