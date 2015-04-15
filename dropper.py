@@ -30,7 +30,7 @@ class dropper(threading.Thread):
     self.db_version = 2
     self.watching = os.path.join(os.getcwd(), "incoming")
 
-    self.sqlite = kwargs['db_connector']('dropper')
+    self.sqlite = kwargs['db_connector']('dropper', timeout=20)
     self.sqlite_hasher = kwargs['db_connector']('hashes')
 
     self.sqlite_hasher.execute('''CREATE TABLE IF NOT EXISTS article_hashes
