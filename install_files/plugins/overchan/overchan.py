@@ -20,7 +20,7 @@ from hashlib import sha1, sha512
 import Image
 import nacl.signing
 
-from srnd.utils import basicHTMLencode, css_minifer
+from srnd.utils import basicHTMLencode, css_minifer, trydecode
 from overchan_generator import OverchanGeneratorStatic
 from overchan_markup import OverchanMarkup
 
@@ -1072,13 +1072,13 @@ class main(threading.Thread):
 
     insert_list = [
         ('article_uid',  message_id),
-        ('sender',       sender.decode('UTF-8')),
-        ('email',        email.decode('UTF-8')),
-        ('subject',      subject.decode('UTF-8')),
+        ('sender',       trydecode(sender)),
+        ('email',        trydecode(email)),
+        ('subject',      trydecode(subject)),
         ('sent',         sent),
         ('parent',       parent),
-        ('message',      message.decode('UTF-8')),
-        ('imagename',    image_name_original.decode('UTF-8')),
+        ('message',      trydecode(message)),
+        ('imagename',    trydecode(image_name_original)),
         ('imagelink',    image_name),
         ('thumblink',    thumb_name),
         ('last_update',  last_update),
