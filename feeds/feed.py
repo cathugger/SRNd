@@ -90,24 +90,21 @@ class BaseFeed(threading.Thread):
     if len(commands) == 0:
       self.log(self.logger.VERBOSE, 'should handle empty line')
 
-  def _send(self, message, state='sending'):
-    """Send raw data, return sending count"""
+  def send(self, message, state='sending'):
+    r"""Send line or list, tuple adding \r\n, return sending count"""
+    if not isinstance(message, str):
+      to_send = ''.join(('\r\n'.join(message), '\r\n'))
+    else:
+      to_send = ''.join((message, '\r\n'))
     self.state = state
     sent = 0
-    length = len(message)
+    length = len(to_send)
     while sent != length and not self.con_broken:
       if sent > 0:
         self.log(self.logger.DEBUG, 'resending part of line, starting at %i to %i' % (sent, length))
-      sent += self._socket_worker('send', message[sent:])
-    self.log(self.logger.VERBOSE, 'out: %s' % message[:-2])
+      sent += self._socket_worker('send', to_send[sent:])
+    self.log(self.logger.VERBOSE, 'out: %s' % to_send[:-2])
     return sent
-
-  def send(self, commands, state='sending'):
-    r"""Send line or list, tuple adding \r\n """
-    if not isinstance(commands, str):
-      self._send(''.join(('\r\n'.join(commands), '\r\n')), state)
-    else:
-      self._send(''.join((commands, '\r\n')), state)
 
   def _handle_received(self):
     """Read and parsing data receive by socket"""
@@ -128,6 +125,24 @@ class BaseFeed(threading.Thread):
           self.handle_line(line)
       if not self.in_buffer.multiline and self._handshake_state:
         self.state = 'idle'
+
+  @staticmethod
+  def _read_article(fd, header=True, body=True):
+    """Read full or head/body article from open file"""
+    header_complit = False
+    for line in fd:
+      line = line[:-1]
+      if not header_complit and not line:
+        header_complit = True
+        # send empty line
+        if header and body:
+          yield line
+      # don't send body
+      elif not body and header_complit:
+        break
+      # don't send header if header == False
+      elif header or header_complit:
+        yield line
 
   def _socket_worker(self, mode, data=None):
     """handle exceptions for self.socket.send and self.socket.recv. Return length data send or zero"""

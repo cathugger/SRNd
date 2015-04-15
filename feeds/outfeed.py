@@ -223,27 +223,6 @@ class OutFeed(feed.BaseFeed):
         for message_id in to_send:
           self._recheck_sending(message_id, 'add')
 
-  @staticmethod
-  def _read_and_prepare(fd, buffsize):
-    data = ''
-    while True:
-      data_in = fd.read(buffsize)
-      if not data_in:
-        break
-      data += data_in
-      prepare = data.split('\n')
-      data = prepare.pop(-1)
-      for index in range(len(prepare)):
-        if prepare[index].startswith('.'):
-          prepare[index] = '.' + prepare[index]
-      if len(prepare) > 0:
-        yield '\r\n'.join(prepare) + '\r\n'
-    # fix broken article
-    if len(data) > 0:
-      if data[-1] != '\n':
-        data += '\r\n'
-      yield data
-
   def _disallow_to_send(self, message_id):
     if self._support_vars.get('MAX_SEND_SIZE') is not None and self._support_vars['MAX_SEND_SIZE'] < os.path.getsize(os.path.join('articles', message_id)):
       self.log(self.logger.INFO, 'not sending article {}. Server allow max file size {} bytes'.format(message_id, self._support_vars['MAX_SEND_SIZE']))
@@ -256,15 +235,14 @@ class OutFeed(feed.BaseFeed):
       return
     self.log(self.logger.INFO, 'sending article %s' % message_id)
     start_time = time.time()
-    buff = 16384
     sending = 0
     with open(os.path.join('articles', message_id), 'rb') as fd:
-      for to_send in self._read_and_prepare(fd, buff):
-        sending += self._send(to_send, state)
+      for to_send in self._read_article(fd):
+        sending += self.send(to_send, state)
         if self.con_broken:
           break
     if not self.con_broken:
-      self._send('.\r\n', state)
+      self.send('.', state)
       self.byte_transfer += sending
       self.time_transfer += time.time() - start_time
     # ~ + 4 minute in 1 mb. May be need correct for other network
