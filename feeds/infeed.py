@@ -25,8 +25,10 @@ class InFeed(feed.BaseFeed):
         '101 i support to the following:',
         'VERSION 2',
         'IMPLEMENTATION artificial NNTP processing unit SRNd v0.1',
+        'READER',
         'POST',
         'IHAVE',
+        'LIST ACTIVE NEWSGROUPS OVERVIEW.FMT',
         'STREAMING',
         'SUPPORT'
     ]
@@ -35,11 +37,22 @@ class InFeed(feed.BaseFeed):
       self.caps.append('SRNDAUTH')
     self.welcome = '200 welcome much to artificial NNTP processing unit some random NNTPd v0.1, posting allowed'
     self.current_group_id = -1
+    self.current_group_name = None
     self.current_article_id = -1
     self.message_id_takethis = ''
     # get flag srnd-infeed-access from db
     self._srnd_infeed_access = self._db_connector('censor', timeout=60).fetchone('SELECT flag FROM commands WHERE command="srnd-infeed-access"')
     self._srnd_infeed_access = 0 if self._srnd_infeed_access is None else int(self._srnd_infeed_access[0])
+    # list not sending headers in READER MODE.
+    self._remove_headers = ('X-I2P-DESTHASH',)
+    # switcher for reader mode
+    self.READER_SEND = {
+        'HEAD': ('221', True, False, 'send_head'),
+        'BODY': ('222', False, True, 'send_body'),
+        'ARTICLE': ('220', True, True, 'send_article')
+    }
+    # OVERVIEW.FMT reply
+    self._OVERVIEW_FMT = ['subject:', 'from:', 'date:', 'message-id:', 'references:', ':bytes', ':lines']
 
   def bump_qsize(self):
     self.qsize = len(self.articles_queue)
@@ -175,12 +188,15 @@ class InFeed(feed.BaseFeed):
       error += 'no body found, '
     if handle_incoming.newsgroups == '':
       error += 'no newsgroups found, '
+    if self.variant == 'POST' and handle_incoming.message_id:
+      # don't allow post article constain message_id
+      error += 'message_id in article from POST not allowed'
     if handle_incoming.message_id == '':
       if self.variant != 'POST':
         error += 'no message-id in article, '
       else:
         rnd = ''.join(random.choice(string.ascii_lowercase) for x in range(10))
-        handle_incoming.message_id = '<{0}{1}@POSTED.SRNd>'.format(rnd, int(time.time()))
+        handle_incoming.message_id = '<{}{}@POSTED.{}>'.format(rnd, int(time.time()), self.config.get('instance_name', 'SRNd'))
         add_headers.append('Message-ID: {0}'.format(handle_incoming.message_id))
     elif '/' in handle_incoming.message_id:
       error += '/ in message-id, '
@@ -257,7 +273,7 @@ class InFeed(feed.BaseFeed):
         else:
           self.log(self.logger.ERROR, 'Internal error: self._srnd_auth=True and {} not in self._auth_data'.format(self._srndauth_requ[0]))
       else:
-        self.send('501 {} not support. I much recommend in speak to the proper NNTP based on CAPABILITIES'.format(commands[0]), 'SRNDAUTH_501')
+        self.send('500 {} not support. I much recommend in speak to the proper NNTP based on CAPABILITIES'.format(commands[0]), 'SRNDAUTH_500')
     elif commands[0] == 'SUPPORT':
       # 191 - initial SUPPORT reply
       self.send('191 i support:', 'SUPPORT')
@@ -270,8 +286,13 @@ class InFeed(feed.BaseFeed):
     elif commands[0] == 'MODE' and len(commands) == 2 and commands[1] == 'STREAM':
       self._handshake_state = True
       self.send('203 stream as you like')
-    #elif commands[0] == 'MODE' and commands[1] == 'READER':
-    #  self.send('502 i recommend in check to the CAPABILITIES')
+    elif commands[0] == 'MODE' and commands[1] == 'READER':
+      #200    Posting allowed
+      #201    Posting prohibited
+      #502    Reading service permanently unavailable
+      #TODO: add self.reader_mode true/false and reader_mode switcher to config
+      self.send('200 Posting allowed')
+      self.log(self.logger.DEBUG, 'switch to MODE READER')
     elif commands[0] == 'CHECK' and len(commands) == 2:
       #TODO 431 message-id   Transfer not possible; try again later
       message_id = line.split(' ', 1)[1]
@@ -312,47 +333,176 @@ class InFeed(feed.BaseFeed):
         self.variant = 'IHAVE'
         self.in_buffer.set_multiline()
     elif commands[0] == 'STAT':
-      self._handshake_state = True
-      if len(commands) == 1:
-        # STAT without arguments
-        if self.current_group_id == -1:
-          self.send('412 i much recommend in select to the newsgroup first')
-        elif self.current_article_id == -1:
-          self.send('420 i claim in current group is empty')
+      message_uid, message_id = self._article_check(line.split(' ')[1:])
+      if message_uid:
+        self.send('223 {} {}'.format(message_id, message_uid))
+    elif commands[0] == 'LIST':
+      self._response_LIST(commands[1:])
+    elif commands[0] == 'XOVER':
+      min_id, max_id = self._check_id_range(commands[1:])
+      if min_id:
+        all_articles = self._get_article_range(min_id, max_id)
+        if all_articles:
+          self._send_header_XOVER(all_articles)
         else:
-          message_id = self.sqlite_dropper.execute('SELECT message_id FROM articles WHERE group_id = ? AND article_id = ?', (self.current_group_id, self.current_article_id)).fetchone()
-          if message_id:
-            message_id = message_id[0]
-            self.send('223 {0} {1}'.format(self.current_article_id, message_id))
-          else:
-            self.log(self.logger.CRITICAL, 'internal state messed up. current_article_id does not have connected message_id')
-            self.log(self.logger.CRITICAL, 'current_group_id: %s, current_article_id: %s' % (self.current_group_id, self.current_article_id))
-        return
+          self.send('423 No articles in that range')
+    elif commands[0] == 'NEWGROUPS':
+      # not implemented yet, return all groups
+      self._response_LIST_ACTIVE([])
+    elif commands[0] == 'GROUP':
       if len(commands) != 2:
-        self.send('501 i much recommend in speak to the proper NNTP')
-        return
-      try:
-        arg = int(commands[1])
-      except ValueError:
-        arg = line.split(' ')[1]
-        # STAT argument is message_id
-        #if self.sqlite_dropper.execute('SELECT message_id FROM articles WHERE message_id = ?', (arg,)).fetchone():
-        if os.path.exists(os.path.join('articles', arg)):
-          self.send('223 0 {0}'.format(arg))
-        else:
-          self.send('430 i do not know much in {0}'.format(arg))
+        self.send('501 Syntax Error')
       else:
-        # STAT argument is article_id
-        if self.current_group_id == -1:
-          self.send('412 i much recommend in select to the newsgroup first')
+        group_data = self.sqlite_dropper.fetchone('SELECT article_count, lowest_id, highest_id, group_name, group_id FROM groups WHERE group_name = ?', (line.split(' ')[1],))
+        if not group_data:
+          self.send('411 {} is unknown'.format(line.split(' ')[1]))
         else:
-          message_id = self.sqlite_dropper.execute('SELECT message_id FROM articles WHERE group_id = ? AND article_id = ?', (self.current_group_id, arg)).fetchone()
-          if message_id:
-            message_id = message_id[0]
-            self.current_article_id = arg
-            self.send('223 {0} {1}'.format(self.current_article_id, message_id))
-          else:
-            self.send('423 i claim such == invalid number')
+          self.send('211 {}'.format(' '.join(str(xx) for xx in group_data[:-1])))
+          self.current_article_id = group_data[1]
+          self.current_group_id = group_data[4]
+          self.current_group_name = line.split(' ')[1]
+    elif commands[0] in self.READER_SEND:
+      # BODY, HEAD or ARTICLE
+      message_uid, message_id = self._article_check(line.split(' ')[1:])
+      if message_uid:
+        self._send_article_READER(message_uid, message_id, commands[0])
     else:
-      self.send('501 {} unknown. I much recommend in speak to the proper NNTP based on CAPABILITIES'.format(commands[0]))
+      self.send('500 {} unknown, I much recommend in speak to the proper NNTP based on CAPABILITIES'.format(commands[0]))
 
+  def _article_check(self, cmd):
+    """ Check BODY, HEAD or ARTICLE command. return 2 strings contains name and id. If name is None - do nothing"""
+    message_id = None
+    message_uid = None
+    if self.current_group_id == -1:
+      self.send('412 No newsgroup selected')
+    elif not cmd and self.current_article_id == -1:
+      self.send('420 Current article number is invalid')
+    elif not cmd or cmd[0].isdigit():
+      # current article number used else article number specified
+      message_id = self.current_article_id if not cmd else cmd[0]
+      message_uid = self.sqlite_dropper.execute('SELECT message_id FROM articles WHERE group_id = ? AND article_id = ?', (self.current_group_id, message_id)).fetchone()
+      if message_uid is None:
+        self.send('423 No article with that {}'.format(message_id))
+      else:
+        message_uid = message_uid[0]
+    else:
+      # message-id specified
+      message_uid = os.path.basename(cmd[0])
+      message_id = 0
+    if message_uid is not None and not os.path.isfile(os.path.join('articles', message_uid)):
+      if message_id == 0:
+        self.send('430 No article with that {}'.format(message_uid))
+      else:
+        self.send('423 No article with that {}'.format(message_id))
+      message_uid = None
+    return message_uid, message_id
+
+  def _check_id_range(self, cmd):
+    """Return min, max id from XOVER. If min_id is None - do nothing"""
+    min_id, max_id = None, None
+    if self.current_group_id == -1:
+      self.send('412 No newsgroup selected')
+    elif not cmd and self.current_article_id == -1:
+      self.send('420 No article(s) selected')
+    elif not cmd:
+      # current article number used
+      min_id, max_id = self.current_article_id, self.current_article_id
+    elif cmd[0].isdigit():
+      # article number
+      min_id, max_id = cmd[0], cmd[0]
+    else:
+      # article number range
+      min_id, _, max_id = cmd[0].partition('-')
+      if not min_id.isdigit() or (max_id and not max_id.isdigit()):
+        self.send('423 invalid id')
+        min_id = None
+    if min_id is None:
+      pass
+    elif not max_id:
+      # XOVER X-. Set +1000
+      max_id = int(min_id) + 1000
+    elif int(max_id) - int(min_id) > 1000:
+      # very large range
+      self.send('502 very large article_id range')
+      min_id = None
+    return min_id, max_id
+
+  def _get_article_range(self, min_id, max_id):
+    """return list *(article_id, message_id)"""
+    all_data = list()
+    for data in self.sqlite_dropper.fetchall('SELECT article_id, message_id FROM articles WHERE group_id = ? AND article_id >= ? AND article_id <= ?', (self.current_group_id, min_id, max_id)):
+      if os.path.isfile(os.path.join('articles', data[1])):
+        all_data.append(data)
+    return all_data
+
+  def _send_header_XOVER(self, all_data):
+    self.send('224 Overview information follows')
+    start_time = time.time()
+    sending = 0
+    for article_id, message_uid in all_data:
+      article_path = os.path.join('articles', message_uid)
+      data = [''] * (len(self._OVERVIEW_FMT) + 1)
+      data[0] = str(article_id)
+      data[6] = str(os.path.getsize(article_path))
+      with open(article_path, 'rb') as fd:
+        for line in self._read_article(fd, True, False):
+          head, _, value = line.partition(' ')
+          head = head.lower()
+          if head in self._OVERVIEW_FMT:
+            data[self._OVERVIEW_FMT.index(head) + 1] = value
+      sending += self.send('\t'.join(data), 'XOVER')
+      if self.con_broken:
+        break
+    if not self.con_broken:
+      self.send('.', 'XOVER')
+      self.byte_transfer += sending
+      self.time_transfer += time.time() - start_time
+
+  def _send_article_READER(self, message_uid, message_id, mode):
+    """Send body, head or full article in MODE READER. mode in ('HEAD', 'BODY', 'ARTICLE')"""
+    # don't check header if send body
+    head_complit = True if mode == 'BODY' else False
+    mode = self.READER_SEND[mode]
+
+    self.log(self.logger.DEBUG, '{} {}'.format(mode[3], message_uid))
+    start_time = time.time()
+    sending = 0
+    self.send('{} {} {}'.format(mode[0], message_id, message_uid))
+    with open(os.path.join('articles', message_uid), 'rb') as fd:
+      for to_send in self._read_article(fd, mode[1], mode[2]):
+        if not head_complit:
+          if to_send == '':
+            head_complit = True
+          elif to_send.split(': ')[0].upper() in self._remove_headers:
+            continue
+        sending += self.send(to_send, mode[3])
+        if self.con_broken:
+          break
+    if not self.con_broken:
+      self.send('.', mode[3])
+      self.byte_transfer += sending
+      self.time_transfer += time.time() - start_time
+
+  def _response_LIST(self, commands):
+    if not commands or commands[0] == 'ACTIVE':
+      self._response_LIST_ACTIVE(commands[1:])
+    elif commands[0] == 'NEWSGROUPS':
+      self.send('215 information follows')
+      for line in self.sqlite_dropper.fetchall('SELECT group_name FROM groups'):
+        self.send(line[0])
+      self.send('.')
+    elif commands[0] == 'OVERVIEW.FMT':
+      self.send('215 Order of fields in overview database:')
+      self.send(self._OVERVIEW_FMT)
+      self.send('.')
+    else:
+      self.send('503 program error, {} not performed'.format(commands[0]))
+
+  def _response_LIST_ACTIVE(self, commands):
+    if commands:
+      self.send('501 Syntax Error')
+    else:
+      self.send('215 list of newsgroups follows')
+      for line in self.sqlite_dropper.fetchall('SELECT group_name, highest_id, lowest_id, flag FROM groups'):
+        self.send(' '.join(str(xx) for xx in line))
+      self.send('.')
