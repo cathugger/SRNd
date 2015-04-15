@@ -9,6 +9,15 @@ def basicHTMLencode(inputString):
     inputString = inputString.replace(x[0], x[1])
   return inputString.strip(' \t\n\r')
 
+def trydecode(msg):
+  """Guess the encoding roulette"""
+  for char_type in ('UTF-8', 'KOI8-R', 'cp1252', 'cp1251'):
+    try:
+      return msg.decode(char_type)
+    except UnicodeDecodeError:
+      pass
+  msg.decode('UTF-8', errors='replace')
+
 def generate_pubkey_short_utf_8(full_pubkey_hex, length=6):
   pub_short = ''
   for x in range(0, length / 2):
