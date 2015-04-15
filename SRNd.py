@@ -1090,6 +1090,8 @@ class SRNd(threading.Thread):
       if config['multiconn'] is None:
         self.log(self.logger.WARNING, 'abnormal value multiconn="{}". Set 1 - only one outfeed'.format(multiconn))
         config['multiconn'] = 1
+    # add SRNd instance_name for config
+    config['instance_name'] = self.config['instance_name']
     return config
 
   def watching(self):
