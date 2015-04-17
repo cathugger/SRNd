@@ -13,6 +13,13 @@ import nacl.signing
 import feeds.sockssocket as sockssocket
 import feeds.feed as feed
 
+_MODE = {
+    'none': 0,
+    'stream': 1,
+    'ihave': 2,
+    'post': 3
+}
+
 class OutFeed(feed.BaseFeed):
 
   def __init__(self, master, logger, config, server, sync_on_startup, proxy, debug):
@@ -24,13 +31,18 @@ class OutFeed(feed.BaseFeed):
     self.sync_on_startup = sync_on_startup
     self.proxy = proxy
     self.queue = Queue.LifoQueue()
-    self.outstream_flags_reset()
     self.polltimeout = 500 # 1 * 1000
     self.cooldown_period = 60
     self.cooldown_counter = 0
     self.rechecking = dict()
     self.rechecking_step = 0
     self.message_id = ''
+    self._RESPONSES = (
+        self._handle_response_NONE,
+        self._handle_response_STREAM,
+        self._handle_response_IHAVE,
+        self._handle_response_POST
+    )
     self.outstream_flags_reset()
 
   def _init_outcoming_socket(self):
@@ -38,7 +50,6 @@ class OutFeed(feed.BaseFeed):
     socket_ = None
     if ':' in self.server[0]:
       if self.proxy is not None:
-        # FIXME: this should be loglevel.ERROR and then terminating itself
         self.log(self.logger.ERROR, "can't use proxy server for ipv6 connections")
         self.running = False
       else:
@@ -62,14 +73,14 @@ class OutFeed(feed.BaseFeed):
   def outstream_flags_reset(self):
     self._support_vars = dict()
     self._try_srndauth_bypass = False
-    self._handshake_state = False
     self._srnd_auth = False
     self._caps_cache = None
-    self.outstream_stream = False
-    self.outstream_ihave = False
-    self.outstream_post = False
-    self.outstream_ready = False
+    self._handshake_state = False
+    self.outstream_mode = _MODE['none']
     self.outstream_currently_testing = ''
+    # for POST and IHAVE mode
+    self._wait_response = False
+    self._wait_response_time = 0
 
   def _cooldown(self, additional_message=''):
     if self.cooldown_counter != 0:
@@ -83,72 +94,72 @@ class OutFeed(feed.BaseFeed):
       self.cooldown_counter += 1
 
   def _connect_to_server(self):
-    """Connect to server. Return empty line if connected or error message"""
-    message = ''
+    """Connect to server. Set self.con_broken empty line if connected or error message"""
+    self.con_broken = ''
     try:
       self.socket.connect(self.server)
     except socket.error as e:
       if e.errno == 9:
         # Bad file descriptor
         self.socket = self._init_outcoming_socket()
-        message = e
+        self.con_broken = e
       elif e.errno == 106:
         # tunnelendpoint already connected. wtf? only happened via proxy
         # FIXME debug this
         self.log(self.logger.ERROR, '%s: setting connected = True' % e)
-      elif e.errno in (111, 113):
+      elif e.errno in (32, 111, 113):
+        # 32 Broken pipe
         # 111 Connection refused
         # 113 no route to host
-        message = e
+        self.con_broken = e
       else:
         self.log(self.logger.ERROR, 'unhandled initial connect socket.error: %s' % e)
         self.log(self.logger.ERROR, traceback.format_exc())
-        message = e
+        self.con_broken = e
     except sockssocket.ProxyError as e:
-      message = '[Errno {}] {}'.format(*e.message)
+      self.con_broken = '[Errno {}] {}'.format(*e.message)
       if e.message[0] in (0, 4):
         # 0 - connection closed unexpectedly
         # 4 - Host unreachable
         pass
       else:
-        self.log(self.logger.ERROR, 'unhandled initial connect ProxyError: %s' % message)
+        self.log(self.logger.ERROR, 'unhandled initial connect ProxyError: %s' % self.con_broken)
         self.log(self.logger.ERROR, traceback.format_exc())
-    return message
 
   def _handle_connect(self, reconnect=False):
-    """Work while not connected and outfeed running. Return poll and set self.con_broken = False if connect else None"""
+    """Work while not connected and outfeed running. Return poll if connect else None"""
     self._socket_shutdown()
     self._socket_close()
     self.socket = self._init_outcoming_socket()
+    # clear all data from socket
     self.in_buffer.reset()
+    self.incoming_file.reset()
+
     self.outstream_flags_reset()
-    not_connected = ' '
     poll = None
-    while self.running and not_connected:
+    while self.running and self.con_broken:
       self.bump_qsize()
       if reconnect and self.qsize == 0:
-        self.log(self.logger.INFO, 'connection broken. no article to send, sleeping: {}'.format(not_connected))
+        self.log(self.logger.INFO, 'connection broken. no article to send, sleeping: {}'.format(self.con_broken))
         self.state = 'nothing_to_send'
         while self.running and self.queue.qsize() == 0:
           time.sleep(2)
         continue
-      self._cooldown(not_connected)
+      self._cooldown(self.con_broken)
       self.state = 'connecting'
       if reconnect:
         self.log(self.logger.INFO, 'connection broken. reconnecting..')
-      not_connected = self._connect_to_server()
-      if not_connected:
+      self._connect_to_server()
+      if self.con_broken:
         reconnect = True
       else:
-        self.cooldown_counter = 0
         proxy_info = ' via proxy {} {}:{}'.format(*self.proxy) if self.proxy is not None else ''
         self.log(self.logger.INFO, 'connection established{}'.format(proxy_info))
         poll = self._create_poll()
-        self.con_broken = False
     return poll
 
   def main_loop(self):
-    self.con_broken = True
+    self.con_broken = 'connection broken'
     poll = None
     while self.running:
       self.bump_qsize()
@@ -162,23 +173,30 @@ class OutFeed(feed.BaseFeed):
       elif poll(self.polltimeout):
         # read and parse incoming data
         self._handle_received()
-      elif self.outstream_ready and self.state == 'idle':
+      elif self.state == 'idle':
         self._recheck_sending()
-        if self.outstream_stream:
-          if len(self.articles_queue) > 0:
-            self._worker_send_article_stream()
-          else:
-            self._send_new_check('CHECK', 50)
-          self.state = 'idle'
-        elif self.queue.qsize() > 0 and not self.con_broken:
-          if self.outstream_ihave:
-            self._send_new_check('IHAVE')
-          elif self.outstream_post:
-            self.message_id = self.queue.get()
-            self.send('POST')
+        self._handle_send()
+        self.state = 'idle'
       if not self.qsize:
         time.sleep(0.5)
     self.log(self.logger.INFO, 'bye')
+
+  def _handle_send(self):
+    if self.outstream_mode == _MODE['stream']:
+      if len(self.articles_queue) > 0:
+        self._worker_send_article_stream()
+      else:
+        self._send_new_check('CHECK', 50)
+    elif self.queue.qsize() > 0:
+      if not self._wait_response:
+        if self.outstream_mode == _MODE['ihave']:
+          self._send_new_check('IHAVE')
+        elif self.outstream_mode == _MODE['post']:
+          self.message_id = self.queue.get()
+          self.send('POST')
+      elif int(time.time()) - self._wait_response_time > 1200:
+        # deblock sending if server not send reply after 20 min
+        self._wait_response = False
 
   def _recheck_sending(self, message_id=None, act=None, step=120):
     """ Add or remove article in dict. If no act and step 's after adding article - re-adding article in queue.
@@ -204,7 +222,7 @@ class OutFeed(feed.BaseFeed):
         self.send_article(message_id, 'outfeed_send_article_stream')
 
   def _send_new_check(self, cmd, max_count=1):
-    """ Collect IHAVE and CHECK article id and re-add in queue if don't response or connect broken when send this """
+    """Collect IHAVE and CHECK article id and re-add in queue if don't response or connect broken when send this """
     to_send = list()
     count = 0
     while self.queue.qsize() > 0 and count < max_count:
@@ -267,10 +285,6 @@ class OutFeed(feed.BaseFeed):
       f.write('{0}\n'.format(message_id))
       f.close()
 
-  def _send_MODESTREAM(self):
-    self.send('MODE STREAM')
-    self.send('MODE STREAM')
-
   def _get_CAPABILITIES(self):
     if self._caps_cache is None:
       self.send('CAPABILITIES')
@@ -279,13 +293,6 @@ class OutFeed(feed.BaseFeed):
       self._check_CAPABILITIES(self._caps_cache)
 
   def _check_CAPABILITIES(self, caps):
-    # WTF? Stop serving
-    if 'STREAMING' not in caps:
-      # hack for old servers
-      if 'STREAMING' not in caps[-1]:
-        self.log(self.logger.CRITICAL, "Server doesn't support STREAMING! EXTERMINATED!")
-        self.shutdown()
-        return
     # server support SRNDAUTH and key present and not authenticate. authentication
     if 'SRNDAUTH' in caps and self.config['srndauth_key'] is not None and not self._srnd_auth and not self._try_srndauth_bypass:
       self.send('SRNDAUTH')
@@ -294,7 +301,8 @@ class OutFeed(feed.BaseFeed):
       self.send('SUPPORT')
     else:
       # old server, go stream
-      self._send_MODESTREAM()
+      self.outstream_currently_testing = 'STREAM'
+      self.send('MODE STREAM')
 
   def _check_SUPPORT(self, varlist):
     for line in varlist:
@@ -314,7 +322,8 @@ class OutFeed(feed.BaseFeed):
         else:
           self.log(self.logger.INFO, 'Server support maximum filesize: {} bytes'.format(self._support_vars[key]))
     # initial start streaming
-    self._send_MODESTREAM()
+    self.outstream_currently_testing = 'STREAM'
+    self.send('MODE STREAM')
 
   def handle_multiline(self, handle_incoming):
     if self.waitfor == 'SUPPORT':
@@ -335,7 +344,7 @@ class OutFeed(feed.BaseFeed):
       self.log(self.logger.WARNING, 'Server require authentication. Work is not possible.')
       self.send('QUIT')
       self.cooldown_counter = 5
-      self.con_broken = True
+      self.con_broken = 'Work is not possible.'
       return
     if self.config['srndauth_key'] is None:
       self.log(self.logger.ERROR, 'Server required SRDNAUTH and srndauth_key not in outfeed config or invalid.')
@@ -352,12 +361,11 @@ class OutFeed(feed.BaseFeed):
       self.log(self.logger.WARNING, 'Response secret {} != 333. Authentication is not possible.'.format(len(secret)))
       if not self._srndauth_bypass():
         self.cooldown_counter = 3
-        self.con_broken = True
+        self.con_broken = 'Authentication is not possible.'
       return
     sign = self._create_sign(self.config['srndauth_key'], secret)
     if sign is not None:
-      self.send('SRNDAUTH {} {}'.format(self._srndauth_requ[0], pubkey), 'SRNDAUTH')
-      self.send('SRNDAUTH {} {}'.format(self._srndauth_requ[1], sign), 'SRNDAUTH')
+      self.send(('SRNDAUTH {} {}'.format(self._srndauth_requ[0], pubkey), 'SRNDAUTH {} {}'.format(self._srndauth_requ[1], sign)), 'SRNDAUTH')
 
   @staticmethod
   def _create_sign(priv_key, secret):
@@ -380,142 +388,157 @@ class OutFeed(feed.BaseFeed):
     self._get_CAPABILITIES()
     return True
 
+  def _handle_response_NONE(self, commands, _):
+    """Mode selector"""
+    if commands[0] == '203':
+      # MODE STREAM test successfull
+      self.outstream_mode = _MODE['stream']
+      if self._try_srndauth_bypass:
+        self.log(self.logger.WARNING, 'successful login, SRNDAUTH breaking. FIX IT!')
+    elif commands[0] == '435':
+      # IHAVE test successfull
+      self.outstream_mode = _MODE['ihave']
+    elif commands[0] == '335':
+      # IHAVE test successfull
+      self.send('.')
+      self.outstream_mode = _MODE['ihave']
+    elif commands[0] == '340':
+      # POST test successfull
+      self.send('.')
+      self.outstream_mode = _MODE['post']
+    elif commands[0] in ('500', '501', '502'):
+      if self.outstream_currently_testing == '':
+        # WTF? Test MODE STREAM
+        self.send('MODE STREAM')
+        self.outstream_currently_testing = 'STREAM'
+      elif self.outstream_currently_testing == 'STREAM':
+        # MODE STREAM test failed
+        self.outstream_currently_testing = 'IHAVE'
+        self.send('IHAVE <thisarticle@doesnotexist>')
+      elif self.outstream_currently_testing == 'IHAVE':
+        # IHAVE test failed
+        self.outstream_currently_testing = 'POST'
+        self.send('POST')
+      elif self.outstream_currently_testing == 'POST':
+        self.log(self.logger.ERROR, 'remote host does not allow MODE STREAM, IHAVE or POST. shutting down')
+        self.running = False
+    elif commands[0] == '440':
+      self.log(self.logger.ERROR, 'remote host does not allow MODE STREAM, IHAVE or POST. shutting down')
+      self.running = False
+    else:
+      return True
+    self._handshake_state = self.outstream_mode != _MODE['none']
+
+  def _handle_response_STREAM(self, commands, line):
+    """MODE STREAM. If command unknown return True"""
+    if commands[0] == '238':
+      # CHECK 238 == article wanted
+      article_wanted = line.split(' ')[1]
+      self.articles_queue.add(article_wanted)
+      self._recheck_sending(article_wanted, 'remove')
+    elif commands[0] in ('239', '438', '439'):
+      # TAKETHIS 239 == Article transferred OK, record successfully sent message-id to database
+      # CHECK 438 == Article not wanted
+      # TAKETHIS 439 == Transfer rejected; do not retry
+      self.update_trackdb(line)
+    elif commands[0] == '431':
+      # CHECK 431 == try again later
+      self.add_article(line.split(' ')[1])
+      self._recheck_sending(line.split(' ')[1], 'remove')
+    else:
+      return True
+
+  def _handle_response_IHAVE(self, commands, line):
+    if commands[0] in ('235', '435', '437'):
+      # IHAVE 235 == last article received
+      # IHAVE 435 == article not wanted
+      # IHAVE 437 == article rejected
+      if self.message_id:
+        self.update_trackdb('{} {} {}'.format(commands[0], self.message_id, line.split(' ', 2)[2:][0]))
+      self._wait_response = False
+    elif commands[0] == '436':
+      # IHAVE 436 == try again later
+      self._recheck_sending(self.message_id, 'add', 600)
+      self._wait_response = False
+    elif commands[0] == '335':
+      # IHAVE 335 == waiting for article
+      self.send_article(self.message_id)
+      self._wait_response = True
+      self._wait_response_time = int(time.time())
+    else:
+      return True
+
+  def _handle_response_POST(self, commands, line):
+    if commands[0] == '340':
+      # POST 340 == waiting for article
+      self.send_article(self.message_id)
+      self._wait_response = True
+      self._wait_response_time = int(time.time())
+    elif commands[0] in ('240', '441'):
+      # POST 240 == last article received
+      # POST 441 == posting failed
+      if commands[0] == '240' and self.message_id:
+        # Got 240 after POST: record successfully sent message-id to database
+        self.update_trackdb('{} {} {}'.format(commands[0], self.message_id, line.split(' ', 2)[2:][0]))
+      self._wait_response = False
+    else:
+      return True
+
+  def _handle_handshake(self, commands, line):
+    if commands[0] == 'SRNDAUTH':
+      # server allowed or required SRDNAUTH
+      if len(commands) == 2:
+        self._outfeed_SRNDAUTH(commands[1])
+      else:
+        self.log(self.logger.ERROR, 'Recived incorrect SRNDAUTH. Authentication is not possible: {}'.format(line))
+        if not self._srndauth_bypass():
+          self.cooldown_counter = 3
+          self.con_broken = 'Recived incorrect SRNDAUTH.'
+    elif commands[0] == '101':
+      # receive CAPABILITES
+      self.waitfor = 'CAPABILITIES'
+      self.in_buffer.set_multiline()
+    elif commands[0] == '191':
+      # SUPPORT 191 = receive varlist
+      self.waitfor = 'SUPPORT'
+      self.in_buffer.set_multiline()
+    elif commands[0] == '200':
+      self.cooldown_counter = 0
+      # check server CAPABILITES
+      self._get_CAPABILITIES()
+    elif commands[0] == '281':
+      # SRNDAUTH 281 - access granted. check server CAPABILITES
+      if len(commands) > 1 and len(commands[1]) == 64:
+        rec_key = commands[1].lower()
+      else:
+        rec_key = 'you key'
+      self.log(self.logger.INFO, 'successful login using {}'.format(rec_key))
+      self._srnd_auth = True
+      self._get_CAPABILITIES()
+    elif commands[0] == '481':
+      # SRNDAUTH 481 - key not allowed at this server
+      if len(commands) > 1 and len(commands[1]) == 64:
+        rec_key = commands[1].lower()
+      else:
+        rec_key = 'You key'
+      self.log(self.logger.WARNING, '{} not allowed at this server'.format(rec_key))
+      self.state = 'SRNDAUTH_reject'
+      self._srndauth_bypass()
+    elif commands[0] == '482':
+      # SRNDAUTH 482 - bad key or signature
+      self.log(self.logger.WARNING, 'bad key or signature')
+      self.state = 'SRNDAUTH_error'
+      self._srndauth_bypass()
+    else:
+      return True
+
   def handle_line(self, line):
     self.log(self.logger.VERBOSE, 'in: %s' % line)
     commands = line.upper().split(' ')
     if len(commands) == 0:
       self.log(self.logger.VERBOSE, 'should handle empty line')
-      return
-    if not self.outstream_ready:
-      if commands[0] == 'SRNDAUTH':
-        # server allowed or required SRDNAUTH
-        if len(commands) == 2:
-          self._outfeed_SRNDAUTH(commands[1])
-        else:
-          self.log(self.logger.ERROR, 'Recived incorrect SRNDAUTH. Authentication is not possible: {}'.format(line))
-          if not self._srndauth_bypass():
-            self.cooldown_counter = 3
-            self.con_broken = True
-      elif commands[0] == '101':
-        # check CAPABILITES
-        self.waitfor = 'CAPABILITIES'
-        self.in_buffer.set_multiline()
-      elif commands[0] == '200':
-        self.cooldown_counter = 0
-        # check server CAPABILITES
-        self._get_CAPABILITIES()
-      elif commands[0] == '203':
-        # MODE STREAM test successfull
-        self.outstream_stream = True
-        self.outstream_ready = True
-        self._handshake_state = True
-        if self._try_srndauth_bypass:
-          self.log(self.logger.WARNING, 'successful login, SRNDAUTH breaking. FIX IT!')
-      elif commands[0] == '191':
-        # SUPPORT 191 = receive varlist
-        self.waitfor = 'SUPPORT'
-        self.in_buffer.set_multiline()
-      elif commands[0] == '281':
-        # SRNDAUTH 281 - access granted. check server CAPABILITES
-        if len(commands) > 1 and len(commands[1]) == 64:
-          rec_key = commands[1].lower()
-        else:
-          rec_key = 'you key'
-        self.log(self.logger.INFO, 'successful login using {}'.format(rec_key))
-        self._srnd_auth = True
-        self._get_CAPABILITIES()
-      elif commands[0] == '501' or commands[0] == '500':
-        if self.outstream_currently_testing == '':
-          # MODE STREAM test failed
-          self.outstream_currently_testing = 'IHAVE'
-          self.send('IHAVE <thisarticledoesnotexist>')
-        elif self.outstream_currently_testing == 'IHAVE':
-          # IHAVE test failed
-          self.outstream_post = True
-          self.outstream_ready = True
-          self._handshake_state = True
-          if self.queue.qsize() > 0:
-            self.message_id = self.queue.get()
-            self.send('POST')
-      elif commands[0] == '435':
-        # IHAVE test successfull
-        self.outstream_ihave = True
-        self.outstream_ready = True
-        self._handshake_state = True
-      elif commands[0] == '335':
-        # IHAVE test successfull
-        self.send('.')
-        self.outstream_ihave = True
-        self.outstream_ready = True
-        self._handshake_state = True
-      elif commands[0] == '481':
-        # SRNDAUTH 481 - key not allowed at this server
-        if len(commands) > 1 and len(commands[1]) == 64:
-          rec_key = commands[1].lower()
-        else:
-          rec_key = 'You key'
-        self.log(self.logger.WARNING, '{} not allowed at this server'.format(rec_key))
-        self.state = 'SRNDAUTH_reject'
-        self._srndauth_bypass()
-      elif commands[0] == '482':
-        # SRNDAUTH 482 - bad key or signature
-        self.log(self.logger.WARNING, 'bad key or signature')
-        self.state = 'SRNDAUTH_error'
-        self._srndauth_bypass()
-      else:
-        self.log(self.logger.WARNING, 'got unknown command: {}'.format(line))
-      # FIXME how to treat try later for IHAVE and CHECK?
-    elif self.outstream_ready and commands[0] == '200':
-      # TODO check specs for reply 200 again, only valid as first welcome line?
-      self.cooldown_counter = 0
-    elif self.outstream_stream:
-      if commands[0] == '238':
-        # CHECK 238 == article wanted
-        article_wanted = line.split(' ')[1]
-        self.articles_queue.add(article_wanted)
-        self._recheck_sending(article_wanted, 'remove')
-      if commands[0] == '239' or commands[0] == '438' or commands[0] == '439':
-        # TAKETHIS 239 == Article transferred OK, record successfully sent message-id to database
-        # CHECK 438 == Article not wanted
-        # TAKETHIS 439 == Transfer rejected; do not retry
-        self.update_trackdb(line)
-      elif commands[0] == '431':
-        # CHECK 431 == try again later
-        self.add_article(line.split(' ')[1])
-        self._recheck_sending(line.split(' ')[1], 'remove')
-    elif self.outstream_ihave:
-      if commands[0] == '235' or commands[0] == '435' or commands[0] == '437':
-        # IHAVE 235 == last article received
-        # IHAVE 435 == article not wanted
-        # IHAVE 437 == article rejected
-        self.update_trackdb(line)
-        if self.queue.qsize() > 0:
-          self._send_new_check('IHAVE')
-      elif commands[0] == '436':
-        # IHAVE 436 == try again later
-        self._recheck_sending(self.message_id, 'add', 600)
-      elif commands[0] == '335':
-        # IHAVE 335 == waiting for article
-        self.send_article(self.message_id)
-      else:
-        self.log(self.logger.INFO, 'unknown response to IHAVE: %s' % line)
-    elif self.outstream_post:
-      if commands[0] == '340':
-        # POST 340 == waiting for article
-        self.send_article(self.message_id)
-      elif commands[0] == '240' or commands[0] == '441':
-        # POST 240 == last article received
-        # POST 441 == posting failed
-        if commands[0] == '240':
-          # Got 240 after POST: record successfully sent message-id to database
-          self.update_trackdb(line)
-        if self.queue.qsize() > 0:
-          self.message_id = self.queue.get()
-          self.send('POST')
-      elif commands[0] == '440':
-        # POST 440 == posting not allowed
-        self.log(self.logger.ERROR, 'remote host does not allow MODE STREAM, IHAVE or POST. shutting down')
-        self.running = False
-      else:
-        self.log(self.logger.ERROR, 'unknown response to POST: %s' % line)
+    elif self.outstream_mode == _MODE['none'] and not self._handle_handshake(commands, line):
+      pass
+    elif self._RESPONSES[self.outstream_mode](commands, line):
+      self.log(self.logger.ERROR, 'unknown response in mode {}: {}'.format(self.outstream_mode, line))
 
