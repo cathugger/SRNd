@@ -5,6 +5,7 @@ import socket
 import threading
 import time
 import traceback
+import os
 
 import feeds.sockssocket as sockssocket
 from feeds.feed_utils import InBuffer, HandleIncoming
@@ -35,7 +36,7 @@ class BaseFeed(threading.Thread):
     self.terminated = False
     self.waitfor = ''
     self.variant = ''
-    self.con_broken = False
+    self.con_broken = ''
     self._srndauth_requ = ('X-PUBKEY-ED25519', 'X-SIGNATURE-ED25519-SHA512')
 
   def run(self):
@@ -54,7 +55,7 @@ class BaseFeed(threading.Thread):
   def shutdown(self):
     self.running = False
     # breaking all process
-    self.con_broken = True
+    self.con_broken = 'shutdown'
     self.terminated = True
     self._socket_shutdown()
 
@@ -82,6 +83,10 @@ class BaseFeed(threading.Thread):
     self.log(self.logger.INFO, 'should handle multi line end')
     self.waitfor = ''
     self.variant = ''
+
+  @staticmethod
+  def valid_message_id(message_id):
+    return message_id == os.path.basename(message_id) and message_id.startswith('<') and message_id.endswith('>') and '@' in message_id
 
   def handle_line(self, line):
     """will be rewrite in subclasses"""
@@ -150,7 +155,7 @@ class BaseFeed(threading.Thread):
       if mode == 'send':
         return self.socket.send(data)
       elif mode == 'recv' and not self.in_buffer.add(self.socket.recv(self.buffersize)):
-        self.con_broken = True
+        self.con_broken = 'get zero data from socket'
     except socket.error as e:
       self.log(self.logger.DEBUG, 'exception at socket.recv(): socket.error.errno: %s, socket.error: %s' % (e.errno, e))
       if e.errno == 11:
@@ -159,17 +164,22 @@ class BaseFeed(threading.Thread):
       elif e.errno in (32, 104, 110):
         # 32 Broken pipe
         # 104 Connection reset by peer
-        # 110 Connection timei out
-        self.con_broken = True
+        # 110 Connection time out
+        self.con_broken = e
       else:
         # FIXME: different OS might produce different error numbers. make this portable.
         self.log(self.logger.ERROR, 'got an unknown socket error at mode "{}". {}: {}'.format(mode, e.errno, e))
         self.log(self.logger.ERROR, traceback.format_exc())
-        self.con_broken = True
+        self.con_broken = e
     except sockssocket.ProxyError as e:
-      self.log(self.logger.ERROR, 'got an unknown sockssocket.proxy error at mode "{}". {}: {}'.format(mode, e.message[0], e.message[1]))
-      self.log(self.logger.ERROR, traceback.format_exc())
-      self.con_broken = True
+      self.con_broken = '[Errno {}] {}'.format(*e.message)
+      if e.message[0] in (0, 4):
+        # 0 - connection closed unexpectedly
+        # 4 - Host unreachable
+        pass
+      else:
+        self.log(self.logger.ERROR, 'got an unknown sockssocket.proxy error at mode "{}". {}: {}'.format(mode, e.message[0], e.message[1]))
+        self.log(self.logger.ERROR, traceback.format_exc())
     return 0
 
   def _socket_close(self):
