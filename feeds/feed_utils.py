@@ -44,8 +44,10 @@ class HandleIncoming(object):
   def __init__(self, infeed_name='_unnamed_', tmp_path=os.path.join('incoming', 'tmp')):
     self._tmp_path = tmp_path
     self._infeed_name = infeed_name
-    self._article_path = os.path.join(tmp_path, self._get_random_id())
+    self._reset()
 
+  def _reset(self):
+    self._article_path = os.path.join(self._tmp_path, self._get_random_id())
     self.body_found = False
     self.read_byte = 0
     self.file_large = False
@@ -60,6 +62,11 @@ class HandleIncoming(object):
     self._no_data = False
     self._complit = False
     self._start_transfer = 0
+    self._remove_headers = None
+
+  def remove_headers(self, headers):
+    """Add header list, headers to be removed. Use this before adding lines"""
+    self._remove_headers = [header.lower() for header in headers]
 
   def _get_random_id(self):
     return '{}-{}-{}'.format(self._infeed_name, ''.join(random.choice(string.ascii_lowercase) for x in range(10)), int(time.time()))
@@ -101,6 +108,8 @@ class HandleIncoming(object):
       self.body_found = True
     if line.startswith('.'):
       line = line[1:]
+    if self._remove_headers and not self.body_found and line.split(':', 1)[0].lower() in self._remove_headers:
+      return
     self._write(line)
     if not self.body_found:
       lower_line = line.lower()
@@ -125,12 +134,19 @@ class HandleIncoming(object):
     self._no_data = True
     os.rename(self._article_path, path)
 
+  def reset(self):
+    """Clear all data and set default state"""
+    self.complit()
+    self.bye()
+    self._reset()
+
   def complit(self):
     if not self._complit:
       self.transfer_time = time.time() - self._start_transfer
       self._complit = True
     if self._open_article is not None:
       self._open_article.close()
+      self._open_article = None
 
   def bye(self):
     self._complit = True
