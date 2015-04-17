@@ -20,7 +20,7 @@ class InFeed(feed.BaseFeed):
     self.socket = connection[0]
     self.polltimeout = -1
     self._db_connector = db_connector
-    self._auth_data = dict()
+    self._auth_data = None
     self.caps = [
         '101 i support to the following:',
         'VERSION 2',
@@ -39,7 +39,7 @@ class InFeed(feed.BaseFeed):
     self.current_group_id = -1
     self.current_group_name = None
     self.current_article_id = -1
-    self.message_id_takethis = ''
+    self.message_id_wait = ''
     # get flag srnd-infeed-access from db
     self._srnd_infeed_access = self._db_connector('censor', timeout=60).fetchone('SELECT flag FROM commands WHERE command="srnd-infeed-access"')
     self._srnd_infeed_access = 0 if self._srnd_infeed_access is None else int(self._srnd_infeed_access[0])
@@ -96,12 +96,13 @@ class InFeed(feed.BaseFeed):
 
   def _infeed_SRNDAUTH(self, cmd_list):
     # empty, bad, replay or first request
-    if len(cmd_list) != 2 or 'secret' not in self._auth_data or cmd_list[0] not in self._srndauth_requ or cmd_list[0] in self._auth_data:
-      #reinit and send
+    if self._auth_data is None or len(cmd_list) != 2 or 'secret' not in self._auth_data or cmd_list[0] not in self._srndauth_requ or cmd_list[0] in self._auth_data:
+      if self._auth_data is not None:
+        # stop flood
+        time.sleep(random.uniform(5, 15))
+      # reset data and send new secret
       self._auth_data = dict()
       self._auth_data['secret'] = ''.join(random.choice(string.ascii_uppercase+string.digits) for x in range(333))
-      # stop flood
-      time.sleep(random.uniform(5, 15))
       self.send('SRNDAUTH {}'.format(self._auth_data['secret']), 'SRNDAUTH')
     else:
       self._auth_data[cmd_list[0]] = cmd_list[1].lower()
@@ -177,8 +178,18 @@ class InFeed(feed.BaseFeed):
       self.log(self.logger.INFO, 'should handle multi line end')
     self.waitfor = ''
     self.variant = ''
+    self.message_id_wait = ''
 
   def _handle_article(self, handle_incoming):
+    # variant: (error, ok)
+    variants = {
+        'IHAVE': ('437', '235'),
+        'TAKETHIS': ('439', '239'),
+        'POST': ('240', '240')
+    }
+    if self.variant not in variants:
+      self.log(self.logger.ERROR, 'Unknown variant "{}". Interrupt processing article'.format(self.variant))
+      return
     error = ''
     add_headers = list()
     self.articles_queue.discard(handle_incoming.message_id)
@@ -188,26 +199,20 @@ class InFeed(feed.BaseFeed):
       error += 'no body found, '
     if handle_incoming.newsgroups == '':
       error += 'no newsgroups found, '
-    if self.variant == 'POST' and handle_incoming.message_id:
-      # don't allow post article constain message_id
-      error += 'message_id in article from POST not allowed'
     if handle_incoming.message_id == '':
-      if self.variant != 'POST':
-        error += 'no message-id in article, '
-      else:
+      if self.variant == 'POST':
         rnd = ''.join(random.choice(string.ascii_lowercase) for x in range(10))
         handle_incoming.message_id = '<{}{}@POSTED.{}>'.format(rnd, int(time.time()), self.config.get('instance_name', 'SRNd'))
         add_headers.append('Message-ID: {0}'.format(handle_incoming.message_id))
-    elif '/' in handle_incoming.message_id:
-      error += '/ in message-id, '
+      elif self.valid_message_id(self.message_id_wait):
+        handle_incoming.message_id = self.message_id_wait
+        add_headers.append('Message-ID: {0}'.format(handle_incoming.message_id))
+      else:
+        error += 'no message-id in article, '
+    elif not self.valid_message_id(handle_incoming.message_id):
+      error += 'message-id invalid, '
     if error != '':
-      if self.variant == 'IHAVE':
-        self.send('437 invalid article: {0}'.format(error[:-2]))
-      elif self.variant == 'TAKETHIS':
-        self.send('439 {0} invalid article: {1}'.format(self.message_id_takethis, error[:-2]))
-        self.message_id_takethis = ''
-      elif self.variant == 'POST':
-        self.send('441 invalid article: {0}'.format(error[:-2]))
+      self.send('{} {} invalid article: {}'.format(variants[self.variant][0], self.message_id_wait, error[:-2]))
       # save in articles/invalid for manual debug
       add_headers.append('X-SRNd-invalid: {0}'.format(error[:-2]))
       add_headers.append('X-SRNd-source: {0}'.format(self.name))
@@ -217,41 +222,26 @@ class InFeed(feed.BaseFeed):
       return
     self.log(self.logger.DEBUG, 'article received {}. Large: {}'.format(handle_incoming.message_id, handle_incoming.file_large))
     # save article in tmp and mv to incoming
-    if self.variant == 'POST':
-      self.send('240 article received')
-    elif self.variant == 'IHAVE':
-      self.send('235 article received')
-      #TODO: failed but try again later ==> 436
-    elif self.variant == 'TAKETHIS':
-      if os.path.exists(os.path.join('articles', handle_incoming.message_id)) or os.path.exists(os.path.join('incoming', handle_incoming.message_id)):
-        self.send('439 {0} i know this article already'.format(handle_incoming.message_id))
-        self.log(self.logger.DEBUG, 'rejecting already known article %s' % handle_incoming.message_id)
-        return
-      if os.path.exists(os.path.join('articles', 'censored', handle_incoming.message_id)):
-        self.send('439 {0} article is blacklisted'.format(handle_incoming.message_id))
-        self.log(self.logger.DEBUG, 'rejecting blacklisted article %s' % handle_incoming.message_id)
-        return
-      if not self._allow_groups(handle_incoming.newsgroups):
-        self.send('439 {} article reject. group {} is blacklisted'.format(handle_incoming.message_id, handle_incoming.newsgroups))
-        self.log(self.logger.DEBUG, 'rejecting article {}: group {} is blacklisted'.format(handle_incoming.message_id, handle_incoming.newsgroups))
-        return
-      self.send('239 {0} article received'.format(self.message_id_takethis))
-      self.message_id_takethis = ''
-    self.log(self.logger.INFO, 'article received and accepted %s' % handle_incoming.message_id)
-
-    target = os.path.join('incoming', handle_incoming.message_id)
-    if not os.path.exists(target):
-      handle_incoming.move_to(target, add_headers)
+    if os.path.exists(os.path.join('articles', handle_incoming.message_id)) or os.path.exists(os.path.join('incoming', handle_incoming.message_id)):
+      self.send('{} {} i know this article already'.format(variants[self.variant][0], handle_incoming.message_id))
+      self.log(self.logger.DEBUG, 'rejecting already known article %s' % handle_incoming.message_id)
+    elif os.path.exists(os.path.join('articles', 'censored', handle_incoming.message_id)):
+      self.send('{} {} article is blacklisted'.format(variants[self.variant][0], handle_incoming.message_id))
+      self.log(self.logger.DEBUG, 'rejecting blacklisted article %s' % handle_incoming.message_id)
+    elif not self._allow_groups(handle_incoming.newsgroups):
+      self.send('{} {} article reject. group {} is blacklisted'.format(variants[self.variant][0], handle_incoming.message_id, handle_incoming.newsgroups))
+      self.log(self.logger.DEBUG, 'rejecting article {}: group {} is blacklisted'.format(handle_incoming.message_id, handle_incoming.newsgroups))
     else:
-      self.log(self.logger.INFO, 'got duplicate article: %s does already exist. removing temporary file' % target)
+      self.send('{} {} article received'.format(variants[self.variant][1], handle_incoming.message_id))
+      handle_incoming.move_to(os.path.join('incoming', handle_incoming.message_id), add_headers)
+      self.log(self.logger.INFO, 'article received and accepted %s' % handle_incoming.message_id)
 
   def handle_line(self, line):
     self.log(self.logger.VERBOSE, 'in: %s' % line)
     commands = line.upper().split(' ')
     if len(commands) == 0:
       self.log(self.logger.VERBOSE, 'should handle empty line')
-      return
-    if commands[0] == 'CAPABILITIES':
+    elif commands[0] == 'CAPABILITIES':
       # send CAPABILITIES. Work before authentication
       self.send(self.caps)
       self.send('.')
@@ -268,7 +258,7 @@ class InFeed(feed.BaseFeed):
     elif commands[0] == 'SRNDAUTH':
       # already authenticated or authentication disallow. WTF?
       if self._srnd_auth:
-        if self._srndauth_requ[0] in self._auth_data:
+        if self._auth_data is not None and self._srndauth_requ[0] in self._auth_data:
           self.send('281 {} already authenticated'.format(self._auth_data[self._srndauth_requ[0]]), 'SRNDAUTH_double')
         else:
           self.log(self.logger.ERROR, 'Internal error: self._srnd_auth=True and {} not in self._auth_data'.format(self._srndauth_requ[0]))
@@ -309,7 +299,7 @@ class InFeed(feed.BaseFeed):
     elif commands[0] == 'TAKETHIS' and len(commands) == 2:
       self.waitfor = 'article'
       self.variant = 'TAKETHIS'
-      self.message_id_takethis = line.split(' ', 1)[1]
+      self.message_id_wait = line.split(' ', 1)[1]
       self.in_buffer.set_multiline()
     elif commands[0] == 'POST':
       self._handshake_state = True
@@ -317,6 +307,8 @@ class InFeed(feed.BaseFeed):
       self.waitfor = 'article'
       self.variant = 'POST'
       self.in_buffer.set_multiline()
+      # remove UA from POST
+      self.incoming_file.remove_headers(headers=['user-agent',])
     elif commands[0] == 'IHAVE':
       self._handshake_state = True
       arg = line.split(' ', 1)[1]
@@ -328,9 +320,10 @@ class InFeed(feed.BaseFeed):
         self.send('435 article is blacklisted')
       else:
         #TODO: add currently receiving same message_id from another feed == 436, try again later
-        self.send('335 go ahead, send to the article'.format(arg))
+        self.send('335 go ahead, send to the {}'.format(arg))
         self.waitfor = 'article'
         self.variant = 'IHAVE'
+        self.message_id_wait = arg
         self.in_buffer.set_multiline()
     elif commands[0] == 'STAT':
       message_uid, message_id = self._article_check(line.split(' ')[1:])
