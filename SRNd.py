@@ -434,7 +434,7 @@ class SRNd(threading.Thread):
         output_log.append('blacklist')
         output_log.extend([' {}'.format(x) for x in rules['blacklist']])
       self.log(self.logger.INFO, '\n'.join(output_log))
-    return {'rules': rules, 'config': self._feed_config_sanitize(self._config_reader(cfg_file))}
+    return {'rules': rules, 'config': self._infeed_config_sanitize(self._config_reader(cfg_file))}
 
   def update_hooks(self):
     self.log(self.logger.INFO, 'reading hook configuration..')
@@ -447,7 +447,11 @@ class SRNd(threading.Thread):
         if hook_name != 'outfeed':
           name = '{0}-{1}'.format(hook_name, hook)
         else:
-          name = 'outfeed-%s-%s' % self._extract_outfeed_data(hook)
+          config_ = self._outfeed_config_sanitize(self._config_reader(link))
+          server_ = self._extract_server_link(config_.get('server', hook), config_['ipv6'])
+          if server_ is None:
+            continue
+          name = 'outfeed-{}-{}'.format(*server_)
         # ignore hooks for inactive plugins and outfeeds
         if (hook_name == 'outfeed' and name not in self.feeds) or (hook_name == 'plugin' and name not in self.plugins):
           continue
@@ -556,14 +560,26 @@ class SRNd(threading.Thread):
     self.log(self.logger.INFO, 'added %i new plugins' % len(new_plugins))
     # TODO: stop and remove plugins not listed at config/plugins anymore
 
-  @staticmethod
-  def _extract_outfeed_data(outfeed):
-    if ':' in outfeed:
-      host = ':'.join(outfeed.split(':')[:-1])
-      port = int(outfeed.split(':')[-1])
+  def _extract_server_link(self, outfeed, ipv6=False):
+    """Return host, port from host:port. return None, if wrong format"""
+    outfeed = outfeed.split(':')
+    # check server ip:port
+    if (ipv6 and len(outfeed) < 2) or (not ipv6 and len(outfeed) > 2):
+      self.log(self.logger.ERROR, 'incorrect server ip:port: {}'.format(':'.join(outfeed)))
+      return None
+    if len(outfeed) > 1:
+      host = ':'.join(outfeed[:-1])
+      try:
+        port = int(outfeed[-1])
+      except ValueError:
+        if ipv6:
+          host = ':'.join(outfeed)
+          port = 119
+        else:
+          self.log(self.logger.ERROR, 'incorrect server ip:port: {}. If you use ipv6 address add #start_param ipv6=true to config'.format(':'.join(outfeed)))
+          return None
     else:
-      # FIXME: how to deal with ipv6 and no default port?
-      host = outfeed
+      host = ':'.join(outfeed)
       port = 119
     return host, port
 
@@ -612,43 +628,23 @@ class SRNd(threading.Thread):
     counter_new = 0
     current_feedlist = list()
     for outfeed in self._list_config_files(os.path.join('config', 'hooks', 'outfeeds')):
-      start_params = self._config_reader(os.path.join('config', 'hooks', 'outfeeds', outfeed))
-      proxy_conn = {'proxy_type': None, 'proxy_ip': None, 'proxy_port': None}
-      for proxy_key in proxy_conn:
-        if proxy_key in start_params:
-          proxy_conn[proxy_key] = start_params[proxy_key].lower()
-      sync_on_startup = True if start_params.get('sync_on_startup', 'nope').lower() == 'true' else False
-      try:
-        debuglevel = int(start_params.get('debug', self.config['srnd_debuglevel']))
-      except ValueError:
-        debuglevel = self.config['srnd_debuglevel']
-      else:
-        if 9 < debuglevel < 0:
-          debuglevel = self.config['srnd_debuglevel']
+      config = self._outfeed_config_sanitize(self._config_reader(os.path.join('config', 'hooks', 'outfeeds', outfeed)))
 
-      host, port = self._extract_outfeed_data(outfeed)
-      name = 'outfeed-{}-{}'.format(host, port)
+      # get host:port from config if present or use config name
+      config['server'] = self._extract_server_link(config.get('server', outfeed), config['ipv6'])
+      if config['server'] is None:
+        continue
+      name = 'outfeed-{}-{}'.format(*config['server'])
       current_feedlist.append(name)
-      proxy = None
       if name not in self.feeds:
-        if proxy_conn['proxy_type'] is not None and proxy_conn['proxy_ip'] is not None:
-          try:
-            proxy_conn['proxy_port'] = int(proxy_conn['proxy_port'])
-          except ValueError:
-            pass
-          else:
-            proxy = (proxy_conn['proxy_type'], proxy_conn['proxy_ip'], proxy_conn['proxy_port'])
-            self.log(self.logger.INFO, 'starting outfeed {} using proxy: {}'.format(name, str(proxy)))
+        if config['proxy']:
+          self.log(self.logger.INFO, 'starting outfeed {} using proxy: {proxy_type} {proxy_ip}:{proxy_port}'.format(name, **config['proxy']))
         try:
           self.log(self.logger.DEBUG, 'starting outfeed: %s' % name)
           self.feeds[name] = OutFeed(
               self,
               self.logger,
-              config=self._feed_config_sanitize(start_params),
-              server=(host, port),
-              sync_on_startup=sync_on_startup,
-              proxy=proxy,
-              debug=debuglevel,
+              config=config
           )
           self.feeds[name].start()
         except Exception as e:
@@ -1060,7 +1056,7 @@ class SRNd(threading.Thread):
     finally:
       self._feeds_lock.release()
 
-  def _feed_config_sanitize(self, config):
+  def _infeed_config_sanitize(self, config):
     # 0 - disallow 1 - allow 2 - required
     try:
       srndauth_required = int(config.get('srndauth_required', 0))
@@ -1070,11 +1066,13 @@ class SRNd(threading.Thread):
       self.log(self.logger.WARNING, 'abnormal value srndauth_required={}. Set 0 - diwallow'.format(srndauth_required))
       srndauth_required = 0
     config['srndauth_required'] = srndauth_required
-    if 'pretty_name' in config and config['pretty_name'].lower() in ('true', 'yes', '1'):
-      config['pretty_name'] = True
-    else:
-      config['pretty_name'] = False
+    config['pretty_name'] = 'pretty_name' in config and config['pretty_name'].lower() in ('true', 'yes', '1')
     config['srndauth_key'] = config.get('srndauth_key', None)
+    # add SRNd instance_name from SRNd config
+    config['instance_name'] = self.config['instance_name']
+    return config
+
+  def _outfeed_config_sanitize(self, config):
     if config['srndauth_key'] is not None and len(config['srndauth_key']) != 64:
       self.log(self.logger.WARNING, 'len srndauth_key != 64. Set None')
       config['srndauth_key'] = None
@@ -1090,8 +1088,27 @@ class SRNd(threading.Thread):
       if config['multiconn'] is None:
         self.log(self.logger.WARNING, 'abnormal value multiconn="{}". Set 1 - only one outfeed'.format(multiconn))
         config['multiconn'] = 1
-    # add SRNd instance_name for config
-    config['instance_name'] = self.config['instance_name']
+    config['ipv6'] = config.get('ipv6', 'false').lower() in ('true', 'yes', '1')
+    # check proxy
+    proxy = {'proxy_type': None, 'proxy_ip': None, 'proxy_port': None}
+    for proxy_key in proxy:
+      if proxy_key in config:
+        proxy[proxy_key] = config.pop(proxy_key).lower()
+    if proxy['proxy_type'] is not None and proxy['proxy_ip'] is not None:
+      try:
+        proxy['proxy_port'] = int(proxy['proxy_port'])
+      except ValueError:
+        proxy = None
+    config['proxy'] = proxy
+
+    config['sync_on_startup'] = 'sync_on_startup' in config and config['sync_on_startup'].lower() in ('true', 'yes', '1')
+    try:
+      config['debug'] = int(config.get('debug', self.config['srnd_debuglevel']))
+    except ValueError:
+      config['debug'] = self.config['srnd_debuglevel']
+    else:
+      if 9 < config['debug'] < 0:
+        config['debug'] = self.config['srnd_debuglevel']
     return config
 
   def watching(self):

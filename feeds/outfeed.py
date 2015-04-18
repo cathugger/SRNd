@@ -22,14 +22,10 @@ _MODE = {
 
 class OutFeed(feed.BaseFeed):
 
-  def __init__(self, master, logger, config, server, sync_on_startup, proxy, debug):
-    # tuple(host, port)
-    self.server = server
-    feed.BaseFeed.__init__(self, master, logger, debug, 'outfeed-{}-{}'.format(*self.server))
-    # only config
+  def __init__(self, master, logger, config):
     self.config = config
-    self.sync_on_startup = sync_on_startup
-    self.proxy = proxy
+    feed.BaseFeed.__init__(self, master, logger, self.config['debug'], 'outfeed-{}-{}'.format(*self.config['server']))
+    self.sync_on_startup = self.config['sync_on_startup']
     self.queue = Queue.LifoQueue()
     self.polltimeout = 500 # 1 * 1000
     self.cooldown_period = 60
@@ -48,19 +44,19 @@ class OutFeed(feed.BaseFeed):
   def _init_outcoming_socket(self):
     proxy_types = {'socks5': sockssocket.PROXY_TYPE_SOCKS5, 'socks4': sockssocket.PROXY_TYPE_SOCKS4, 'http': sockssocket.PROXY_TYPE_HTTP}
     socket_ = None
-    if ':' in self.server[0]:
-      if self.proxy is not None:
+    if self.config['ipv6']:
+      if self.config['proxy'] is not None:
         self.log(self.logger.ERROR, "can't use proxy server for ipv6 connections")
         self.running = False
       else:
         socket_ = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
-    elif self.proxy is None:
+    elif self.config['proxy'] is None:
       socket_ = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    elif self.proxy[0] in proxy_types:
+    elif self.config['proxy']['proxy_type'] in proxy_types:
       socket_ = sockssocket.socksocket(socket.AF_INET, socket.SOCK_STREAM)
-      socket_.setproxy(proxy_types[self.proxy[0]], self.proxy[1], self.proxy[2], rdns=True)
+      socket_.setproxy(proxy_types[self.config['proxy']['proxy_type']], self.config['proxy']['proxy_ip'], self.config['proxy']['proxy_port'], rdns=True)
     else:
-      self.log(self.logger.ERROR, "unknown proxy type {}, must be one of {}.".format(self.proxy[0], ', '.join(proxy_types.keys())))
+      self.log(self.logger.ERROR, "unknown proxy type {}, must be one of {}.".format(self.config['proxy']['proxy_type'], ', '.join(proxy_types.keys())))
       self.running = False
     return socket_
 
@@ -97,7 +93,7 @@ class OutFeed(feed.BaseFeed):
     """Connect to server. Set self.con_broken empty line if connected or error message"""
     self.con_broken = ''
     try:
-      self.socket.connect(self.server)
+      self.socket.connect(self.config['server'])
     except socket.error as e:
       if e.errno == 9:
         # Bad file descriptor
@@ -153,7 +149,7 @@ class OutFeed(feed.BaseFeed):
       if self.con_broken:
         reconnect = True
       else:
-        proxy_info = ' via proxy {} {}:{}'.format(*self.proxy) if self.proxy is not None else ''
+        proxy_info = ' via proxy {proxy_type} {proxy_ip}:{proxy_port}'.format(**self.config['proxy']) if self.config['proxy'] is not None else ''
         self.log(self.logger.INFO, 'connection established{}'.format(proxy_info))
         poll = self._create_poll()
     return poll

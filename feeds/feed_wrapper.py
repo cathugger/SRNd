@@ -7,12 +7,12 @@ import threading
 import feeds.outfeed
 import feeds.infeed
 
-def OutFeed(master, logger, config, server, sync_on_startup, proxy, debug):
+def OutFeed(master, logger, config):
   if 'multiconn' not in config or config['multiconn'] < 2 or config['multiconn'] > 10:
     handler = feeds.outfeed.OutFeed
   else:
     handler = MultiOutFeed
-  return handler(master, logger, config, server, sync_on_startup, proxy, debug)
+  return handler(master, logger, config)
 
 class MultiFeed(object):
   """base wrapper"""
@@ -121,12 +121,12 @@ class MultiOutFeed(MultiFeed):
     if loglevel >= self.loglevel:
       self.logger.log(self.name, message, loglevel)
 
-  def __init__(self, master, logger, config, server, sync_on_startup, proxy, debug):
+  def __init__(self, master, logger, config):
     MultiFeed.__init__(self)
-    self.sync_on_startup = sync_on_startup
+    self.sync_on_startup = config['sync_on_startup']
     # tuple(host, port)
-    self.name = 'outfeed-{}-{}'.format(*server)
-    self.loglevel = debug
+    self.name = 'outfeed-{}-{}'.format(*config['server'])
+    self.loglevel = config['debug']
     self.logger = logger
     self._srnd = master
     self._trackdb_busy = False
@@ -138,10 +138,6 @@ class MultiOutFeed(MultiFeed):
               master=self,
               logger=logger,
               config=config,
-              server=server,
-              sync_on_startup=sync_on_startup,
-              proxy=proxy,
-              debug=debug,
               postfix=target
           )
       )
@@ -181,7 +177,7 @@ class MultiOutFeed(MultiFeed):
     self._srnd.terminate_feed(self.name)
 
   @staticmethod
-  def terminate_feed(name):
+  def terminate_feed(_):
     # dummy
     return True
 
