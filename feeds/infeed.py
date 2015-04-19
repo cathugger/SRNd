@@ -98,20 +98,28 @@ class InFeed(feed.BaseFeed):
       _censordb.close()
 
   def _infeed_SRNDAUTH(self, cmd_list):
-    # empty, bad, replay or first request
-    if self._auth_data is None or len(cmd_list) != 2 or 'secret' not in self._auth_data or cmd_list[0] not in self._srndauth_requ or cmd_list[0] in self._auth_data:
+    if len(cmd_list) < 2 or cmd_list[0] not in self._SRNDAUTH_REQU:
+      # empty, bad or issued request
+      self.send('482 Authentication commands issued. Allow only {}'.format(' or '.join(self._SRNDAUTH_REQU)), 'SRNDAUTH')
+    elif cmd_list[0] == self._SRNDAUTH_REQU[0]:
+      # SRNDAUTH PUBKEY KEY - first clien request. Generate and send secret, save pubkey and secret
       if self._auth_data is not None:
         # stop flood
         time.sleep(random.uniform(5, 15))
       # reset data and send new secret
       self._auth_data = dict()
+      self._auth_data[self._SRNDAUTH_REQU[0]] = cmd_list[1].lower()
       self._auth_data['secret'] = ''.join(random.choice(string.ascii_uppercase+string.digits) for x in range(333))
       self.send('SRNDAUTH {}'.format(self._auth_data['secret']), 'SRNDAUTH')
-    else:
-      self._auth_data[cmd_list[0]] = cmd_list[1].lower()
-    # recive all data - check key
-    if len(self._auth_data) == 3:
-      self._infeed_SRNDAUTH_check()
+    elif cmd_list[0] == self._SRNDAUTH_REQU[1]:
+      # SRNDAUTH SIGNATURE signature - client send signature
+      if self._auth_data is not None and self._SRNDAUTH_REQU[0] in self._auth_data:
+        # save signature and check user data
+        self._auth_data[self._SRNDAUTH_REQU[1]] = cmd_list[1].lower()
+        self._infeed_SRNDAUTH_check()
+      else:
+        # user send signature and not send pubkey. WTF?
+        self.send('482 send your pubkey before signature', 'SRNDAUTH')
 
   def _infeed_AUTHINFO(self, cmd_list):
     if len(cmd_list) < 2 or cmd_list[0] not in ('USER', 'PASS'):
@@ -122,8 +130,10 @@ class InFeed(feed.BaseFeed):
     elif cmd_list[0] == 'PASS':
       pubkey = self._key_from_private(cmd_list[1])
       if pubkey is None:
-        self.send('481 Authentication failed/rejected')
         self.log(self.logger.WARNING, 'bad private key')
+        # stop flood
+        time.sleep(random.uniform(5, 15))
+        self.send('481 Authentication failed/rejected')
       else:
         new_name = self._get_infeed_name_by_key(pubkey)
         if new_name is not None:
@@ -133,32 +143,34 @@ class InFeed(feed.BaseFeed):
             # rename infeed using pubkey or local_name
             self._set_infeed_pretty_name(new_name)
           self.log(self.logger.INFO, 'access granted for {}'.format(new_name))
-          self._auth_data = {self._srndauth_requ[0]: pubkey}
+          self._auth_data = {self._SRNDAUTH_REQU[0]: pubkey}
         else:
-          self.send('481 {} key not allowed at this server'.format(pubkey), 'AUTHINFO_reject')
           self.log(self.logger.WARNING, '{} not allowed at this server'.format(pubkey))
+          # stop flood
+          time.sleep(random.uniform(5, 15))
+          self.send('481 {} key not allowed at this server'.format(pubkey), 'AUTHINFO_reject')
 
   def _infeed_SRNDAUTH_check(self):
     new_name = None
     if self._check_sign(self._auth_data):
-      new_name = self._get_infeed_name_by_key(self._auth_data[self._srndauth_requ[0]])
+      new_name = self._get_infeed_name_by_key(self._auth_data[self._SRNDAUTH_REQU[0]])
       if new_name is not None:
         self._srnd_auth = True
-        self.send('281 {} access granted'.format(self._auth_data[self._srndauth_requ[0]]), 'SRNDAUTH_ok')
+        self.send('281 {} access granted'.format(self._auth_data[self._SRNDAUTH_REQU[0]]), 'SRNDAUTH_ok')
       else:
-        self.send('481 {} key not allowed at this server'.format(self._auth_data[self._srndauth_requ[0]]), 'SRNDAUTH_reject')
-        self.log(self.logger.WARNING, '{} not allowed at this server'.format(self._auth_data[self._srndauth_requ[0]]))
+        self.send('481 {} key not allowed at this server'.format(self._auth_data[self._SRNDAUTH_REQU[0]]), 'SRNDAUTH_reject')
+        self.log(self.logger.WARNING, '{} not allowed at this server'.format(self._auth_data[self._SRNDAUTH_REQU[0]]))
     else:
       self.send('482 bad key or signature', 'SRNDAUTH_error')
-      self.log(self.logger.WARNING, 'bad key or signature, key="{}" signature="{}"'.format(self._auth_data[self._srndauth_requ[0]], self._auth_data[[1]]))
-    del self._auth_data['secret'], self._auth_data[self._srndauth_requ[1]]
+      self.log(self.logger.WARNING, 'bad key or signature, key="{}" signature="{}"'.format(self._auth_data[self._SRNDAUTH_REQU[0]], self._auth_data[[1]]))
+    del self._auth_data['secret'], self._auth_data[self._SRNDAUTH_REQU[1]]
     if self._srnd_auth:
       if self.config['pretty_name']:
         # rename infeed using pubkey or local_name
         self._set_infeed_pretty_name(new_name)
       self.log(self.logger.INFO, 'access granted for {}'.format(new_name))
     else:
-      del self._auth_data[self._srndauth_requ[0]]
+      del self._auth_data[self._SRNDAUTH_REQU[0]]
 
   def _set_infeed_pretty_name(self, to_name):
     new_name = 'infeed-' + to_name
@@ -170,7 +182,7 @@ class InFeed(feed.BaseFeed):
 
   def _check_sign(self, data):
     try:
-      nacl.signing.VerifyKey(unhexlify(data[self._srndauth_requ[0]])).verify(sha512(data['secret']).digest(), unhexlify(data[self._srndauth_requ[1]]))
+      nacl.signing.VerifyKey(unhexlify(data[self._SRNDAUTH_REQU[0]])).verify(sha512(data['secret']).digest(), unhexlify(data[self._SRNDAUTH_REQU[1]]))
     except Exception as e:
       self.log(self.logger.DEBUG, 'could not verify signature: {}'.format(e))
       return False

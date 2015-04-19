@@ -40,7 +40,7 @@ class BaseFeed(threading.Thread):
     self.waitfor = ''
     self.variant = ''
     self.con_broken = ''
-    self._srndauth_requ = ('X-PUBKEY-ED25519', 'X-SIGNATURE-ED25519-SHA512')
+    self._SRNDAUTH_REQU = ('PUBKEY', 'SIGNATURE')
 
   def run(self):
     self.running = True

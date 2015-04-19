@@ -289,9 +289,16 @@ class OutFeed(feed.BaseFeed):
       self._check_CAPABILITIES(self._caps_cache)
 
   def _check_CAPABILITIES(self, caps):
-    # server support SRNDAUTH and key present and not authenticate. authentication
-    if 'SRNDAUTH' in caps and self.config['srndauth_key'] is not None and not self._srnd_auth and not self._try_srndauth_bypass:
-      self.send('SRNDAUTH')
+    # server support SRNDAUTH and key present and not authenticate.
+    if 'SRNDAUTH' in caps and not (self.config['srndauth_key'] is None or self._srnd_auth or self._try_srndauth_bypass):
+      pubkey = self._key_from_private(self.config['srndauth_key'])
+      if pubkey is None:
+        self.log(self.logger.ERROR, 'Private key invalid. Check srndauth_key in outfeed config')
+        if not self._srndauth_bypass():
+          self.shutdown()
+      else:
+        # authentication - send pubkey
+        self.send('SRNDAUTH {} {}'.format(self._SRNDAUTH_REQU[0], pubkey), 'SRNDAUTH')
     # server support SUPPORT, send it and wait response 191
     elif 'SUPPORT' in caps:
       self.send('SUPPORT')
@@ -341,32 +348,33 @@ class OutFeed(feed.BaseFeed):
       self.send('QUIT')
       self.cooldown_counter = 5
       self.con_broken = 'Work is not possible.'
-      return
-    if self.config['srndauth_key'] is None:
+    elif self.config['srndauth_key'] is None:
       self.log(self.logger.ERROR, 'Server required SRDNAUTH and srndauth_key not in outfeed config or invalid.')
       if not self._srndauth_bypass():
         self.shutdown()
-      return
-    pubkey = self._key_from_private(self.config['srndauth_key'])
-    if pubkey is None:
-      self.log(self.logger.ERROR, 'Private key invalid. Check srndauth_key in outfeed config')
-      if not self._srndauth_bypass():
-        self.shutdown()
-      return
-    if len(secret) != 333:
+    elif len(secret) != 333:
       self.log(self.logger.WARNING, 'Response secret {} != 333. Authentication is not possible.'.format(len(secret)))
       if not self._srndauth_bypass():
-        self.cooldown_counter = 3
+        self.cooldown_counter = 5
         self.con_broken = 'Authentication is not possible.'
-      return
-    sign = self._create_sign(self.config['srndauth_key'], secret)
-    if sign is not None:
-      self.send(('SRNDAUTH {} {}'.format(self._srndauth_requ[0], pubkey), 'SRNDAUTH {} {}'.format(self._srndauth_requ[1], sign)), 'SRNDAUTH')
+    else:
+      # send signature
+      sign = self._create_sign(self.config['srndauth_key'], secret)
+      if sign is None:
+        self.log(self.logger.ERROR, 'Private key invalid. Check srndauth_key in outfeed config')
+        if not self._srndauth_bypass():
+          self.shutdown()
+      else:
+        self.send('SRNDAUTH {} {}'.format(self._SRNDAUTH_REQU[1], sign), 'SRNDAUTH')
 
   @staticmethod
   def _create_sign(priv_key, secret):
-    keypair = nacl.signing.SigningKey(unhexlify(priv_key))
-    return hexlify(keypair.sign(sha512(secret).digest()).signature)
+    try:
+      keypair = nacl.signing.SigningKey(unhexlify(priv_key))
+    except:
+      return None
+    else:
+      return hexlify(keypair.sign(sha512(secret).digest()).signature)
 
   def _srndauth_bypass(self):
     # if SRNDAUTH fail, send MODE STREAM once - if server set 1 its work
@@ -480,14 +488,14 @@ class OutFeed(feed.BaseFeed):
         self.cooldown_counter = 5
         self.con_broken = 'Authentication required'
     elif commands[0] == 'SRNDAUTH':
-      # server allowed or required SRDNAUTH\AUTHINFO
+      # server allowed or required SRDNAUTH
       if len(commands) == 2:
         self._outfeed_SRNDAUTH(commands[1])
       else:
-        self.log(self.logger.ERROR, 'Recived incorrect SRNDAUTH. Authentication is not possible: {}'.format(line))
+        self.log(self.logger.ERROR, 'Recived incorrect SRNDAUTH response. Authentication is not possible: {}'.format(line))
         if not self._srndauth_bypass():
-          self.cooldown_counter = 3
-          self.con_broken = 'Recived incorrect SRNDAUTH.'
+          self.cooldown_counter = 5
+          self.con_broken = 'Recived incorrect SRNDAUTH response.'
     elif commands[0] == '101':
       # receive CAPABILITES
       self.waitfor = 'CAPABILITIES'
