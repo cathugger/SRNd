@@ -417,8 +417,11 @@ class SRNd(threading.Thread):
       with open(cfg_file, 'w') as f:
         f.write('# see docs/hooks.txt for a detailed description about the hook configuration syntax.\n\n')
         f.write('# All infeeds use this config\n\n')
-        f.write('# 0 - SRNDAUTH disallowed, 1 - SRNDAUTH allowed, 2 - SRNDAUTH required (WARNING! Not work with original srnd)\n')
-        f.write('#start_param srndauth_required=0\n\n\n')
+        f.write('# 0 - authentication disallowed, 1 - authentication support, 2 - authentication required (WARNING! Not work with original srnd)\n')
+        f.write('#start_param auth_required=0\n\n')
+        f.wrine('# authentication mode support. nntp - support standart nntp client, private key send as plaintext. srnd - best and support srnd-client (recommend)\n')
+        f.write('# example: #start_param auth_support=srnd,nntp\n')
+        f.write('#start_param auth_support=srnd\n\n\n')
         f.write('# allow all groups\n')
         f.write('*\n')
     rules = self._read_hook_rules(cfg_file)
@@ -1059,13 +1062,14 @@ class SRNd(threading.Thread):
   def _infeed_config_sanitize(self, config):
     # 0 - disallow 1 - allow 2 - required
     try:
-      srndauth_required = int(config.get('srndauth_required', 0))
+      auth_required = int(config.get('auth_required', 0))
     except ValueError:
-      srndauth_required = None
-    if srndauth_required is None or 2 < srndauth_required < 0:
-      self.log(self.logger.WARNING, 'abnormal value srndauth_required={}. Set 0 - diwallow'.format(srndauth_required))
-      srndauth_required = 0
-    config['srndauth_required'] = srndauth_required
+      auth_required = None
+    if auth_required is None or 2 < auth_required < 0:
+      self.log(self.logger.WARNING, 'abnormal value auth_required={}. Set 0 - diwallow'.format(auth_required))
+      auth_required = 0
+    config['auth_required'] = auth_required
+    config['auth_support'] = config.get('auth_support', 'srnd').lower().split(',')
     config['pretty_name'] = 'pretty_name' in config and config['pretty_name'].lower() in ('true', 'yes', '1')
     config['srndauth_key'] = config.get('srndauth_key', None)
     # add SRNd instance_name from SRNd config
