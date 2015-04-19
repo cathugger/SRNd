@@ -1071,7 +1071,6 @@ class SRNd(threading.Thread):
     config['auth_required'] = auth_required
     config['auth_support'] = config.get('auth_support', 'srnd').lower().split(',')
     config['pretty_name'] = 'pretty_name' in config and config['pretty_name'].lower() in ('true', 'yes', '1')
-    config['srndauth_key'] = config.get('srndauth_key', None)
     # add SRNd instance_name from SRNd config
     config['instance_name'] = self.config['instance_name']
     return config
