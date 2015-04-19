@@ -33,8 +33,11 @@ class InFeed(feed.BaseFeed):
         'SUPPORT'
     ]
     # append caps
-    if self.config['srndauth_required'] > 0:
-      self.caps.append('SRNDAUTH')
+    if self.config['auth_required'] > 0:
+      if 'nntp' in self.config['auth_support']:
+        self.caps.append('AUTHINFO USER PASS')
+      if 'srnd' in self.config['auth_support']:
+        self.caps.append('SRNDAUTH')
     self.welcome = '200 welcome much to artificial NNTP processing unit some random NNTPd v0.1, posting allowed'
     self.current_group_id = -1
     self.current_group_name = None
@@ -109,6 +112,31 @@ class InFeed(feed.BaseFeed):
     # recive all data - check key
     if len(self._auth_data) == 3:
       self._infeed_SRNDAUTH_check()
+
+  def _infeed_AUTHINFO(self, cmd_list):
+    if len(cmd_list) < 2 or cmd_list[0] not in ('USER', 'PASS'):
+      self.send('482 Authentication commands issued out of sequence')
+    elif cmd_list[0] == 'USER':
+      # ignore username, get private key
+      self.send('381 send me your private key, kekeke')
+    elif cmd_list[0] == 'PASS':
+      pubkey = self._key_from_private(cmd_list[1])
+      if pubkey is None:
+        self.send('481 Authentication failed/rejected')
+        self.log(self.logger.WARNING, 'bad private key')
+      else:
+        new_name = self._get_infeed_name_by_key(pubkey)
+        if new_name is not None:
+          self._srnd_auth = True
+          self.send('281 {} access granted'.format(pubkey), 'AUTHINFO_ok')
+          if self.config['pretty_name']:
+            # rename infeed using pubkey or local_name
+            self._set_infeed_pretty_name(new_name)
+          self.log(self.logger.INFO, 'access granted for {}'.format(new_name))
+          self._auth_data = {self._srndauth_requ[0]: pubkey}
+        else:
+          self.send('481 {} key not allowed at this server'.format(pubkey), 'AUTHINFO_reject')
+          self.log(self.logger.WARNING, '{} not allowed at this server'.format(pubkey))
 
   def _infeed_SRNDAUTH_check(self):
     new_name = None
@@ -249,21 +277,15 @@ class InFeed(feed.BaseFeed):
       self.send('205 bye bye')
       self.state = 'closing down'
       self.running = False
-    elif not self._srnd_auth and (self.config['srndauth_required'] == 2 or (commands[0] == 'SRNDAUTH' and self.config['srndauth_required'] == 1)):
-      # not authenticated and (authentication required or (cliens send SRNDAUTH and authentication allow))
-      if commands[0] == 'SRNDAUTH':
-        self._infeed_SRNDAUTH(commands[1:])
-      else:
-        self._infeed_SRNDAUTH([])
-    elif commands[0] == 'SRNDAUTH':
-      # already authenticated or authentication disallow. WTF?
-      if self._srnd_auth:
-        if self._auth_data is not None and self._srndauth_requ[0] in self._auth_data:
-          self.send('281 {} already authenticated'.format(self._auth_data[self._srndauth_requ[0]]), 'SRNDAUTH_double')
-        else:
-          self.log(self.logger.ERROR, 'Internal error: self._srnd_auth=True and {} not in self._auth_data'.format(self._srndauth_requ[0]))
-      else:
-        self.send('500 {} not support. I much recommend in speak to the proper NNTP based on CAPABILITIES'.format(commands[0]), 'SRNDAUTH_500')
+    elif commands[0] == 'SRNDAUTH' and self.config['auth_required'] > 0 and not self._srnd_auth and 'srnd' in self.config['auth_support']:
+      # allow SRNDAUTH
+      self._infeed_SRNDAUTH(commands[1:])
+    elif commands[0] == 'AUTHINFO' and self.config['auth_required'] > 0 and not self._srnd_auth and 'nntp' in self.config['auth_support']:
+      # allow AUTHINFO
+      self._infeed_AUTHINFO(commands[1:])
+    elif not self._srnd_auth and self.config['auth_required'] == 2:
+      # not authenticated and authentication required
+      self.send('480 Authentication required')
     elif commands[0] == 'SUPPORT':
       # 191 - initial SUPPORT reply
       self.send('191 i support:', 'SUPPORT')
