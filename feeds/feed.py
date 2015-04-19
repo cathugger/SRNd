@@ -6,6 +6,9 @@ import threading
 import time
 import traceback
 import os
+from binascii import hexlify, unhexlify
+
+import nacl.signing
 
 import feeds.sockssocket as sockssocket
 from feeds.feed_utils import InBuffer, HandleIncoming
@@ -83,6 +86,13 @@ class BaseFeed(threading.Thread):
     self.log(self.logger.INFO, 'should handle multi line end')
     self.waitfor = ''
     self.variant = ''
+
+  @staticmethod
+  def _key_from_private(priv_key):
+    try:
+      return hexlify(nacl.signing.SigningKey(unhexlify(priv_key)).verify_key.encode())
+    except:
+      return None
 
   @staticmethod
   def valid_message_id(message_id):

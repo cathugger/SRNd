@@ -368,13 +368,6 @@ class OutFeed(feed.BaseFeed):
     keypair = nacl.signing.SigningKey(unhexlify(priv_key))
     return hexlify(keypair.sign(sha512(secret).digest()).signature)
 
-  @staticmethod
-  def _key_from_private(priv_key):
-    try:
-      return hexlify(nacl.signing.SigningKey(unhexlify(priv_key)).verify_key.encode())
-    except:
-      return None
-
   def _srndauth_bypass(self):
     # if SRNDAUTH fail, send MODE STREAM once - if server set 1 its work
     if self._try_srndauth_bypass:
@@ -481,8 +474,13 @@ class OutFeed(feed.BaseFeed):
       return True
 
   def _handle_handshake(self, commands, line):
-    if commands[0] == 'SRNDAUTH':
-      # server allowed or required SRDNAUTH
+    if commands[0] == '480':
+      # Authentication required.
+      if not self._srndauth_bypass():
+        self.cooldown_counter = 5
+        self.con_broken = 'Authentication required'
+    elif commands[0] == 'SRNDAUTH':
+      # server allowed or required SRDNAUTH\AUTHINFO
       if len(commands) == 2:
         self._outfeed_SRNDAUTH(commands[1])
       else:
