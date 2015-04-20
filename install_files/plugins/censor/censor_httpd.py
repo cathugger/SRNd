@@ -943,12 +943,8 @@ class censor(BaseHTTPRequestHandler):
       for plugin in [x[7:] if x.lower().startswith('plugin-') else x for x in self.origin.SRNd_info({'command': 'status', 'data': 'plugins'}).get('active', {})]:
         data['plugins_count'] += 1
         plugins.append(
-            self.origin.t_engine_info_feed_row.substitute(
+            self.origin.t_engine_info_plugin_row.substitute(
                 name=plugin,
-                queue='None',
-                transfer_human='None',
-                speed_human='None',
-                state='work',
                 actions='<a href="?action=die&hook=plugin&target={}">bye</a>'.format(plugin)
             )
         )
@@ -1548,6 +1544,8 @@ class censor_httpd(threading.Thread):
       self.httpd.t_engine_info = string.Template(f.read())
     with open(os.path.join(template_directory, 'info_feed_row.tmpl'), 'r') as f:
       self.httpd.t_engine_info_feed_row = string.Template(f.read())
+    with open(os.path.join(template_directory, 'info_plugin_row.tmpl'), 'r') as f:
+      self.httpd.t_engine_info_plugin_row = string.Template(f.read())
     with open(os.path.join(template_directory, 'info_feed_actions.tmpl'), 'r') as f:
       self.httpd.t_engine_info_feed_actions = string.Template(f.read())
     with open(os.path.join(template_directory, 'help.tmpl'), 'r') as f:

@@ -19,7 +19,7 @@ ${status}      <b>Start time: </b>${start_time_human} (${start_time_raw})<br />
     <div class="box">
       <b>Active plugins: </b>${plugins_count}
       <table border="0px" class="datatable">
-        <tr><th>name</th><th>&nbsp;queue</th><th>&nbsp;transfer</th><th>&nbsp;speed</th><th>&nbsp;status</th><th>&nbsp;actions</th></tr>
+        <tr><th>name</th><!--<th>&nbsp;queue</th><th>&nbsp;transfer</th><th>&nbsp;speed</th><th>&nbsp;status</th>--><th>&nbsp;actions</th></tr>
 ${plugins}
       </table>
     </div>
@@ -27,7 +27,7 @@ ${plugins}
     <div class="box">
       <b>Infeeds: </b>${infeeds_count}
       <table border="0px" class="datatable">
-        <tr><th>name</th><th>&nbsp;queue</th><th>&nbsp;transfer</th><th>&nbsp;speed</th><th>&nbsp;status</th><th>&nbsp;actions</th></tr>
+        <tr><th>name</th><th>&nbsp;queue</th><th>&nbsp;transfer</th><th>&nbsp;speed</th><th>&nbsp;status</th><th>&nbsp;mode</th><th>&nbsp;actions</th></tr>
 ${infeeds}
       </table>
     </div>
@@ -35,7 +35,7 @@ ${infeeds}
     <div class="box">
       <b>Outfeeds: </b>${outfeeds_count}
       <table border="0px" class="datatable">
-        <tr><th>name</th><th>&nbsp;queue</th><th>&nbsp;transfer</th><th>&nbsp;speed</th><th>&nbsp;status</th><th><a href="?action=reload&hook=outfeed">reloads</a></th></tr>
+        <tr><th>name</th><th>&nbsp;queue</th><th>&nbsp;transfer</th><th>&nbsp;speed</th><th>&nbsp;status</th><th>&nbsp;mode</th><th><a href="?action=reload&hook=outfeed">reloads</a></th></tr>
 ${outfeeds}
       </table>
     </div>
