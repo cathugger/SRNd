@@ -310,12 +310,14 @@ class InFeed(feed.BaseFeed):
     elif commands[0] == 'MODE' and len(commands) == 2 and commands[1] == 'STREAM':
       self._handshake_state = True
       self.send('203 stream as you like')
+      self._current_mode = self._MODE['stream']
     elif commands[0] == 'MODE' and commands[1] == 'READER':
       #200    Posting allowed
       #201    Posting prohibited
       #502    Reading service permanently unavailable
       #TODO: add self.reader_mode true/false and reader_mode switcher to config
       self.send('200 Posting allowed')
+      self._current_mode = self._MODE['reader']
       self.log(self.logger.DEBUG, 'switch to MODE READER')
     elif commands[0] == 'CHECK' and len(commands) == 2:
       #TODO 431 message-id   Transfer not possible; try again later
@@ -343,6 +345,7 @@ class InFeed(feed.BaseFeed):
       self.in_buffer.set_multiline()
       # remove UA from POST
       self.incoming_file.remove_headers(headers=['user-agent',])
+      self._current_mode = self._MODE['post']
     elif commands[0] == 'IHAVE':
       self._handshake_state = True
       arg = line.split(' ', 1)[1]
@@ -359,6 +362,7 @@ class InFeed(feed.BaseFeed):
         self.variant = 'IHAVE'
         self.message_id_wait = arg
         self.in_buffer.set_multiline()
+        self._current_mode = self._MODE['ihave']
     elif commands[0] == 'STAT':
       message_uid, message_id = self._article_check(line.split(' ')[1:])
       if message_uid:

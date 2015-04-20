@@ -23,19 +23,22 @@ class MultiFeed(object):
     self._feeds_lock = threading.Lock()
 
   def get_status(self, target=None):
-    if target == 'state':
-      state_ = dict()
-      for feed_state in [xx.state for xx in self._feeds]:
-        state_[feed_state] = state_.get(feed_state, 0) + 1
-      return '|'.join(['{}({})'.format(xx, state_[xx]) for xx in state_])
-    elif target == 'qsize':
+    if target == 'qsize':
       return sum([xx.qsize for xx in self._feeds])
     elif target == 'byte_transfer':
       return sum([xx.byte_transfer for xx in self._feeds])
     elif target == 'time_transfer':
       return sum([xx.time_transfer for xx in self._feeds]) / self._feeds_count
+    elif target in ('state', 'mode'):
+      return self._get_status_all(target)
     else:
       return None
+
+  def _get_status_all(self, target):
+    status_ = dict()
+    for state in [feed.get_status(target) for feed in self._feeds]:
+      status_[state] = status_.get(state, 0) + 1
+    return '|'.join('{}({})'.format(k, v) for k, v in status_.items())
 
 class MultiInFeed(MultiFeed):
 

@@ -21,6 +21,14 @@ class BaseFeed(threading.Thread):
 
   def __init__(self, master, logger, debug, name):
     threading.Thread.__init__(self)
+    self._MODE_REVERS = (
+        'none',
+        'stream',
+        'ihave',
+        'post',
+        'reader'
+    )
+    self._MODE = {x: self._MODE_REVERS.index(x) for x in self._MODE_REVERS}
     self.state = 'init'
     self.loglevel = debug
     self.logger = logger
@@ -41,6 +49,7 @@ class BaseFeed(threading.Thread):
     self.variant = ''
     self.con_broken = ''
     self._SRNDAUTH_REQU = ('PUBKEY', 'SIGNATURE')
+    self._current_mode = self._MODE['none']
 
   def run(self):
     self.running = True
@@ -76,6 +85,8 @@ class BaseFeed(threading.Thread):
       return self.byte_transfer
     elif target == 'time_transfer':
       return self.time_transfer
+    elif target == 'mode':
+      return self._MODE_REVERS[self._current_mode]
     else:
       return None
 

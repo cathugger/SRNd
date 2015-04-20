@@ -722,7 +722,8 @@ class SRNd(threading.Thread):
         "state": self.feeds[name].get_status('state'),
         "queue": self.feeds[name].get_status('qsize'),
         "transfer": self.feeds[name].get_status('byte_transfer'),
-        "transfer_time": self.feeds[name].get_status('time_transfer')
+        "transfer_time": self.feeds[name].get_status('time_transfer'),
+        "mode": self.feeds[name].get_status('mode')
     }
 
   def ctl_socket_handler_status(self, data, fd=None):

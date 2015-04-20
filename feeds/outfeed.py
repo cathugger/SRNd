@@ -13,13 +13,6 @@ import nacl.signing
 import feeds.sockssocket as sockssocket
 import feeds.feed as feed
 
-_MODE = {
-    'none': 0,
-    'stream': 1,
-    'ihave': 2,
-    'post': 3
-}
-
 class OutFeed(feed.BaseFeed):
 
   def __init__(self, master, logger, config):
@@ -72,7 +65,7 @@ class OutFeed(feed.BaseFeed):
     self._srnd_auth = False
     self._caps_cache = None
     self._handshake_state = False
-    self.outstream_mode = _MODE['none']
+    self._current_mode = self._MODE['none']
     self.outstream_currently_testing = ''
     # for POST and IHAVE mode
     self._wait_response = False
@@ -178,16 +171,16 @@ class OutFeed(feed.BaseFeed):
     self.log(self.logger.INFO, 'bye')
 
   def _handle_send(self):
-    if self.outstream_mode == _MODE['stream']:
+    if self._current_mode == self._MODE['stream']:
       if len(self.articles_queue) > 0:
         self._worker_send_article_stream()
       else:
         self._send_new_check('CHECK', 50)
     elif self.queue.qsize() > 0:
       if not self._wait_response:
-        if self.outstream_mode == _MODE['ihave']:
+        if self._current_mode == self._MODE['ihave']:
           self._send_new_check('IHAVE')
-        elif self.outstream_mode == _MODE['post']:
+        elif self._current_mode == self._MODE['post']:
           self.message_id = self.queue.get()
           self.send('POST')
       elif int(time.time()) - self._wait_response_time > 1200:
@@ -389,20 +382,20 @@ class OutFeed(feed.BaseFeed):
     """Mode selector"""
     if commands[0] == '203':
       # MODE STREAM test successfull
-      self.outstream_mode = _MODE['stream']
+      self._current_mode = self._MODE['stream']
       if self._try_srndauth_bypass:
         self.log(self.logger.WARNING, 'successful login, SRNDAUTH breaking. FIX IT!')
     elif commands[0] == '435':
       # IHAVE test successfull
-      self.outstream_mode = _MODE['ihave']
+      self._current_mode = self._MODE['ihave']
     elif commands[0] == '335':
       # IHAVE test successfull
       self.send('.')
-      self.outstream_mode = _MODE['ihave']
+      self._current_mode = self._MODE['ihave']
     elif commands[0] == '340':
       # POST test successfull
       self.send('.')
-      self.outstream_mode = _MODE['post']
+      self._current_mode = self._MODE['post']
     elif commands[0] in ('500', '501', '502'):
       if self.outstream_currently_testing == '':
         # WTF? Test MODE STREAM
@@ -424,7 +417,7 @@ class OutFeed(feed.BaseFeed):
       self.running = False
     else:
       return True
-    self._handshake_state = self.outstream_mode != _MODE['none']
+    self._handshake_state = self._current_mode != self._MODE['none']
 
   def _handle_response_STREAM(self, commands, line):
     """MODE STREAM. If command unknown return True"""
@@ -539,8 +532,8 @@ class OutFeed(feed.BaseFeed):
     commands = line.upper().split(' ')
     if len(commands) == 0:
       self.log(self.logger.VERBOSE, 'should handle empty line')
-    elif self.outstream_mode == _MODE['none'] and not self._handle_handshake(commands, line):
+    elif self._current_mode == self._MODE['none'] and not self._handle_handshake(commands, line):
       pass
-    elif self._RESPONSES[self.outstream_mode](commands, line):
-      self.log(self.logger.ERROR, 'unknown response in mode {}: {}'.format(self.outstream_mode, line))
+    elif self._RESPONSES[self._current_mode](commands, line):
+      self.log(self.logger.ERROR, 'unknown response in mode {}: {}'.format(self._MODE_REVERS[self._current_mode], line))
 
