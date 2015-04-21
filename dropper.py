@@ -28,7 +28,7 @@ class dropper(threading.Thread):
     self.reqs = ['message-id', 'newsgroups', 'date', 'subject', 'from', 'path', 'x-i2p-desthash']
     self.running = False
     self.watching = os.path.join(os.getcwd(), "incoming")
-    self.DATABASE_VERSION = 2
+    self.DATABASE_VERSION = 3
 
     self.dropperdb = kwargs['db_connector']('dropper', timeout=20)
     self.hashesdb = kwargs['db_connector']('hashes')
@@ -71,8 +71,10 @@ class dropper(threading.Thread):
     elif version == 1:
       self.dropperdb.execute('CREATE TABLE article_path (id INTEGER PRIMARY KEY, src TEXT, dst TEXT, count INTEGER DEFAULT 0, UNIQUE(src, dst))')
       self.dropperdb.execute('CREATE INDEX article_path_ab_idx ON article_path(src, dst)')
+    elif version == 2:
+      self.dropperdb.execute('ALTER TABLE article_path ADD COLUMN timestamp INTEGER DEFAULT 0')
     else:
-      raise Exception('Handler for update from {} version not present in code. Fix it!'.format(version))
+      raise Exception('Handler for db update from {} version not present in code. Fix it!'.format(version))
 
   def handler_progress_incoming(self, signum, frame):
     self.retry = self.busy
@@ -280,11 +282,12 @@ class dropper(threading.Thread):
     article_path = article_path.split('!')
     if len(article_path) < 2:
       return
+    current_time = int(time.time())
     for src in range(len(article_path) - 1, 0, -1):
       dst = src - 1
       if len(article_path[src]) > 2 and len(article_path[dst]) > 2:
         self.dropperdb.execute('INSERT OR IGNORE INTO article_path (src, dst) VALUES (?, ?)', (article_path[src], article_path[dst]))
-        self.dropperdb.execute('UPDATE article_path SET count = count + 1 WHERE src = ? AND dst = ?', (article_path[src], article_path[dst]))
+        self.dropperdb.execute('UPDATE article_path SET count = count + 1, timestamp = ? WHERE src = ? AND dst = ?', (current_time, article_path[src], article_path[dst]))
 
   def run(self):
     # only called from the outside via handler_progress_incoming()
