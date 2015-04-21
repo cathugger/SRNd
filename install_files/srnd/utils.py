@@ -4,10 +4,13 @@ import re
 import string
 
 def basicHTMLencode(inputString):
+  return basicHTMLencodeNoStrip(inputString).strip(' \t\n\r')
+
+def basicHTMLencodeNoStrip(inputString):
   html_escape_table = (("&", "&amp;"), ('"', "&quot;"), ("'", "&apos;"), (">", "&gt;"), ("<", "&lt;"),)
   for x in html_escape_table:
     inputString = inputString.replace(x[0], x[1])
-  return inputString.strip(' \t\n\r')
+  return inputString
 
 def trydecode(msg):
   """Guess the encoding roulette"""
