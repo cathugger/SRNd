@@ -181,7 +181,6 @@ class SRNd(threading.Thread):
     self.dropper = dropper.dropper(
         thread_name='SRNd-dropper',
         logger=self.logger,
-        listener=self.socket,
         master=self,
         debug=self.config['dropper_debuglevel'],
         db_connector=self._db_manager.connect,

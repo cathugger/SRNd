@@ -18,7 +18,6 @@ class dropper(threading.Thread):
     threading.Thread.__init__(self)
     self.name = kwargs.get('thread_name', 'SRNd-dropper')
     self.loglevel = kwargs.get('debug', 2)
-    self.socket = kwargs.get('listener', None)
     self.SRNd = kwargs.get('master', None)
     self.logger = kwargs.get('logger', None)
     self.instance_name = kwargs.get('instance_name', 'SRNd')
