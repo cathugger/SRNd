@@ -25,51 +25,54 @@ class dropper(threading.Thread):
       raise Exception('[dropper] init error: value master is None')
     if self.logger is None:
       raise Exception('[dropper] init error: value logger is None')
-
-    self.db_version = 2
+    self.reqs = ['message-id', 'newsgroups', 'date', 'subject', 'from', 'path', 'x-i2p-desthash']
+    self.running = False
     self.watching = os.path.join(os.getcwd(), "incoming")
+    self.DATABASE_VERSION = 2
 
-    self.sqlite = kwargs['db_connector']('dropper', timeout=20)
-    self.sqlite_hasher = kwargs['db_connector']('hashes')
+    self.dropperdb = kwargs['db_connector']('dropper', timeout=20)
+    self.hashesdb = kwargs['db_connector']('hashes')
 
-    self.sqlite_hasher.execute('''CREATE TABLE IF NOT EXISTS article_hashes
+    self.hashesdb.execute('''CREATE TABLE IF NOT EXISTS article_hashes
                (message_id text PRIMARY KEY, message_id_hash text, sender_desthash text)''')
     try:
-      self.sqlite_hasher.execute('ALTER TABLE article_hashes ADD COLUMN sender_desthash text DEFAULT ""')
+      self.hashesdb.execute('ALTER TABLE article_hashes ADD COLUMN sender_desthash text DEFAULT ""')
     except sqlite3.OperationalError:
       pass
-    self.sqlite_hasher.execute('CREATE INDEX IF NOT EXISTS article_desthash_idx ON article_hashes(sender_desthash);')
-    self.sqlite_hasher.execute('CREATE INDEX IF NOT EXISTS article_hash_idx ON article_hashes(message_id_hash);')
-    self.sqlite_hasher.commit()
-    self.reqs = ['message-id', 'newsgroups', 'date', 'subject', 'from', 'path', 'x-i2p-desthash']
+    self.hashesdb.execute('CREATE INDEX IF NOT EXISTS article_desthash_idx ON article_hashes(sender_desthash);')
+    self.hashesdb.execute('CREATE INDEX IF NOT EXISTS article_hash_idx ON article_hashes(message_id_hash);')
+    self.hashesdb.commit()
+    self.update_dropperdb()
+
+  def update_dropperdb(self):
     try:
-      db_version = int(self.sqlite.execute("SELECT value FROM config WHERE key = ?", ("db_version",)).fetchone()[0])
-    except sqlite3.OperationalError:
+      db_version = int(self.dropperdb.execute('SELECT value FROM config WHERE key = "db_version"').fetchone()[0])
+    except sqlite3.OperationalError as e:
       db_version = 0
-    if db_version < self.db_version:
-      self.update_db(db_version)
-    self.running = False
+      self.log(self.logger.DEBUG, 'error while fetching db_version: {}. assuming new database'.format(e))
+    if db_version < self.DATABASE_VERSION:
+      self.log(self.logger.INFO, 'should update db from version {}'.format(db_version))
+      while db_version < self.DATABASE_VERSION:
+        self.log(self.logger.INFO, 'updating db from version {} to version {}'.format(db_version, db_version + 1))
+        self._update_db_from(db_version)
+        db_version += 1
+        self.dropperdb.execute('UPDATE config SET value = ? WHERE key = "db_version"', (db_version,))
+        self.dropperdb.commit()
 
-  def update_db(self, current_version):
-    self.log(self.logger.INFO, 'should update db from version {}'.format(current_version))
-    if current_version == 0:
-      self.sqlite.execute("CREATE TABLE config (key text PRIMARY KEY, value text)")
-      self.sqlite.execute('INSERT INTO config VALUES ("db_version","1")')
-
-      self.sqlite.execute('''CREATE TABLE IF NOT EXISTS groups
+  def _update_db_from(self, version):
+    if version == 0:
+      self.dropperdb.execute("CREATE TABLE config (key text PRIMARY KEY, value text)")
+      self.dropperdb.execute('INSERT INTO config VALUES ("db_version","0")')
+      self.dropperdb.execute('''CREATE TABLE IF NOT EXISTS groups
                  (group_id INTEGER PRIMARY KEY AUTOINCREMENT, group_name text UNIQUE, lowest_id INTEGER, highest_id INTEGER, article_count INTEGER, flag text, group_added_at INTEGER, last_update INTEGER)''')
-      self.sqlite.execute('''CREATE TABLE IF NOT EXISTS articles
+      self.dropperdb.execute('''CREATE TABLE IF NOT EXISTS articles
                  (message_id text, group_id INTEGER, article_id INTEGER, received INTEGER, PRIMARY KEY (article_id, group_id))''')
-
-      self.sqlite.execute('CREATE INDEX IF NOT EXISTS article_idx ON articles(message_id);')
-      self.sqlite.commit()
-      current_version = 1
-    if current_version == 1:
-      self.sqlite.execute('CREATE TABLE article_path (id INTEGER PRIMARY KEY, src TEXT, dst TEXT, count INTEGER DEFAULT 0, UNIQUE(src, dst))')
-      self.sqlite.execute('CREATE INDEX article_path_ab_idx ON article_path(src, dst)')
-      self.sqlite.execute('UPDATE config SET value = "2" WHERE key = "db_version"')
-      self.sqlite.commit()
-      current_version = 2
+      self.dropperdb.execute('CREATE INDEX IF NOT EXISTS article_idx ON articles(message_id);')
+    elif version == 1:
+      self.dropperdb.execute('CREATE TABLE article_path (id INTEGER PRIMARY KEY, src TEXT, dst TEXT, count INTEGER DEFAULT 0, UNIQUE(src, dst))')
+      self.dropperdb.execute('CREATE INDEX article_path_ab_idx ON article_path(src, dst)')
+    else:
+      raise Exception('Handler for update from {} version not present in code. Fix it!'.format(version))
 
   def handler_progress_incoming(self, signum, frame):
     self.retry = self.busy
@@ -102,7 +105,7 @@ class dropper(threading.Thread):
             os.remove(link)
             continue
           elif self.loglevel < self.logger.WARNING:
-            if int(self.sqlite.execute('SELECT count(message_id) FROM articles WHERE message_id = ?', (message_id,)).fetchone()[0]) != 0:
+            if int(self.dropperdb.execute('SELECT count(message_id) FROM articles WHERE message_id = ?', (message_id,)).fetchone()[0]) != 0:
               self.log(self.logger.INFO, 'article \'{}\' was blacklisted and is moved back into incoming/. processing again'.format(message_id))
         self._article_path_up(article_path)
         self.write_article(message_id, compile_header, fd)
@@ -207,8 +210,8 @@ class dropper(threading.Thread):
         o.write(body_line)
 
   def data_update(self, message_id, groups, desthash):
-    self.sqlite_hasher.execute('INSERT OR IGNORE INTO article_hashes VALUES (?, ?, ?)', (message_id, sha1(message_id).hexdigest(), desthash))
-    self.sqlite_hasher.commit()
+    self.hashesdb.execute('INSERT OR IGNORE INTO article_hashes VALUES (?, ?, ?)', (message_id, sha1(message_id).hexdigest(), desthash))
+    self.hashesdb.commit()
 
     current_time = int(time.time())
     for group in groups:
@@ -218,27 +221,27 @@ class dropper(threading.Thread):
         # FIXME don't rely on exists(group_dir) if directory is out of sync with database
         # TODO try to read article_id as well
         article_id = 1
-        self.sqlite.execute('INSERT OR IGNORE INTO groups VALUES (?, ?, ?, ?, ?, ?, ?, ?)', (None, group, 1, 1, 0, 'y', current_time, current_time))
-        group_id = int(self.sqlite.execute('SELECT group_id FROM groups WHERE group_name = ?', (group,)).fetchone()[0])
-        self.sqlite.execute('INSERT OR IGNORE INTO articles VALUES (?, ?, ?, ?)', (message_id, group_id, article_id, current_time))
+        self.dropperdb.execute('INSERT OR IGNORE INTO groups VALUES (?, ?, ?, ?, ?, ?, ?, ?)', (None, group, 1, 1, 0, 'y', current_time, current_time))
+        group_id = int(self.dropperdb.execute('SELECT group_id FROM groups WHERE group_name = ?', (group,)).fetchone()[0])
+        self.dropperdb.execute('INSERT OR IGNORE INTO articles VALUES (?, ?, ?, ?)', (message_id, group_id, article_id, current_time))
         self.log(self.logger.DEBUG, 'creating directory {}'.format(group_dir))
         os.mkdir(group_dir)
       else:
         # FIXME don't rely on exists(group_dir) if directory is out of sync with database
         try:
-          group_id = int(self.sqlite.execute('SELECT group_id FROM groups WHERE group_name = ?', (group,)).fetchone()[0])
+          group_id = int(self.dropperdb.execute('SELECT group_id FROM groups WHERE group_name = ?', (group,)).fetchone()[0])
         except TypeError:
           if self.loglevel < self.logger.CRITICAL:
             self.log(self.logger.ERROR, 'unable to get group_id for group {}'.format(group))
             sys.exit(1)
-        article_id = self.sqlite.execute('SELECT article_id FROM articles WHERE message_id = ? AND group_id = ?', (message_id, group_id)).fetchone()
+        article_id = self.dropperdb.execute('SELECT article_id FROM articles WHERE message_id = ? AND group_id = ?', (message_id, group_id)).fetchone()
         if article_id is None:
-          article_id = int(self.sqlite.execute('SELECT highest_id FROM groups WHERE group_name = ?', (group,)).fetchone()[0]) + 1
-          self.sqlite.execute('INSERT INTO articles VALUES (?, ?, ?, ?)', (message_id, group_id, article_id, current_time))
-          self.sqlite.execute('UPDATE groups SET highest_id = ?, article_count = article_count + 1, last_update = ? WHERE group_id = ?', (article_id, current_time, group_id))
+          article_id = int(self.dropperdb.execute('SELECT highest_id FROM groups WHERE group_name = ?', (group,)).fetchone()[0]) + 1
+          self.dropperdb.execute('INSERT INTO articles VALUES (?, ?, ?, ?)', (message_id, group_id, article_id, current_time))
+          self.dropperdb.execute('UPDATE groups SET highest_id = ?, article_count = article_count + 1, last_update = ? WHERE group_id = ?', (article_id, current_time, group_id))
         else:
           article_id = article_id[0]
-      self.sqlite.commit()
+      self.dropperdb.commit()
 
       article_link = '../../' + os.path.join('articles', message_id)
       group_link = os.path.join(group_dir, str(article_id))
@@ -280,8 +283,8 @@ class dropper(threading.Thread):
     for src in range(len(article_path) - 1, 0, -1):
       dst = src - 1
       if len(article_path[src]) > 2 and len(article_path[dst]) > 2:
-        self.sqlite.execute('INSERT OR IGNORE INTO article_path (src, dst) VALUES (?, ?)', (article_path[src], article_path[dst]))
-        self.sqlite.execute('UPDATE article_path SET count = count + 1 WHERE src = ? AND dst = ?', (article_path[src], article_path[dst]))
+        self.dropperdb.execute('INSERT OR IGNORE INTO article_path (src, dst) VALUES (?, ?)', (article_path[src], article_path[dst]))
+        self.dropperdb.execute('UPDATE article_path SET count = count + 1 WHERE src = ? AND dst = ?', (article_path[src], article_path[dst]))
 
   def run(self):
     # only called from the outside via handler_progress_incoming()
