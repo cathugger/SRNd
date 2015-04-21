@@ -19,7 +19,7 @@ from hashlib import sha1, sha512
 from urllib import unquote
 from urlparse import urlparse, parse_qs
 
-from srnd.utils import basicHTMLencode
+from srnd.utils import basicHTMLencode, basicHTMLencodeNoStrip
 
 import nacl.signing
 
@@ -704,11 +704,11 @@ class censor(BaseHTTPRequestHandler):
     self._substitute_and_send(self.origin.t_engine_stats, stats_data, 'send_stats')
 
   def send_message(self, message_id):
+    message_id = os.path.basename(message_id)
     self.send_response(200)
     self.send_header('Content-type', 'text/html')
     self.end_headers()
-    #out = '<html><head><link type="text/css" href="/styles.css" rel="stylesheet"><style type="text/css">body { margin: 10px; margin-top: 20px; font-family: monospace; font-size: 9pt; } .navigation { background: #101010; padding-top: 19px; position: fixed; top: 0; width: 100%; }</style></head><body>%%navigation%%<pre>'
-    out = '<html><head><title>view message</title><link type="text/css" href="/styles.css" rel="stylesheet"></head><body class="mod">%%navigation%%<pre>'
+    out = '<html><head><title>view message</title><link type="text/css" href="/styles.css" rel="stylesheet"></head><body class="mod">%%navigation%%<pre>\n'
     out = out.replace("%%navigation%%", self.__get_navigation(''))
     self.wfile.write(out.encode('UTF-8'))
 
@@ -719,7 +719,7 @@ class censor(BaseHTTPRequestHandler):
       f = codecs.open(os.path.join('articles', message_id), 'r', 'UTF-8')
       self.__write_nntp_article(f)
     else:
-      self.wfile.write('message_id \'%s\' not found' % message_id.replace('<', '&lt;').replace('>', '&gt;'))
+      self.wfile.write('message_id \'%s\' not found' % basicHTMLencode(message_id))
     self.wfile.write('</pre></body></html>')
 
   def send_settings(self, board_id=''):
@@ -1035,6 +1035,8 @@ class censor(BaseHTTPRequestHandler):
   def __write_nntp_article(self, f):
     attachment = re.compile('^[cC]ontent-[tT]ype: ([a-zA-Z0-9/]+).*name="([^"]+)')
     attachment_details = None
+    title_ = u'" title="{}" />\n'
+    img_ = u'\n<img src="data:{};base64,\n'
     base64_ = False
     writing_base64 = False
     for line in f:
@@ -1042,23 +1044,18 @@ class censor(BaseHTTPRequestHandler):
         attachment_details = attachment.match(line)
       elif line.lower().startswith('content-transfer-encoding: base64'):
         base64_ = True
-      if len(line) == 1:
-        if base64_ == True and attachment_details != None:
-          self.wfile.write('\n<img src="data:%s;base64,' % attachment_details.group(1))
-          writing_base64 = True
-        else:
-          self.wfile.write(line)
+      elif len(line) == 1 and base64_ and attachment_details is not None:
+        self.wfile.write(img_.format(basicHTMLencode(attachment_details.group(1))).encode('UTF-8'))
+        writing_base64 = True
       elif writing_base64 and line.startswith('--'):
-        self.wfile.write('" title="%s" width="100%%" />\n' % attachment_details.group(2).replace('<', '&lt;').replace('>', '&gt;').encode('UTF-8'))
+        self.wfile.write(title_.format(basicHTMLencode(attachment_details.group(2))).encode('UTF-8'))
         writing_base64 = False
         base64_ = False
-      elif writing_base64:
-        self.wfile.write(line.encode('UTF-8'))
       else:
-        self.wfile.write(line.replace('<', '&lt;').replace('>', '&gt;').encode('UTF-8'))
+        self.wfile.write(basicHTMLencodeNoStrip(line).encode('UTF-8'))
     f.close()
     if writing_base64:
-      self.wfile.write('" title="%s" />\n' % attachment_details.group(2).replace('<', '&lt;').replace('>', '&gt;'))
+      self.wfile.write(title_.format(basicHTMLencode(attachment_details.group(2))).encode('UTF-8'))
 
   def __stats_frontends(self):
     hosts = list()
