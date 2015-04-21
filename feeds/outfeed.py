@@ -4,7 +4,6 @@ import os
 import Queue
 import socket
 import time
-import traceback
 from hashlib import sha512
 from binascii import hexlify, unhexlify
 
@@ -96,24 +95,10 @@ class OutFeed(feed.BaseFeed):
         # tunnelendpoint already connected. wtf? only happened via proxy
         # FIXME debug this
         self.log(self.logger.ERROR, '%s: setting connected = True' % e)
-      elif e.errno in (32, 111, 113):
-        # 32 Broken pipe
-        # 111 Connection refused
-        # 113 no route to host
-        self.con_broken = e
       else:
-        self.log(self.logger.ERROR, 'unhandled initial connect socket.error: %s' % e)
-        self.log(self.logger.ERROR, traceback.format_exc())
-        self.con_broken = e
+        self._socket_exception(e)
     except sockssocket.ProxyError as e:
-      self.con_broken = '[Errno {}] {}'.format(*e.message)
-      if e.message[0] in (0, 4):
-        # 0 - connection closed unexpectedly
-        # 4 - Host unreachable
-        pass
-      else:
-        self.log(self.logger.ERROR, 'unhandled initial connect ProxyError: %s' % self.con_broken)
-        self.log(self.logger.ERROR, traceback.format_exc())
+      self._proxy_exception(e)
 
   def _handle_connect(self, reconnect=False):
     """Work while not connected and outfeed running. Return poll if connect else None"""

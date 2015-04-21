@@ -176,32 +176,43 @@ class BaseFeed(threading.Thread):
       if mode == 'send':
         return self.socket.send(data)
       elif mode == 'recv' and not self.in_buffer.add(self.socket.recv(self.buffersize)):
-        self.con_broken = 'get zero data from socket'
+        self.con_broken = 'socket connection closed'
     except socket.error as e:
       self.log(self.logger.DEBUG, 'exception at socket.recv(): socket.error.errno: %s, socket.error: %s' % (e.errno, e))
       if e.errno == 11:
         # 11 Resource temporarily unavailable
         time.sleep(0.1)
-      elif e.errno in (32, 104, 110):
-        # 32 Broken pipe
-        # 104 Connection reset by peer
-        # 110 Connection time out
-        self.con_broken = e
       else:
-        # FIXME: different OS might produce different error numbers. make this portable.
-        self.log(self.logger.ERROR, 'got an unknown socket error at mode "{}". {}: {}'.format(mode, e.errno, e))
-        self.log(self.logger.ERROR, traceback.format_exc())
-        self.con_broken = e
+        self._socket_exception(e)
     except sockssocket.ProxyError as e:
-      self.con_broken = '[Errno {}] {}'.format(*e.message)
-      if e.message[0] in (0, 4):
-        # 0 - connection closed unexpectedly
-        # 4 - Host unreachable
-        pass
-      else:
-        self.log(self.logger.ERROR, 'got an unknown sockssocket.proxy error at mode "{}". {}: {}'.format(mode, e.message[0], e.message[1]))
-        self.log(self.logger.ERROR, traceback.format_exc())
+      self._proxy_exception(e)
     return 0
+
+  def _socket_exception(self, except_):
+    """Base socket exception"""
+    self.con_broken = except_
+    if except_.errno in (32, 104, 110, 111, 113):
+      # 32 Broken pipe
+      # 104 Connection reset by peer
+      # 110 Connection time out
+      # 111 Connection refused
+      # 113 no route to host
+      pass
+    else:
+      # FIXME: different OS might produce different error numbers. make this portable.
+      self.log(self.logger.ERROR, 'got an unknown socket error. {}: {}'.format(except_.errno, except_))
+      self.log(self.logger.ERROR, traceback.format_exc())
+
+  def _proxy_exception(self, except_):
+    """Base proxy exception"""
+    self.con_broken = '[Errno {}] {}'.format(*except_.message)
+    if except_.message[0] in (0, 4):
+      # 0 - connection closed unexpectedly
+      # 4 - Host unreachable
+      pass
+    else:
+      self.log(self.logger.ERROR, 'got an unknown sockssocket.proxy error. {}: {}'.format(except_.message[0], except_.message[1]))
+      self.log(self.logger.ERROR, traceback.format_exc())
 
   def _socket_close(self):
     self._socket_release('close')
