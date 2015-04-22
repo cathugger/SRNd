@@ -526,15 +526,17 @@ class SRNd(threading.Thread):
 
   def update_plugins(self):
     self.log(self.logger.INFO, 'importing plugins..')
-    new_plugins = list()
+    plugins_added = 0
+    plugins_removed = 0
+    all_plugins = set()
     current_plugin = None
-    errors = False
     for plugin in self._list_config_files(os.path.join('config', 'hooks', 'plugins')):
       link = os.path.join('config', 'hooks', 'plugins', plugin)
       plugin_path = os.path.join('plugins', plugin)
       if not plugin_path in sys.path:
         sys.path.append(plugin_path)
       name = 'plugin-' + plugin
+      all_plugins.add(name)
       if name in self.plugins:
         continue
       args = self._config_reader(link)
@@ -547,20 +549,31 @@ class SRNd(threading.Thread):
       try:
         current_plugin = __import__(plugin)
         self.plugins[name] = current_plugin.main(name, self.logger, args)
-        new_plugins.append(name)
+        plugins_added += 1
       except Exception as e:
-        errors = True
         self.log(self.logger.ERROR, 'error while importing %s: %s' % (name, e))
+        self.log(self.logger.ERROR, traceback.format_exc())
         if name in self.plugins:
           del self.plugins[name]
+        all_plugins.discard(name)
         continue
     del current_plugin
-    if errors:
-      self.log(self.logger.CRITICAL, 'could not import at least one plugin. Terminating.')
-      self.log(self.logger.CRITICAL, traceback.format_exc())
-      exit(1)
-    self.log(self.logger.INFO, 'added %i new plugins' % len(new_plugins))
-    # TODO: stop and remove plugins not listed at config/plugins anymore
+    for name in [xx for xx in self.plugins if xx not in all_plugins]:
+      if self._close_plugin(name):
+        del self.plugins[name]
+        plugins_removed += 1
+    if plugins_added > 0:
+      self.log(self.logger.INFO, 'added {} plugins'.format(plugins_added))
+    if plugins_removed > 0:
+      self.log(self.logger.INFO, 'removed {} plugins'.format(plugins_removed))
+
+  def start_plugins(self):
+    to_start = [xx for xx in self.plugins if not self.plugins[xx].isAlive()]
+    if len(to_start) > 0:
+      self.log(self.logger.INFO, 'starting {} plugins..'.format(len(to_start)))
+      for plugin in to_start:
+        self.plugins[plugin].start()
+        time.sleep(0.1)
 
   def _extract_server_link(self, outfeed, ipv6=False):
     """Return host, port from host:port. return None, if wrong format"""
@@ -664,6 +677,7 @@ class SRNd(threading.Thread):
   def update_hooks_outfeeds_plugins(self, signum, frame):
     self.update_outfeeds()
     self.update_plugins()
+    self.start_plugins()
     self.update_hooks()
 
   @staticmethod
@@ -858,17 +872,15 @@ class SRNd(threading.Thread):
 
   def internal_ctl(self, args):
     self.log(self.logger.DEBUG, 'Got control request {}'.format(args))
-    # reload hooks
-    if args['action'] == 'update':
-      if args.get('hook') == 'hooks':
-        self.update_hooks()
-        return True
-      elif args.get('hook') == 'outfeed':
-        self.update_outfeeds()
-        return True
-      elif args.get('hook') == 'plugin':
-        #self.update_plugin
-        pass
+    updates = {'hooks': self.update_hooks, 'outfeed': self.update_outfeeds, 'plugin': self.update_plugins}
+    if args['action'] == 'update' and args.get('hook') in updates:
+      # reload any hooks
+      updates[args['hook']]()
+      return True
+    elif args['action'] == 'start' and args.get('hook') == 'plugin':
+      # start not running plugins
+      self.start_plugins()
+      return True
     # resync
     elif args['action'] == 'sync' and args.get('hook') in ('plugin', 'outfeed', None):
       # reload trackdb
@@ -893,12 +905,7 @@ class SRNd(threading.Thread):
       if args.get('hook') == 'plugin':
         for plugin in [xx for xx in self.plugins]:
           if plugin in args.get('targets', plugin):
-            self.plugins[plugin].shutdown()
-            c_count = 0
-            while self.plugins[plugin].isAlive() and c_count < wait_count:
-              c_count += 1
-              time.sleep(wait_time)
-            if not self.plugins[plugin].isAlive():
+            if self._close_plugin(plugin):
               del self.plugins[plugin]
               status = True
       return status
@@ -911,11 +918,7 @@ class SRNd(threading.Thread):
     self.feed_db = dict()
     self.update_outfeeds()
     self._load_outfeed_db()
-    if len(self.plugins) > 0:
-      self.log(self.logger.INFO, 'starting plugins..')
-      for plugin in self.plugins:
-        self.plugins[plugin].start()
-      time.sleep(0.1)
+    self.start_plugins()
     self.update_hooks()
 
     self.infeeds_config = self._load_infeeds_config()
@@ -1117,6 +1120,20 @@ class SRNd(threading.Thread):
   def watching(self):
     return self.dropper.watching
 
+  def _close_plugin(self, name):
+    wait_count = 50
+    wait_time = 0.2
+    c_count = 0
+    self.plugins[name].shutdown()
+    while self.plugins[name].isAlive() and c_count < wait_count:
+      c_count += 1
+      time.sleep(wait_time)
+    if self.plugins[name].isAlive():
+      self.log(self.logger. ERROR, '{} does not respond to shutdown in {} second'.format(name, int(c_count * wait_time)))
+      return False
+    else:
+      return True
+
   def shutdown(self):
     self.dropper.running = False
     self.running = False
@@ -1124,7 +1141,7 @@ class SRNd(threading.Thread):
     self.socket.shutdown(socket.SHUT_RDWR)
     self.log(self.logger.INFO, 'closing plugins..')
     for plugin in self.plugins:
-      self.plugins[plugin].shutdown()
+      self._close_plugin(plugin)
     self.log(self.logger.INFO, 'closing feeds..')
     feeds = list()
     for name in self.feeds:
