@@ -865,6 +865,7 @@ class censor(BaseHTTPRequestHandler):
 
   def _srnd_control(self, data):
     status = list()
+    update_hooks_ = {'action': 'update', 'hook': 'hooks'}
     # reload outfeed
     if data['action'] == 'reload' and data.get('hook') == 'outfeed':
       # is None - all outfeed
@@ -873,7 +874,7 @@ class censor(BaseHTTPRequestHandler):
         status.append('kill outfeed(s)')
       if not self.origin.SRNd_ctl({'action': 'update', 'hook': 'outfeed'}):
         status.append('update outfeeds')
-      if not self.origin.SRNd_ctl({'action': 'update', 'hook': 'hooks'}):
+      if not self.origin.SRNd_ctl(update_hooks_):
         status.append('update hooks')
       if not self.origin.SRNd_ctl({'action': 'sync', 'hook': 'outfeed', 'targets': target}):
         status.append('resync outfeed(s)')
@@ -885,12 +886,20 @@ class censor(BaseHTTPRequestHandler):
       # thread not killing self
       elif data['target'] == 'censor':
         status.append('What is dead may never die.')
-      if not self.origin.SRNd_ctl({'action': 'update', 'hook': 'hooks'}):
+      if not self.origin.SRNd_ctl(update_hooks_):
         status.append('update hooks')
     # reload hooks
     elif data['action'] == 'reload' and data.get('hook') == 'hooks':
-      if not self.origin.SRNd_ctl({'action': 'update', 'hook': 'hooks'}):
+      if not self.origin.SRNd_ctl(update_hooks_):
         status.append('update hooks')
+    elif data['action'] == 'update' and data.get('hook') == 'plugin':
+      # update and start plugins
+      if not self.origin.SRNd_ctl({'action': 'update', 'hook': 'plugin'}):
+        status.append('update plugin')
+      if not self.origin.SRNd_ctl(update_hooks_):
+        status.append('update hooks')
+      if not self.origin.SRNd_ctl({'action': 'start', 'hook': 'plugin'}):
+        status.append('start plugins')
     if not status:
       self.send_redirect(self.path.split('?', 1)[0], 'Success!', 2)
     else:
