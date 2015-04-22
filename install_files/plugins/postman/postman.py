@@ -866,6 +866,7 @@ class main(threading.Thread):
   def shutdown(self):
     if self.serving:
       self.httpd.shutdown()
+      self.httpd.socket.close()
     else:
       self.log(self.logger.INFO, 'bye')
 
