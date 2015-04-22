@@ -33,72 +33,43 @@ class postman(BaseHTTPRequestHandler):
     BaseHTTPRequestHandler.__init__(self, request, client_address, origin)
 
   def do_POST(self):
-    cookie = self.headers.get('Cookie')
-    if cookie:
-      cookie = cookie.strip()
-      for item in cookie.split(';'):
-        if item.startswith('sid='):
-          cookie = item
-      cookie = cookie.strip().split('=', 1)[1]
-      if cookie in self.origin.spammers:
-        self.origin.log(self.origin.logger.WARNING, 'POST recognized an earlier spammer! %s' % cookie)
-        self.origin.log(self.origin.logger.WARNING, self.headers)
-        self.send_response(200)
-        self.send_header('Content-type', 'text/html')
-        self.end_headers()
-        self.wfile.write('<html><body>')
-        for y in range(0, 100):
-          #self.wfile.write('<img src="/img/%s.png" style="width: 100px;" />' % ''.join(random.choice(self.origin.captcha_alphabet) for x in range(16)))
-          self.wfile.write('<iframe src="/incoming/%s"></iframe>' % ''.join(random.choice(self.origin.captcha_alphabet) for x in range(16)))
-          #time.sleep(0.1)
-        self.wfile.write('</body></html>')
-        return
-        # TODO: trap it: while True; wfile.write(random*x); sleep 1; done
-        # TODO: ^ requires multithreaded BaseHTTPServer
-        if self.origin.fake_ok:
-          self.exit_redirect(2, '/')
-        return
+    cookie = self.get_cookie('sid')
+    if cookie and cookie in self.origin.spammers:
+      self.origin.log(self.origin.logger.WARNING, 'POST recognized an earlier spammer! %s' % cookie)
+      self.origin.log(self.origin.logger.WARNING, self.headers)
+      if self.origin.fake_ok:
+        self.exit_redirect(2, '/')
+      else:
+        self._spammers_spam()
+      return
+      # TODO: trap it: while True; wfile.write(random*x); sleep 1; done
+      # TODO: ^ requires multithreaded BaseHTTPServer
     self.path = unquote(self.path)
     if self.path == '/incoming':
       if self.origin.captcha_verification:
         self.send_captcha(message=self.get_random_quote())
       else:
         self.handleNewArticle()
-      return
-    if self.path == '/incoming/verify':
+    elif self.path == '/incoming/verify':
       self.handleVerify()
-      return
-    self.origin.log(self.origin.logger.WARNING, "illegal POST access: %s" % self.path)
-    self.origin.log(self.origin.logger.WARNING, self.headers)
-    self.exit_redirect(9, '/overview.html', False, 'nope')
+    else:
+      self.origin.log(self.origin.logger.WARNING, "illegal POST access: %s" % self.path)
+      self.origin.log(self.origin.logger.WARNING, self.headers)
+      self.exit_redirect(9, '/overview.html', False, 'nope')
 
   def do_GET(self):
-    cookie = self.headers.get('Cookie')
-    if cookie:
-      cookie = cookie.strip()
-      for item in cookie.split(';'):
-        if item.startswith('sid='):
-          cookie = item
-      cookie = cookie.strip().split('=', 1)[1]
-      if cookie in self.origin.spammers:
-        self.origin.log(self.origin.logger.WARNING, 'GET recognized an earlier spammer trying to access %s! %s' % (self.path, cookie))
-        self.send_response(200)
-        self.send_header('Content-type', 'text/html')
-        self.end_headers()
-        self.wfile.write('<html><body>')
-        for y in range(0, 100):
-          #self.wfile.write('<img src="/img/%s.png" style="width: 100px;" />' % ''.join(random.choice(self.origin.captcha_alphabet) for x in range(16)))
-          self.wfile.write('<iframe src="/incoming/%s"></iframe>' % ''.join(random.choice(self.origin.captcha_alphabet) for x in range(16)))
-          #time.sleep(0.1)
-        self.wfile.write('</body></html>')
-        return
+    cookie = self.get_cookie('sid')
+    if cookie and cookie in self.origin.spammers:
+      self.origin.log(self.origin.logger.WARNING, 'GET recognized an earlier spammer trying to access %s! %s' % (self.path, cookie))
+      self._spammers_spam()
+      return
     self.path = unquote(self.path)
     if self.path == '/incoming/verify':
       self.send_captcha()
-      return
-    self.origin.log(self.origin.logger.WARNING, "illegal GET access: %s" % self.path)
-    self.origin.log(self.origin.logger.WARNING, self.headers)
-    self.exit_redirect(9, '/overview.html', False, 'nope')
+    else:
+      self.origin.log(self.origin.logger.WARNING, "illegal GET access: %s" % self.path)
+      self.origin.log(self.origin.logger.WARNING, self.headers)
+      self.exit_redirect(9, '/overview.html', False, 'nope')
 
   def die(self, message=''):
     self.origin.log(self.origin.logger.WARNING, "%s:%i wants to fuck around, %s" % (self.client_address[0], self.client_address[1], message))
@@ -123,7 +94,7 @@ class postman(BaseHTTPRequestHandler):
   def log_request(self, *code):
     return
 
-  def log_message(self, format_, *args):
+  def log_message(self, _, *args):
     return
 
   def get_random_quote(self):
@@ -134,15 +105,20 @@ class postman(BaseHTTPRequestHandler):
     msg += '<br/><b><font style="color: red;">failed. hard.</font></b>'
     self.send_captcha(msg, vars_)
 
-  def handleVerify(self):
+  def _get_post_vars(self):
+    contentType = 'Content-Type' in self.headers and self.headers['Content-Type'] or 'text/plain'
     post_vars = FieldStorage(
-      fp=self.rfile,
-      headers=self.headers,
-      environ={
-        'REQUEST_METHOD':'POST',
-        'CONTENT_TYPE':self.headers['Content-Type'],
-      }
+        fp=self.rfile,
+        headers=self.headers,
+        environ={
+            'REQUEST_METHOD': 'POST',
+            'CONTENT_TYPE': contentType
+        }
     )
+    return post_vars
+
+  def handleVerify(self):
+    post_vars = self._get_post_vars()
     for item in ('expires', 'hash', 'solution'):
       if item not in post_vars:
         self.failCaptcha(post_vars)
@@ -170,6 +146,17 @@ class postman(BaseHTTPRequestHandler):
       return
     self.failCaptcha(post_vars)
 
+  def _spammers_spam(self):
+    self.send_response(200)
+    self.send_header('Content-type', 'text/html')
+    self.end_headers()
+    self.wfile.write('<html><body>')
+    for y in range(0, 100):
+      #self.wfile.write('<img src="/img/%s.png" style="width: 100px;" />' % ''.join(random.choice(self.origin.captcha_alphabet) for x in range(16)))
+      self.wfile.write('<iframe src="/incoming/%s"></iframe>' % ''.join(random.choice(self.origin.captcha_alphabet) for x in range(16)))
+      #time.sleep(0.1)
+    self.wfile.write('</body></html>')
+
   def get_cookie(self, cookie_name):
     cookie = self.headers.get('Cookie')
     if cookie:
@@ -185,15 +172,7 @@ class postman(BaseHTTPRequestHandler):
     failed = True
     if not post_vars:
       failed = False
-      contentType = 'Content-Type' in self.headers and self.headers['Content-Type'] or 'text/plain'
-      post_vars = FieldStorage(
-        fp=self.rfile,
-        headers=self.headers,
-        environ={
-          'REQUEST_METHOD':'POST',
-          'CONTENT_TYPE': contentType
-        }
-      )
+      post_vars = self._get_post_vars()
     # someone wants to fuck around
     if not 'frontend' in post_vars:
       self.die('frontend not in post_vars')
@@ -205,7 +184,7 @@ class postman(BaseHTTPRequestHandler):
     #  # FIXME add ^ allow_reply_bypass to frontend configuration
     #  if self.origin.captcha_bypass_after_timestamp_reply < int(time.time()):
     #    self.origin.log(self.origin.logger.INFO, 'bypassing captcha for reply')
-    #    self.handleNewArticle(post_vars) 
+    #    self.handleNewArticle(post_vars)
     #    return
     if self.origin.receive_from_friends > 0:
       user_cookie = self.get_cookie('ananas')
@@ -291,15 +270,7 @@ class postman(BaseHTTPRequestHandler):
 
   def handleNewArticle(self, post_vars=None, user_cookie=None):
     if not post_vars:
-      contentType = 'Content-Type' in self.headers and self.headers['Content-Type'] or 'text/plain'
-      post_vars = FieldStorage(
-        fp=self.rfile,
-        headers=self.headers,
-        environ={
-          'REQUEST_METHOD':'POST',
-          'CONTENT_TYPE': contentType
-        }
-      )
+      post_vars = self._get_post_vars()
     if not 'frontend' in post_vars:
       self.die('frontend not in post_vars')
       return
@@ -452,10 +423,7 @@ class postman(BaseHTTPRequestHandler):
       redirect_target = '/' + redirect_target
     boundary = ''.join(random.choice(string.ascii_letters + string.digits) for x in range(40))
     date = datetime.utcnow().strftime('%a, %d %b %Y %H:%M:%S +0000')
-    try:
-      i2p_desthash = self.headers.get('X-I2P-DestHash')
-    except:
-      i2p_desthash = 'non-i2p'
+    i2p_desthash = self.headers.get('X-I2P-DestHash', 'non-i2p')
     if self.origin.i2p_spamprotect and user_cookie is None:
       if i2p_desthash == 'non-i2p' or not self.origin.allow_this_desthash(i2p_desthash):
         self.die('This frontend uses hardened spamprotect. Come back one hour later.')
@@ -540,7 +508,6 @@ class postman(BaseHTTPRequestHandler):
       if e.errno == 32:
         self.origin.log(self.origin.logger.DEBUG, 'broken pipe: %s' % e)
         # Broken pipe
-        pass
       else:
         self.origin.log(self.origin.logger.WARNING, 'unhandled exception while processing new post: %s' % e)
         self.origin.log(self.origin.logger.WARNING, traceback.format_exc())
@@ -568,6 +535,7 @@ class main(threading.Thread):
     self.serving = False
     self.sync_on_startup = False
     self._db_connector = args['db_connector']
+    self.httpd = None
     if 'debug' not in args:
       self.loglevel = self.logger.INFO
       self.log(self.logger.DEBUG, 'debuglevel not defined, using default of debug = %i' % self.loglevel)
@@ -579,7 +547,7 @@ class main(threading.Thread):
           self.log(self.logger.WARNING, 'debuglevel not between 0 and 5, using default of debug = %i' % self.loglevel)
         else:
           self.log(self.logger.DEBUG, 'using debuglevel %i' % self.loglevel)
-      except ValueError as e:
+      except ValueError:
         self.loglevel = self.logger.INFO
         self.log(self.logger.WARNING, 'debuglevel not between 0 and 5, using default of debug = %i' % self.loglevel)
     if __name__ != '__main__':
@@ -597,7 +565,7 @@ class main(threading.Thread):
     self.ip = args['bind_ip']
     try:
       self.port = int(args['bind_port'])
-    except ValueError as e:
+    except ValueError:
       self.log(self.logger.CRITICAL, "%s is not a valid bind_port" % args['bind_port'])
       self.should_terminate = True
       self.log(self.logger.CRITICAL, 'terminating..')
@@ -634,8 +602,10 @@ class main(threading.Thread):
       if args['new_captcha'].lower() in ('true', 'yes'):
         self.new_captcha = 2
       else:
-        try: self.new_captcha = int(args['new_captcha'])
-        except: pass
+        try:
+          self.new_captcha = int(args['new_captcha'])
+        except ValueError:
+          pass
         if self.new_captcha is not None and (self.new_captcha < 0 or self.new_captcha > 100):
           self.new_captcha = 2
 
@@ -698,71 +668,13 @@ class main(threading.Thread):
       f.close()
 
     # read frontends
-    self.log(self.logger.DEBUG, 'reading frontend configuration..')
-    frontend_directory = args['frontend_directory']
-    if not os.path.isdir(frontend_directory):
-      self.log(self.logger.WARNING, '%s is not a directory' % frontend_directory)
-      # FIXME: die?
-    self.httpd.frontends = dict()
-    frontends = list()
-    for frontend in os.listdir(frontend_directory):
-      link = os.path.join(frontend_directory, frontend)
-      if not os.path.isfile(link):
-        continue
-      self.httpd.frontends[frontend] = dict()
-      f = open(link, 'r')
-      line = f.readline()
-      root = ''
-      this_is = 'dict'
-      while line != "":
-        if line[0] == '#' or line == '\n':
-          line = f.readline()
-          continue
-        line = line[:-1]
-        if line[0] == '(' and line[-1] == ')':
-          root = line[1:-1]
-          this_is = 'list'
-          self.httpd.frontends[frontend][root] = list()
-          line = f.readline()
-          continue
-        elif line[0] == '[' and line[-1] == ']':
-          root = line[1:-1]
-          self.httpd.frontends[frontend][root] = dict()
-          this_is = 'dict'
-          line = f.readline()
-          continue
-        if this_is == 'list':
-          self.httpd.frontends[frontend][root].append(line)
-        elif this_is == 'dict':
-          if not '=' in line:
-            self.log(self.logger.DEBUG, "error while parsing frontend '%s': no = in '%s' which was defined as dict." % (frontend, line))
-            continue
-          key = line.split('=', 1)[0]
-          value = line.split('=', 1)[1]
-          if root == '':
-            self.httpd.frontends[frontend][key] = value
-          else:
-            self.httpd.frontends[frontend][root][key] = value
-        line = f.readline()
-      f.close()
-      error = ''
-      for key in ('uid_host', 'required_fields', 'defaults'):
-        if key not in self.httpd.frontends[frontend]:
-          error += '  {0} not in frontend configuration file\n'.format(key)
-      if 'defaults' in self.httpd.frontends[frontend]:
-        for key in ('name', 'email', 'subject'):
-          if key not in self.httpd.frontends[frontend]['defaults']:
-            error += '  {0} not in defaults section of frontend configuration file\n'.format(key)
-      if error != '':
-        del self.httpd.frontends[frontend]
-        self.log(self.logger.WARNING, "removed frontend configuration for %s:\n%s" % (frontend, error[:-1]))
-      else:
-        frontends.append(frontend)
+    self.httpd.frontends = self._read_frontends(args['frontend_directory'])
+    self._sanitize_frontends(self.httpd.frontends)
 
-    if len(frontends) > 0:
-      self.log(self.logger.INFO, 'added %i frontends: %s' % (len(frontends), ', '.join(frontends)))
+    if len(self.httpd.frontends) > 0:
+      self.log(self.logger.INFO, 'added %i frontends: %s' % (len(self.httpd.frontends), ', '.join(self.httpd.frontends.keys())))
     else:
-      self.log(self.logger.WARNING, 'no valid frontends found in %s.' % frontend_directory)
+      self.log(self.logger.WARNING, 'no valid frontends found in %s.' % args['frontend_directory'])
       self.log(self.logger.WARNING, 'terminating..')
       self.should_terminate = True
       return
@@ -771,8 +683,6 @@ class main(threading.Thread):
     self.httpd.cookie_disallow_len = 512
     # 0 - userkey, 1 - current_postcount, 2 - last_message_time, 3 - last_message_id, 4 - expires
     self.httpd.cookie_cache = dict()
-    # This prevent mass load\save db call?!
-    self.httpd.db_busy = False
     self.httpd.cookie_db_last_update = 0
     # if user send more 10 message in 5 minut - autodisallow user key
     self.httpd.userkey_timelimit = 60 * 5
@@ -848,20 +758,84 @@ class main(threading.Thread):
         self.httpd.quotes = [q for q in f]
     else:
       self.httpd.quotes = (
-        '''<i>"Being stupid for no reason is very human-like. I will continue to spam."</i> <b>Spammer-kun</b>''',
-        '''<i>"I bet the jews did this..."</i> <b>wowaname</b>''',
-        '''<i>"Put a Donk on it."</i> <b>Krane</b>''',
-        '''<i>"All You're Base are belong to us."</i> <b>Eric Schmit</b>''',
-        '''<i>"I was just pretending to be retarded!!"</i> <b>Anonymous</b>''',
-        '''<i>"Sometimes I wish I didn't have a diaper fetish."</i> <b>wowaname</b>''',
-        '''<i>"DOES. HE. LOOK. LIKE. A BITCH?"</i> <b>Jesus Christ our Lord And Savior</b>''',
-        '''<i>"ENGLISH MOTHERFUCKA DO YOU SPEAK IT?"</i> <b>Jesus Christ our Lord And Savior</b>''',
-        '''<i>"We are watching you masturbate"</i> <b>NSA Internet Anonymity Specialist and Privacy Expert</b>''',
-        '''<i>"I want to eat apples and bananas"</i> <b>Cookie Monster</b>''',
-        '''<i>"Ponies are red, Twilight is blue, I have a boner, and so do you</i> <b>TriPh0rce, Maintainer of All You're Wiki</b>''',
-        '''<i>"C++ is a decent language and there is almost no reason to use C in the modern age"</i> <b>psi</b>''',
-        '''<i>"windows is full of aids"</i> <b>wowaname</b>'''
+          '''<i>"Being stupid for no reason is very human-like. I will continue to spam."</i> <b>Spammer-kun</b>''',
+          '''<i>"I bet the jews did this..."</i> <b>wowaname</b>''',
+          '''<i>"Put a Donk on it."</i> <b>Krane</b>''',
+          '''<i>"All You're Base are belong to us."</i> <b>Eric Schmit</b>''',
+          '''<i>"I was just pretending to be retarded!!"</i> <b>Anonymous</b>''',
+          '''<i>"Sometimes I wish I didn't have a diaper fetish."</i> <b>wowaname</b>''',
+          '''<i>"DOES. HE. LOOK. LIKE. A BITCH?"</i> <b>Jesus Christ our Lord And Savior</b>''',
+          '''<i>"ENGLISH MOTHERFUCKA DO YOU SPEAK IT?"</i> <b>Jesus Christ our Lord And Savior</b>''',
+          '''<i>"We are watching you masturbate"</i> <b>NSA Internet Anonymity Specialist and Privacy Expert</b>''',
+          '''<i>"I want to eat apples and bananas"</i> <b>Cookie Monster</b>''',
+          '''<i>"Ponies are red, Twilight is blue, I have a boner, and so do you</i> <b>TriPh0rce, Maintainer of All You're Wiki</b>''',
+          '''<i>"C++ is a decent language and there is almost no reason to use C in the modern age"</i> <b>psi</b>''',
+          '''<i>"windows is full of aids"</i> <b>wowaname</b>'''
       )
+
+  def _read_frontends(self, frontend_directory):
+    # read frontends
+    self.log(self.logger.DEBUG, 'reading frontend configuration..')
+    frontends = dict()
+    # list\dict switcher
+    selector = {
+        ('(', ')'): list,
+        ('[', ']'): dict
+    }
+    if not os.path.isdir(frontend_directory):
+      self.log(self.logger.WARNING, '%s is not a directory' % frontend_directory)
+      return frontends
+    for frontend in os.listdir(frontend_directory):
+      link = os.path.join(frontend_directory, frontend)
+      if frontend.startswith('.') or not os.path.isfile(link):
+        continue
+      frontends[frontend] = dict()
+      root = ''
+      this_is = dict
+      with open(os.path.join(frontend_directory, frontend), 'r') as fd:
+        for line in fd:
+          line = line.rstrip('\r\n')
+          if not line:
+            # empty line, reinit
+            root = ''
+            this_is = dict
+          elif line.startswith('#'):
+            # ignore comments
+            pass
+          elif len(line) > 2 and (line[0], line[-1]) in selector:
+            # detect list\dict block
+            root = line[1:-1]
+            this_is = selector[(line[0], line[-1])]
+            frontends[frontend][root] = this_is()
+          elif this_is is list:
+            # list block
+            frontends[frontend][root].append(line)
+          elif this_is is dict:
+            key, _, value = line.partition('=')
+            if key and value:
+              if root == '':
+                # oneline value
+                frontends[frontend][key] = value
+              else:
+                # block
+                frontends[frontend][root][key] = value
+            else:
+              self.log(self.logger.DEBUG, "error while parsing frontend '%s': no = in '%s' which was defined as dict." % (frontend, line))
+    return frontends
+
+  def _sanitize_frontends(self, frontends):
+    for frontend in [xx for xx in frontends]:
+      error = ''
+      for key in ('uid_host', 'required_fields', 'defaults'):
+        if key not in frontends[frontend]:
+          error += '  {0} not in frontend configuration file\n'.format(key)
+      if 'defaults' in frontends[frontend]:
+        for key in ('name', 'email', 'subject'):
+          if key not in frontends[frontend]['defaults']:
+            error += '  {0} not in defaults section of frontend configuration file\n'.format(key)
+      if error != '':
+        del frontends[frontend]
+        self.log(self.logger.WARNING, "removed frontend configuration for %s:\n%s" % (frontend, error[:-1]))
 
   def shutdown(self):
     if self.serving:
@@ -909,15 +883,18 @@ class main(threading.Thread):
 
   def run(self):
     if self.should_terminate:
+      if self.httpd is not None:
+        # close socket
+        self.httpd.socket.close()
       return
     self.db_version = 3
     self.httpd.sqlite = self._db_connector('hashes', timeout=60)
     if self.httpd.overchan_fake_id:
-      self.httpd.dropperdb =  self._db_connector('dropper', timeout=60)
+      self.httpd.dropperdb = self._db_connector('dropper', timeout=60)
     self.httpd.postmandb = self._db_connector('postman', timeout=60)
     try:
       db_version = int(self.httpd.postmandb.execute("SELECT value FROM config WHERE key = ?", ("db_version",)).fetchone()[0])
-    except Exception as e:
+    except sqlite3.OperationalError as e:
       self.log(self.logger.DEBUG, "error while fetching db_version: %s. assuming new database" % e)
       db_version = 0
     if db_version < self.db_version:
@@ -960,8 +937,10 @@ class main(threading.Thread):
     return self.captcha_verify(expires, solution_hash, guess.upper(), secret)
 
   def captcha_verify(self, expires, solution_hash, guess, secret):
-    try: expires = int(expires)
-    except: return False
+    try:
+      expires = int(expires)
+    except ValueError:
+      return False
     if int(time.time()) > expires or len(guess) != self.httpd.captcha_len or expires - int(time.time()) > 3600:
       return False
     if not expires % 3:
@@ -1039,30 +1018,25 @@ class main(threading.Thread):
     return False
 
   def load_cookie(self):
-    if self.wait_db_busy(): return
-    self.httpd.db_busy = True
     self.log(self.logger.INFO, "Load cookies from db")
     cookie_cache = dict()
     for row in self.httpd.postmandb.execute('SELECT cookie, userkey, expires FROM userkey WHERE cookie !="" AND allow = 1 AND expires > ?', (int(time.time()),)).fetchall():
       cookie_cache[row[0]] = [row[1], 0, '', '', int(row[2])]
     self.httpd.cookie_cache = cookie_cache
-    self.httpd.db_busy = False
 
   def save_cookie(self):
-    if len(self.httpd.cookie_cache) == 0 or self.wait_db_busy():
+    if not self.httpd.cookie_cache:
       return
     db_update = False
-    self.httpd.db_busy = True
     for cookie in self.httpd.cookie_cache:
       if self.httpd.cookie_cache[cookie][1] > 0:
         db_update = True
-        self.httpd.postmandb.execute('UPDATE userkey SET postcount = postcount + ?, last_message = ?, last_message_id = ? WHERE userkey = ?',
-          (self.httpd.cookie_cache[cookie][1], self.httpd.cookie_cache[cookie][2], self.httpd.cookie_cache[cookie][3], self.httpd.cookie_cache[cookie][0]))
+        self.httpd.postmandb.execute('UPDATE userkey SET postcount = postcount + ?, last_message = ?, last_message_id = ? WHERE userkey = ?',\
+            (self.httpd.cookie_cache[cookie][1], self.httpd.cookie_cache[cookie][2], self.httpd.cookie_cache[cookie][3], self.httpd.cookie_cache[cookie][0]))
     if db_update:
       self.log(self.logger.INFO, "Save cookies to db")
       self.httpd.cookie_cache = dict()
       self.httpd.postmandb.commit()
-    self.httpd.db_busy = False
     return db_update
 
   def load_i2p_spamprotect_cache(self):
@@ -1137,7 +1111,6 @@ class main(threading.Thread):
     return 0
 
   def update_this_cookie(self, cookie, message_id, message_time):
-    if self.wait_db_busy(): return
     if cookie not in self.httpd.cookie_cache:
       self.log(self.logger.ERROR, "cookie %s allow and not found in cache. Fix me" % cookie)
       return
@@ -1151,12 +1124,6 @@ class main(threading.Thread):
       self.httpd.cookie_db_last_update = self.get_db_last_update()
       self.load_cookie()
 
-  def wait_db_busy(self):
-    if self.httpd.db_busy:
-      time.sleep(2)
-      if self.httpd.db_busy: self.log(self.logger.WARNING, "DB busy more 2 second. This VERY bad result.")
-    return self.httpd.db_busy
-
   def userkey_spamprotect(self, message_time, pubkey):
     if message_time - self.httpd.userkey_timestamp > self.httpd.userkey_timelimit:
       self.httpd.userkey_timestamp = message_time
@@ -1167,12 +1134,9 @@ class main(threading.Thread):
       self.httpd.userkey_list[pubkey] = 1
     if self.httpd.userkey_list[pubkey] > self.httpd.userkey_messagelimit:
       self.log(self.logger.WARNING, "Key %s sent %s messages in %s seconds. Spamprotect auto-disallowed this key for stopping spam" % (pubkey, self.httpd.userkey_list[pubkey], self.httpd.userkey_timelimit))
-      self.wait_db_busy()
-      self.httpd.db_busy = True
       del self.httpd.userkey_list[pubkey]
       self.httpd.postmandb.execute('UPDATE userkey SET allow = 0 WHERE userkey = ?', (pubkey,))
       self.httpd.postmandb.commit()
-      self.httpd.db_busy = False
 
 class new_captcha(object):
   def __init__(self, diff=2, img_filter=None):
@@ -1191,8 +1155,8 @@ class new_captcha(object):
 
   def __init_cache(self):
     self.plazma_cache['size'] = [
-      300 + random.randint(4, 50),
-      100 + random.randint(4, 50)
+        300 + random.randint(4, 50),
+        100 + random.randint(4, 50)
     ]
     for x in xrange(self.plazma_cache_size):
       self.plazma_cache['plazma'][x] = self.__plazma(self.plazma_cache['size'][0], self.plazma_cache['size'][1])
