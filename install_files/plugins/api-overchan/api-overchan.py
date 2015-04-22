@@ -18,7 +18,7 @@ class OverchanAPI(BaseHTTPRequestHandler):
   def log_request(self, *code):
     return
 
-  def log_message(self, _format, *args):
+  def log_message(self, _, *args):
     return
 
   @staticmethod
@@ -54,10 +54,13 @@ class main(threading.Thread):
     self.serving = False
     self.sync_on_startup = False
     self.config = self._init_config(args)
+    if self.config['running']:
+      self.httpd = HTTPServer((self.config['bind_ip'], self.config['bind_port']), OverchanAPI)
+    self.log(self.logger.INFO, 'initializing as plugin..')
 
   def run(self):
     if not self.config['running']:
-      self.log(self.logger.INFO, 'running is False.')
+      self.log(self.logger.INFO, 'running is False. bye')
       return
     self.overchandb = self.config['db_connector']('overchan', timeout=60)
     self._cache_init()
@@ -67,7 +70,6 @@ class main(threading.Thread):
     self.log(self.logger.INFO, 'bye')
 
   def _start_serving(self):
-    self.httpd = HTTPServer((self.config['bind_ip'], self.config['bind_port']), OverchanAPI)
     self.httpd.log = self.log
     self.httpd.logger = self.logger
     self.httpd.api_worker = self.api_worker
@@ -80,6 +82,7 @@ class main(threading.Thread):
     self.config['running'] = False
     if self.serving:
       self.httpd.shutdown()
+      self.httpd.socket.close()
     else:
       self.log(self.logger.INFO, 'bye')
 
@@ -145,3 +148,5 @@ class main(threading.Thread):
     self.log(self.logger.DEBUG, 'API {}: got request: {}, data: {}, exec time: {}, cached: {}'.format(version, cmd, str(request_data), (time.time() - start_time), data[0]))
     return data[1]
 
+if __name__ == '__main__':
+  print "[%s] %s. %s" % ("api-overchan", "this plugin can't run as standalone version.", "bye")

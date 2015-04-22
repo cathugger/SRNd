@@ -38,7 +38,7 @@ class API_1(MainAPIHandler):
     return [dict(zip(params, row)) for row in rows]
   _handle_lastsroot.keys = _handle_lasts.keys
 
-  def _handle_boardlist(self, requ):
+  def _handle_boardlist(self, _):
     """return board list. No argument"""
     exclude_flags = self.cache['flags']['hidden'] | self.cache['flags']['blocked']
     data = [row[0] for row in self.overchandb.execute('SELECT group_name FROM groups WHERE (cast(flags as integer) & ?) = 0 ORDER by group_name ASC', (exclude_flags,)).fetchall()]
