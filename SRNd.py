@@ -955,7 +955,6 @@ class SRNd(threading.Thread):
       except socket.error as e:
         if e.errno == 22:
           # [Errno 22] Invalid argument
-          self.log(self.logger.CRITICAL, '{}. die'.format(e))
           break
         elif e.errno == 4:
           # system call interrupted
@@ -975,7 +974,6 @@ class SRNd(threading.Thread):
           except socket.error as e:
             if e.errno == 22:
               # [Errno 22] Invalid argument
-              self.log(self.logger.CRITICAL, '{}. die'.format(e))
               break
             elif e.errno == 4:
               # system call interrupted
