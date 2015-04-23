@@ -1089,6 +1089,11 @@ class SRNd(threading.Thread):
     config['pretty_name'] = 'pretty_name' in config and config['pretty_name'].lower() in ('true', 'yes', '1')
     # add SRNd instance_name from SRNd config
     config['instance_name'] = self.config['instance_name']
+    # Parse support_ items
+    support = set()
+    for key in [xx for xx in config if xx.startswith('support_')]:
+      support.add('{} {}'.format(key.upper()[8:], config.pop(key)))
+    config['support'] = tuple(support)
     return config
 
   def _outfeed_config_sanitize(self, config):

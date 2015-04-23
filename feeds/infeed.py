@@ -29,10 +29,11 @@ class InFeed(feed.BaseFeed):
         'POST',
         'IHAVE',
         'LIST ACTIVE NEWSGROUPS OVERVIEW.FMT',
-        'STREAMING',
-        'SUPPORT'
+        'STREAMING'
     ]
     # append caps
+    if self.config['support']:
+      self.caps.append('SUPPORT')
     if self.config['auth_required'] > 0:
       if 'nntp' in self.config['auth_support']:
         self.caps.append('AUTHINFO USER PASS')
@@ -302,10 +303,8 @@ class InFeed(feed.BaseFeed):
       # 191 - initial SUPPORT reply
       self.send('191 i support:', 'SUPPORT')
       # send support options. Format '<KEY> <value>'
-      # read direct option from infeeds config and send is as
-      to_send = ['{} {}'.format(key.upper()[8:], value) for key, value in self.config.iteritems() if key.startswith('support_')]
-      if to_send:
-        self.send(to_send, 'SUPPORT')
+      if self.config['support']:
+        self.send(self.config['support'], 'SUPPORT')
       self.send('.', 'SUPPORT')
     elif commands[0] == 'MODE' and len(commands) == 2 and commands[1] == 'STREAM':
       self._handshake_state = True
