@@ -1092,6 +1092,7 @@ class SRNd(threading.Thread):
     return config
 
   def _outfeed_config_sanitize(self, config):
+    config['srndauth_key'] = config.get('srndauth_key')
     if config['srndauth_key'] is not None and len(config['srndauth_key']) != 64:
       self.log(self.logger.WARNING, 'len srndauth_key != 64. Set None')
       config['srndauth_key'] = None
