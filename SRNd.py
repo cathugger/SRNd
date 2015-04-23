@@ -950,7 +950,18 @@ class SRNd(threading.Thread):
 
     self.start_up_timestamp = int(time.time())
     while self.running:
-      result = poller.poll(-1)
+      try:
+        result = poller.poll(-1)
+      except socket.error as e:
+        if e.errno == 22:
+          # [Errno 22] Invalid argument
+          self.log(self.logger.CRITICAL, '{}. die'.format(e))
+          break
+        elif e.errno == 4:
+          # system call interrupted
+          continue
+        else:
+          raise e
       for fd, mask in result:
         if fd == self.socket.fileno():
           try:
@@ -962,16 +973,20 @@ class SRNd(threading.Thread):
             else:
               self.log(self.logger.WARNING, 'got connection from %s but its still in feeds. wtf?' % name)
           except socket.error as e:
-            if   e.errno == 22: break      # wtf is this? add comments or use STATIC_VARS instead of strange numbers
-            elif e.errno ==  4: continue   # system call interrupted
-            else:               raise e
-          continue
+            if e.errno == 22:
+              # [Errno 22] Invalid argument
+              self.log(self.logger.CRITICAL, '{}. die'.format(e))
+              break
+            elif e.errno == 4:
+              # system call interrupted
+              continue
+            else:
+              raise e
         elif fd == ctl_socket_server.fileno():
           con, addr = ctl_socket_server.accept()
           con.setblocking(0)
           poller.register(con.fileno(), select.POLLIN)
           self.ctl_socket_clients[con.fileno()] = (con, os.fdopen(con.fileno(), 'w', 1))
-          continue
         else:
           try:
             try: data = os.read(fd, 4)
