@@ -418,7 +418,7 @@ class SRNd(threading.Thread):
         f.write('# All infeeds use this config\n\n')
         f.write('# 0 - authentication disallowed, 1 - authentication support, 2 - authentication required (WARNING! Not work with original srnd)\n')
         f.write('#start_param auth_required=0\n\n')
-        f.wrine('# authentication mode support. nntp - support standart nntp client, private key send as plaintext. srnd - best and support srnd-client (recommend)\n')
+        f.write('# authentication mode support. nntp - support standart nntp client, private key send as plaintext. srnd - best and support srnd-client (recommend)\n')
         f.write('# example: #start_param auth_support=srnd,nntp\n')
         f.write('#start_param auth_support=srnd\n\n\n')
         f.write('# allow all groups\n')
