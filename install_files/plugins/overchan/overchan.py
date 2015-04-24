@@ -503,16 +503,19 @@ class main(threading.Thread):
     if '/' in group_name:
       self.log(self.logger.WARNING, 'got overchan-board-add with invalid group name: \'%s\', ignoring' % group_name)
       return
-    flags = int(args[1]) if len(args) > 1 else 0
     try:
-      result = self.sqlite.execute("SELECT flags FROM groups WHERE group_name=?", (group_name,)).fetchone()
-      if result is not None:
+      flags = int(args[1]) if len(args) > 1 else 0
+    except ValueError:
+      flags = 0
+    result = self.sqlite.execute("SELECT flags FROM groups WHERE group_name=?", (group_name,)).fetchone()
+    if result is not None:
+      if flags == 0:
         flags = int(result[0])
       flags ^= flags & self.cache['flags']['blocked']
       self.sqlite.execute('UPDATE groups SET flags = ? WHERE group_name = ?', (str(flags), group_name))
       self.log(self.logger.INFO, 'unblocked existing board: \'%s\'' % group_name)
-    except sqlite3.Error:
-      self.sqlite.execute('INSERT INTO groups(group_name, article_count, last_update, flags) VALUES (?,?,?,?)', (group_name, 0, int(time.time()), flags))
+    else:
+      self.sqlite.execute('INSERT INTO groups(group_name, article_count, last_update, flags) VALUES (?,?,?,?)', (group_name, 0, int(time.time()), str(flags)))
       self.log(self.logger.INFO, 'added new board: \'%s\'' % group_name)
     if len(args) > 2:
       self.overchan_aliases_update(args[2], group_name)
@@ -522,17 +525,19 @@ class main(threading.Thread):
 
   def overchan_board_del(self, group_name, flags=0):
     try:
-      if flags == 0:
-        result = self.sqlite.execute("SELECT flags FROM groups WHERE group_name=?", (group_name,)).fetchone()
-        flags |= self.cache['flags']['blocked'] if result is None else int(result[0]) | self.cache['flags']['blocked']
+      flags = int(flags)
+    except ValueError:
+      flags = 0
+    result = self.sqlite.execute("SELECT flags FROM groups WHERE group_name=?", (group_name,)).fetchone()
+    if result is not None:
+      flags |= self.cache['flags']['blocked'] if flags == 0 else int(result[0]) | self.cache['flags']['blocked']
       self.sqlite.execute('UPDATE groups SET flags = ? WHERE group_name = ?', (str(flags), group_name))
       self.sqlite.commit()
-    except sqlite3.Error:
-      self.log(self.logger.WARNING, 'should delete board %s but there is no board with that name' % group_name)
-    else:
       self.log(self.logger.INFO, 'blocked board: \'%s\'' % group_name)
       self.__flush_board_cache()
       self.regenerate_all_html()
+    else:
+      self.log(self.logger.WARNING, 'should delete board %s but there is no board with that name' % group_name)
 
   def overchan_aliases_update(self, base64_blob, group_name):
     try:
