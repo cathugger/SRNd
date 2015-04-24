@@ -64,8 +64,9 @@ class main(threading.Thread):
       return
     self.overchandb = self.config['db_connector']('overchan', timeout=60)
     self._cache_init()
-    self._api_init()
-    self._start_serving()
+    if self.config['running']:
+      self._api_init()
+      self._start_serving()
     self.overchandb.close()
     self.log(self.logger.INFO, 'bye')
 
