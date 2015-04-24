@@ -284,8 +284,8 @@ class InFeed(feed.BaseFeed):
       self.log(self.logger.VERBOSE, 'should handle empty line')
     elif commands[0] == 'CAPABILITIES':
       # send CAPABILITIES. Work before authentication
-      self.send(self.caps)
-      self.send('.')
+      self.send(self.caps, 'CAPABILITIES')
+      self.send('.', 'CAPABILITIES')
     elif commands[0] == 'QUIT':
       self.send('205 bye bye')
       self.state = 'closing down'
