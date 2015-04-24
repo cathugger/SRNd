@@ -53,6 +53,7 @@ class SRNd(threading.Thread):
     }
     self.config = self.init_srnd_config(def_config)
 
+    self._use_psutil = psutil_import_result and not self.config['use_chroot']
     self._init_sysinfo()
 
     # install / update plugins
@@ -267,12 +268,12 @@ class SRNd(threading.Thread):
   def _get_sysinfo(self, target):
     result = None
     if target == 'cpu':
-      if psutil_import_result:
+      if self._use_psutil:
         result = self._sysinfo['psutil'].cpu_percent(interval=None)
       else:
         result = 0
     elif target == 'ram':
-      if psutil_import_result:
+      if self._use_psutil:
         result = self._sysinfo['psutil'].memory_info()[0]
       else:
         if self._sysinfo['ramfile'] is not None:
@@ -288,7 +289,7 @@ class SRNd(threading.Thread):
 
   def _init_sysinfo(self):
     self._sysinfo = dict()
-    if psutil_import_result:
+    if self._use_psutil:
       self._sysinfo['psutil'] = psutil.Process()
     else:
       try:
