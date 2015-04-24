@@ -21,6 +21,8 @@ from urllib import unquote
 import Image, ImageDraw, ImageFilter, ImageFont
 import nacl.signing
 
+from srnd.utils import chrootRandom
+
 class postman(BaseHTTPRequestHandler):
 
   def __init__(self, request, client_address, origin):
@@ -584,18 +586,7 @@ class main(threading.Thread):
 
     self.log(self.logger.DEBUG, 'initializing httpserver..')
     self.httpd = HTTPServer((self.ip, self.port), postman)
-    if os.path.exists('seed'):
-      f = open('seed', 'r')
-      self.httpd.seed = f.read()
-      f.close()
-    else:
-      f = open('/dev/urandom', 'r')
-      self.httpd.seed = f.read(32)
-      f.close()
-      f = open('seed', 'w')
-      f.write(self.httpd.seed)
-      f.close()
-      os.chmod('seed', 0o600)
+    self.httpd.seed = chrootRandom(32)
 
     self.new_captcha = None
     if 'new_captcha' in args:
@@ -748,9 +739,7 @@ class main(threading.Thread):
       self.httpd.captcha_tiles.append(Image.open('plugins/postman/tiles/%s' % item))
     foobar = self.captcha_render_b64('abc', self.httpd.captcha_tiles, self.httpd.get_captcha_font(), self.httpd.captcha_filter)
     del foobar
-    f = open('/dev/urandom', 'r')
-    self.httpd.captcha_secret = f.read(32)
-    f.close()
+    self.httpd.captcha_secret = chrootRandom(32)
     # read captcha quotes from file
     qoutefile = 'plugins/postman/quotes.txt'
     if os.path.exists(qoutefile):
