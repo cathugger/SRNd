@@ -2,6 +2,7 @@
 
 import re
 import string
+import random
 
 def basicHTMLencode(inputString):
   return basicHTMLencodeNoStrip(inputString).strip(' \t\n\r')
@@ -12,6 +13,10 @@ def basicHTMLencodeNoStrip(inputString):
     inputString = inputString.replace(x[0], x[1])
   return inputString
 
+def chrootRandom(n):
+  """/dev/random emulator. Slow"""
+  return ''.join([chr(random.randrange(0, 255)) for _ in xrange(n)])
+
 def trydecode(msg):
   """Guess the encoding roulette"""
   for char_type in ('UTF-8', 'KOI8-R', 'cp1252', 'cp1251'):
@@ -19,7 +24,7 @@ def trydecode(msg):
       return msg.decode(char_type)
     except UnicodeDecodeError:
       pass
-  msg.decode('UTF-8', errors='replace')
+  return msg.decode('UTF-8', errors='replace')
 
 def generate_pubkey_short_utf_8(full_pubkey_hex, length=6):
   pub_short = ''
