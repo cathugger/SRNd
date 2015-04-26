@@ -3,7 +3,7 @@
 # [] == dict
 
 uid_host=web.paste.i.did.not.read.the.config
-enforce_target=%%sha1_message_uid_10%%.html
+enforce_target=paste/%%sha1_message_uid_10%%.html
 enforce_board=ano.paste
 
 (required_fields)
@@ -17,5 +17,9 @@ target
 
 [defaults]
 subject=no title
-name=Anonymous Coward
+name=Anonymous
 email=nobody@no.where
+
+[custom]
+hidden=false
+language=auto
