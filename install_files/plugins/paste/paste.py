@@ -5,36 +5,30 @@ import sqlite3
 import threading
 import time
 import traceback
+import string
+import Queue
 from calendar import timegm
 from datetime import datetime, timedelta
 from email.utils import parsedate_tz
 from hashlib import sha1
-from srnd.utils import basicHTMLencode
-
-if __name__ == '__main__':
-  import fcntl
-  import signal
-else:
-  import Queue
 
 from pygments import highlight
 from pygments.formatters import HtmlFormatter
-from pygments.lexers import guess_lexer, guess_lexer_for_filename, get_lexer_by_name, ClassNotFound
+from pygments.lexers import guess_lexer, guess_lexer_for_filename, get_lexer_by_name, ClassNotFound, get_all_lexers
+
+from srnd.utils import basicHTMLencode, css_minifer, html_minifer
 
 class main(threading.Thread):
 
   def log(self, loglevel, message):
-    if loglevel >= self.loglevel:
+    if loglevel >= self.config.get('debug', 2):
       self.logger.log(self.name, message, loglevel)
 
   def die(self, message):
     self.log(self.logger.CRITICAL, message)
     self.log(self.logger.CRITICAL, 'terminating..')
     self.should_terminate = True
-    if __name__ == '__main__':
-      exit(1)
-    else:
-      raise Exception(message)
+    raise Exception(message)
 
   def __init__(self, thread_name, logger, args):
     threading.Thread.__init__(self)
@@ -42,101 +36,96 @@ class main(threading.Thread):
     self.logger = logger
     self._db_connector = args['db_connector']
     self.should_terminate = False
-    self.loglevel = self.logger.INFO
-    # TODO: move sleep stuff to config table
-    self.sleep_threshold = 10
-    self.sleep_time = 0.02
-    error = ''
-    for arg in ('template_directory', 'output_directory', 'css_file', 'title'):
-      if not arg in args:
-        error += '%s not in arguments\n' % arg
-    if error != '':
-      self.die(error.rstrip('\n'))
-    self.outputDirectory = args['output_directory']
-    self.templateDirectory = args['template_directory']
-    self.css_file = args['css_file']
-    self.html_title = args['title']
-    self.sync_on_startup = False
-    if 'sync_on_startup' in args:
-      if args['sync_on_startup'].lower() == 'true':
-        self.sync_on_startup = True
-    if not os.path.exists(self.templateDirectory):
-      self.die('template directory \'%s\' does not exist' % self.templateDirectory)
-    if not os.path.exists(os.path.join(self.templateDirectory, self.css_file)):
-      self.die('specified CSS file not found in template directory: \'%s\' does not exist' % os.path.join(self.templateDirectory, self.css_file))
-
-    if __name__ == '__main__':
-      self.log(self.logger.INFO, 'initializing as standalone application..')
-      if 'watch_directory' not in args:
-        self.die('called without watch_directory and thus should receive articles via .add_article() but this class runs as own application')
-      self.watching = args['watch_directory']
-      self.log(self.logger.INFO, 'creating directory watcher..')
-      signal.signal(signal.SIGIO, self.handle_new)
-      try:
-        fd = os.open(self.watching, os.O_RDONLY)
-      except OSError as e:
-        if e.errno == 2:
-          self.die(e)
-        else:
-          raise e
-      fcntl.fcntl(fd, fcntl.F_SETSIG, 0)
-      fcntl.fcntl(fd, fcntl.F_NOTIFY,
-                  fcntl.DN_MODIFY | fcntl.DN_CREATE | fcntl.DN_MULTISHOT)
-      self.sqlite = self._db_connector('pastes')
-      self.sqlite.execute('''CREATE TABLE IF NOT EXISTS pastes
-                    (article_uid text, hash text PRIMARY KEY, sender text, email text, subject text, sent INTEGER, body text, root text, received INTEGER)''')
-      self.sqlite.commit()
-    else:
-      self.log(self.logger.INFO, 'initializing as plugin..')
-      if 'watch_directory' in args:
-        self.die('called with watch_directory and thus should watch a directory for changes but this class does not run as own application')
-
-      self.queue = Queue.Queue()
-      # needed for working inside a chroot to recognize latin1 charset
-      try:
-        lexer = guess_lexer("svmmsjj".encode('latin1'), encoding='utf-8')
-      except ClassNotFound:
-        pass
-    if 'debug' not in args:
-      self.log(self.logger.INFO, 'debuglevel not defined, using default of debug = %i' % self.logger.INFO)
-    else:
-      try:
-        self.loglevel = int(args['debug'])
-        if self.loglevel < 0 or self.loglevel > 5:
-          self.loglevel = self.logger.INFO
-          self.log(self.logger.WARNING, 'debuglevel not between 0 and 5, using default of debug = %i' % self.logger.INFO)
-        else:
-          self.log(self.logger.DEBUG, 'using debuglevel %i' % self.loglevel)
-      except ValueError as e:
-        self.loglevel = self.logger.INFO
-        self.log(self.logger.WARNING, 'debuglevel not between 0 and 5, using default of debug = %i' % self.logger.INFO)
-    if 'generate_all' in args:
-      if args['generate_all'].lower() == 'true':
-        self.generate_full_html_on_start = True
-      else:
-        self.generate_full_html_on_start = False
-    else:
-      self.generate_full_html_on_start = False
-    self.formatter = HtmlFormatter(linenos=True, cssclass="source", encoding='utf-8', anchorlinenos=True, lineanchors='line', full=False, cssfile="./styles.css", noclobber_cssfile=True)
-    self.lexers = dict()
-    #allowed_lexers = ('Bash', 'HTML+Lasso', 'NumPy')
-    self.allowed_lexers = ('Bash', 'NumPy', 'Perl') # TODO: add php because of shebang line?
+    self.config = dict()
+    self._init_config(args)
+    self.sync_on_startup = self.config['sync_on_startup']
+    self._check_errors()
+    self.log(self.logger.INFO, 'initializing as plugin..')
+    self.queue = Queue.Queue()
+    # needed for working inside a chroot to recognize latin1 charset
+    try:
+      guess_lexer("svmmsjj".encode('latin1'), encoding='utf-8')
+    except ClassNotFound:
+      pass
+    self.formatter = HtmlFormatter(linenos=True, cssclass="source", anchorlinenos=True, lineanchors='line', full=False, cssfile="./styles.css", noclobber_cssfile=True)
     self.recognized_extenstions = ('sh', 'py', 'pyx', 'pl', 'hs', 'haskell', 'js', 'php', 'html', 'c', 'cs')
-    f = open(os.path.join(self.templateDirectory, 'single_paste.tmpl'), 'r')
-    self.template_single_paste = f.read()
-    f.close()
-    f = open(os.path.join(self.templateDirectory, 'index.tmpl'), 'r')
-    self.template_index = f.read()
-    f.close()
-    if __name__ == '__main__':
-      self.busy = False
-      self.retry = False
-      i = open(os.path.join(self.templateDirectory, self.css_file), 'r')
-      o = open(os.path.join(self.outputDirectory, 'styles.css'), 'w')
-      o.write(i.read())
-      o.close()
-      i.close()
-      self.handle_new(None, None)
+    self.t_engine = self._load_templates()
+
+  def _init_config(self, args, add_default=True):
+    cfg_new = dict()
+    cfg_def = {
+        'sleep_threshold': 10,
+        'sleep_time': 0.02,
+        'debug': self.logger.INFO,
+        'title': 'paste.i.did.not.read.the.config',
+        'css_file': 'master.css',
+        'generate_all': False,
+        'sync_on_startup': True,
+        'minify_css': False,
+        'minify_html': False,
+        'max_recent': 200
+    }
+    for target in args:
+      if target in cfg_def:
+        try:
+          if isinstance(cfg_def[target], bool):
+            cfg_new[target] = True if args[target].lower() in ('true', 'yes', '1', 'enable') else False
+          else:
+            cfg_new[target] = type(cfg_def[target])(args[target])
+        except ValueError:
+          if add_default:
+            self.log(self.logger.WARNING, 'Config error: #start_param {} {}, need {}. Use default value: {} '.format(target, type(args[target]), type(cfg_def[target]), cfg_def[target]))
+          else:
+            self.log(self.logger.WARNING, 'Config error: #start_param {} {}, need {}. Ignored'.format(target, type(args[target]), type(cfg_def[target])))
+      else:
+        cfg_new[target] = args[target]
+    if add_default:
+      cfg_new = dict(cfg_def.items() + cfg_new.items())
+
+    if 'debug' in cfg_new and cfg_new['debug'] < 0 or cfg_new['debug'] > 5:
+      cfg_new['debug'] = self.logger.INFO
+      self.log(self.logger.WARNING, 'invalid value for debug, using default debug level of {}'.format(self.logger.INFO))
+    self.config.update(cfg_new)
+
+  def _check_errors(self):
+    error = list()
+    for arg in ('template_directory', 'output_directory', 'css_file', 'title'):
+      if arg not in self.config:
+        error.append('{} not in arguments'.format(arg))
+    if error:
+      self.die('\n'.join(error))
+    if not os.path.exists(self.config['template_directory']):
+      self.die('template directory \'%s\' does not exist' % self.config['template_directory'])
+    if not os.path.exists(os.path.join(self.config['template_directory'], self.config['css_file'])):
+      self.die('specified CSS file not found in template directory: \'%s\' does not exist' % os.path.join(self.config['template_directory'], self.config['css_file']))
+
+  def _load_templates(self):
+    t_engine = dict()
+    with codecs.open(os.path.join(self.config['template_directory'], 'single_paste.tmpl'), 'r', 'UTF-8') as f:
+      t_engine['single'] = string.Template(
+          string.Template(f.read()).safe_substitute(
+              title=self.config['title']
+          )
+      )
+    with codecs.open(os.path.join(self.config['template_directory'], 'index.tmpl'), 'r', 'UTF-8') as f:
+      t_engine['index'] = string.Template(
+          string.Template(f.read()).safe_substitute(
+              title=self.config['title'],
+              language=self._create_lang_selector()
+          )
+      )
+    if self.config['minify_html']:
+      t_engine, msg = html_minifer(t_engine)
+      self.log(self.logger.INFO, msg)
+    return t_engine
+
+  @staticmethod
+  def _create_lang_selector():
+    option = '<option value="{}">{}</option>'
+    all_lexers = sorted([(xx[0], xx[1][0]) for xx in get_all_lexers() if len(xx) > 1 and xx[0] and xx[1][0] and xx[1][0] != 'text'], key=lambda name: name[0])
+    all_lexers.insert(0, ('Text only', 'text'))
+    all_lexers.insert(0, ('Auto', 'auto'))
+    return '\n'.join([option.format(xx[1], xx[0]) for xx in all_lexers])
 
   def add_article(self, message_id, source="article", timestamp=None):
     self.queue.put((source, message_id, timestamp))
@@ -144,31 +133,49 @@ class main(threading.Thread):
   def shutdown(self):
     self.running = False
 
+  def _post_init(self):
+    if not os.path.exists(self.config['output_directory']):
+      os.mkdir(self.config['output_directory'])
+    with open(os.path.join(self.config['template_directory'], self.config['css_file']), 'r') as i, \
+        open(os.path.join(self.config['output_directory'], 'styles.css'), 'w') as o:
+      css = i.read()
+      if self.config['minify_css']:
+        old_size = len(css)
+        css = css_minifer(css)
+        new_size = len(css)
+        diff = -int(float(old_size-new_size)/old_size * 100) if old_size > 0 else 0
+        self.log(self.logger.INFO, 'Minify CSS {0}: old size={1}, new size={2}, difference={3}%'.format(self.config['css_file'], old_size, new_size, diff))
+      o.write(css)
+
+  def update_pastesdb(self):
+    self.sqlite.execute('''CREATE TABLE IF NOT EXISTS pastes
+                  (article_uid text, hash text PRIMARY KEY, sender text, email text, subject text, sent INTEGER, body text, root text, received INTEGER)''')
+    try:
+      self.sqlite.execute('ALTER TABLE pastes ADD COLUMN lang text DEFAULT ""')
+    except sqlite3.OperationalError:
+      pass
+    try:
+      self.sqlite.execute('ALTER TABLE pastes ADD COLUMN hidden INTEGER DEFAULT 0')
+    except sqlite3.OperationalError:
+      pass
+    self.sqlite.commit()
+
   def run(self):
     if self.should_terminate:
       self.shutdown()
       return
-    if  __name__ == '__main__':
-      return
-    if not os.path.exists(self.outputDirectory):
-      os.mkdir(self.outputDirectory)
-    i = open(os.path.join(self.templateDirectory, self.css_file), 'r')
-    o = open(os.path.join(self.outputDirectory, 'styles.css'), 'w')
-    o.write(i.read())
-    o.close()
-    i.close()
+    self._post_init()
     self.sqlite = self._db_connector('pastes')
-    self.sqlite.execute('''CREATE TABLE IF NOT EXISTS pastes
-                  (article_uid text, hash text PRIMARY KEY, sender text, email text, subject text, sent INTEGER, body text, root text, received INTEGER)''')
-    self.sqlite.commit()
+    self.update_pastesdb()
     self.running = True
     self.regenerate_index = False
     self.log(self.logger.INFO, 'starting up as plugin..')
-    if self.generate_full_html_on_start:
+    if self.config['generate_all']:
       self.log(self.logger.INFO, 'regenerating all HTML files..')
-      for row in self.sqlite.execute('SELECT hash, sender, subject, sent, body FROM pastes ORDER BY sent ASC').fetchall():
-        self.generate_paste(row[0][:10], row[4], row[2], row[1], row[3])
-      self.recreate_index()
+      for row in self.sqlite.execute('SELECT hash, sender, subject, sent, body, lang, hidden FROM pastes ORDER BY sent ASC').fetchall():
+        self.generate_paste(row[0][:10], row[4], row[2], row[1], row[3], row[5], int(row[6]))
+      self.regenerate_index = False
+    self.recreate_index()
     got_control = False
     while self.running:
       try:
@@ -179,32 +186,21 @@ class main(threading.Thread):
             self.log(self.logger.DEBUG, '%s already in database..' % message_id)
             continue
           try:
-            f = open(os.path.join('articles', message_id), 'r')
-            message_content = f.readlines()
-            f.close()
-            if len(message_content) == 0:
-              self.log(self.logger.ERROR, 'empty NNTP message \'%s\'. wtf?' % message_id)
-              continue
-            if not self.parse_message(message_id, message_content):
-              continue
-            self.regenerate_index = True
+            with open(os.path.join('articles', message_id), 'r') as fd:
+              if not self.parse_message(message_id, fd):
+                continue
           except Exception as e:
-            self.log(self.logger.WARNING, 'something went wrong while parsing new article %s:' % message_id)
+            self.log(self.logger.WARNING, 'something went wrong while parsing new article {}: {}'.format(message_id, e))
             self.log(self.logger.WARNING, traceback.format_exc())
-            try:
-              f.close()
-            except:
-              pass
         elif ret[0] == "control":
           got_control = True
           self.handle_control(ret[1], ret[2])
         else:
           self.log(self.logger.WARNING, 'got article with unknown source: %s' % ret[0])
-        if self.queue.qsize() > self.sleep_threshold:
-          time.sleep(self.sleep_time)
+        if self.queue.qsize() > self.config['sleep_threshold']:
+          time.sleep(self.config['sleep_time'])
       except Queue.Empty as e:
         if got_control:
-          self.sqlite.commit()
           self.sqlite.execute('VACUUM;')
           self.sqlite.commit()
           got_control = False
@@ -215,102 +211,126 @@ class main(threading.Thread):
     self.sqlite.close()
     self.log(self.logger.INFO, 'bye')
 
-  def generate_paste(self, identifier, paste_content, subject, sender, sent):
-    self.log(self.logger.INFO, 'new paste: %s' % subject)
-    self.log(self.logger.INFO, 'generating %s' % os.path.join(self.outputDirectory, identifier + '.txt'))
-    f = codecs.open(os.path.join(self.outputDirectory, identifier + '.txt'), 'w', encoding='utf-8')
-    f.write(paste_content)
-    f.close()
-    self.log(self.logger.INFO, 'generating %s' % os.path.join(self.outputDirectory, identifier + '.html'))
-    found = False
-    try:
-      if '.' in subject:
-        if subject[-1] == ')':
-          if ' (' in subject:
-            name = subject.split(' (')[0]
-          elif '(' in subject:
-            name = subject.split('(')[0]
-          else:
-            name = subject
-        else:
-          name = subject
-        if name.split('.')[-1] in self.recognized_extenstions:
-          lexer = guess_lexer_for_filename(name, paste_content, encoding='utf-8')
-          found = True
-      if not found:
-        if len(paste_content) >= 2:
-          if paste_content[:2] == '#!':
-            lexer = guess_lexer(paste_content, encoding='utf-8')
-            if lexer.name not in self.allowed_lexers:
-              lexer = get_lexer_by_name('text', encoding='utf-8')
-          else:
-            lexer = get_lexer_by_name('text', encoding='utf-8')
-        else:
-          lexer = get_lexer_by_name('text', encoding='utf-8')
-    except ClassNotFound as e:
-      self.log(self.logger.WARNING, '%s: %s' % (subject, e))
-      lexer = get_lexer_by_name('text', encoding='utf-8')
-    except ImportError as e:
-      self.log(self.logger.WARNING, '%s: %s' % (subject, e))
-      lexer = get_lexer_by_name('text', encoding='utf-8')
-    result = highlight(paste_content, lexer, self.formatter)
-    template = self.template_single_paste.replace('%%paste_title%%', subject)
-    template = template.replace('%%title%%', self.html_title)
-    template = template.replace('%%sender%%', sender)
-    template = template.replace('%%sent%%', datetime.utcfromtimestamp(sent).strftime('%Y/%m/%d %H:%M UTC'))
-    template = template.replace('%%identifier%%', identifier)
-    template = template.replace('%%paste%%', result)
-    f = open(os.path.join(self.outputDirectory, identifier + '.html'), 'w')
-    f.write(template)
-    f.close()
-    del result, template
+  def generate_paste(self, identifier, paste_content, subject, sender, sent, lang, ishidden):
+    if not lang:
+      lang = self._detect_lang_name(subject, paste_content)
+    if not lang:
+      return
 
-  def parse_message(self, message_id, message_content):
+    page_link = os.path.join(self.config['output_directory'], '{}.html'.format(identifier))
+    self.log(self.logger.INFO, 'generating {} & {}.txt'.format(page_link, identifier))
+    with codecs.open(os.path.join(self.config['output_directory'], identifier + '.txt'), 'w', encoding='utf-8') as f:
+      f.write(paste_content)
+    lexer = get_lexer_by_name(lang, encoding='utf-8')
+    data = {
+        'paste_title': subject,
+        'sender': sender,
+        'sent': datetime.utcfromtimestamp(sent).strftime('%Y/%m/%d %H:%M UTC'),
+        'identifier': identifier,
+        'paste': highlight(paste_content, lexer, self.formatter),
+        'lang': lang
+    }
+    with codecs.open(page_link, 'w', 'UTF-8') as f:
+      f.write(self.t_engine['single'].substitute(data))
+    self.regenerate_index |= ishidden == 0
+
+  def parse_message(self, message_id, fd):
     hash_message_uid = sha1(message_id).hexdigest()
-    identifier = hash_message_uid[:10]
     subject = 'No Title'
     sent = 0
     sender = 'None'
     email = 'non@giv.en'
-    for index in xrange(0, len(message_content)):
-      if message_content[index].lower().startswith('subject:'):
-        subject = basicHTMLencode(message_content[index].split(' ', 1)[1][:-1])
-      elif message_content[index].lower().startswith('date:'):
-        sent = message_content[index].split(' ', 1)[1][:-1]
-        sent_tz = parsedate_tz(sent)
-        if sent_tz:
-          offset = 0
-          if sent_tz[-1]: offset = sent_tz[-1]
-          sent = timegm((datetime(*sent_tz[:6]) - timedelta(seconds=offset)).timetuple())
-        else:
-          sent = int(time.time())
-      elif message_content[index].lower().startswith('from:'):
-        sender = basicHTMLencode(message_content[index].split(' ', 1)[1][:-1].split(' <', 1)[0])
-        try:
-          email = basicHTMLencode(message_content[index].split(' ', 1)[1][:-1].split(' <', 1)[1].replace('>', ''))
-        except:
-          pass
-      elif message_content[index] == '\n':
-        bar = message_content[index+1:]
-        break
-    self.generate_paste(identifier, ''.join(bar).decode('UTF-8'), subject, sender, sent)
-    self.sqlite.execute('INSERT INTO pastes VALUES (?,?,?,?,?,?,?,?,?)', (message_id, hash_message_uid, sender.decode('UTF-8'), email.decode('UTF-8'), subject.decode('UTF-8'), sent, ''.join(bar).decode('UTF-8'), '', int(time.time())))
+    body = list()
+    ishidden = 0
+    lang = ''
+    body_found = False
+    for line in fd:
+      line = line.rstrip('\n\r')
+      if not body_found:
+        key = line.split(': ')[0].lower()
+        value = line.split(': ', 1)[-1]
+        if not line:
+          body_found = True
+        elif key == 'subject':
+          subject = basicHTMLencode(value.decode('UTF-8')[:65])
+        elif key == 'date':
+          sent_tz = parsedate_tz(value)
+          if sent_tz:
+            offset = sent_tz[-1] if sent_tz[-1] else 0
+            sent = timegm((datetime(*sent_tz[:6]) - timedelta(seconds=offset)).timetuple())
+          else:
+            sent = int(time.time())
+        elif key == 'from':
+          data = value.decode('UTF-8').rsplit(' <', 1)
+          if len(data) > 1:
+            sender = basicHTMLencode(data[0][:30])
+            email = basicHTMLencode(data[1].replace('>', '')[:50])
+        elif key == 'hidden':
+          if value.lower() in ('true', 'yes'):
+            ishidden = 1
+        elif key == 'language':
+          lang = self._lang_by_name(basicHTMLencode(value.lower())) if value.lower() != 'auto' else ''
+      else:
+        body.append(line)
+
+    if not body_found or not body:
+      self.log(self.logger.ERROR, 'empty NNTP message \'%s\'. wtf?' % message_id)
+      return False
+    if not lang:
+      lang = self._detect_lang_name(subject, body)
+
+    body = '\n'.join(body).decode('UTF-8')
+    self.generate_paste(hash_message_uid[:10], body, subject, sender, sent, lang, ishidden)
+    self.sqlite.execute('INSERT INTO pastes VALUES (?,?,?,?,?,?,?,?,?,?,?)', (message_id, hash_message_uid, sender, email, subject, sent, body, '', int(time.time()), lang, ishidden))
     self.sqlite.commit()
-    del bar
     return True
 
+  def _lang_by_name(self, lang_name):
+    try:
+      get_lexer_by_name(lang_name, encoding='utf-8')
+      return lang_name
+    except (ClassNotFound, ImportError) as e:
+      self.log(self.logger.WARNING, '%s: %s' % (lang_name, e))
+      return ''
+
+  def _detect_lang_name(self, subject, paste_content):
+    lexer = None
+    if '.' in subject:
+      if subject[-1] == ')':
+        if ' (' in subject:
+          name = subject.split(' (')[0]
+        elif '(' in subject:
+          name = subject.split('(')[0]
+        else:
+          name = subject
+      else:
+        name = subject
+      if name.split('.')[-1] in self.recognized_extenstions:
+        try:
+          lexer = guess_lexer_for_filename(name, paste_content, encoding='utf-8')
+        except (ClassNotFound, ImportError):
+          pass
+    if lexer is None and len(paste_content) >= 20:
+      try:
+        lexer = guess_lexer(paste_content, encoding='utf-8')
+      except (ClassNotFound, ImportError):
+        pass
+    if lexer is None:
+      try:
+        lexer = get_lexer_by_name('text', encoding='utf-8')
+      except (ClassNotFound, ImportError) as e:
+        self.log(self.logger.WARNING, '%s: %s' % (subject, e))
+        return ''
+    return lexer.aliases[0]
+
   def recreate_index(self):
-    self.log(self.logger.INFO, 'generating %s' % os.path.join(self.outputDirectory, 'index.html'))
+    self.log(self.logger.INFO, 'generating %s' % os.path.join(self.config['output_directory'], 'index.html'))
     paste_recent = list()
-    for row in self.sqlite.execute('SELECT hash, subject, sender, sent FROM pastes ORDER by sent DESC').fetchall():
-      paste_recent.append('<tr><td><a href="{0}.html">{1}</a></td><td>{2}</td><td>{3}</td></tr>\n'.format(row[0][:10], row[1].encode('UTF-8'), row[2].encode('UTF-8'), datetime.utcfromtimestamp(row[3]).strftime('%Y/%m/%d %H:%M UTC')))
-    f = open(os.path.join(self.outputDirectory, 'index.html'), 'w')
-    template = self.template_index.replace("%%title%%", self.html_title)
-    template = template.replace('%%reply%%', '')
-    template = template.replace('%%target%%', '')
-    template = template.replace('%%pasterows%%', ''.join(paste_recent))
-    f.write(template)
-    f.close()
+    index_row = u'<tr><td><a href="{}.html">{}</a></td><td>{}</td><td>{}</td><td>{}</td></tr>'
+    for row in self.sqlite.execute('SELECT hash, subject, sender, sent, lang FROM pastes WHERE hidden = 0 ORDER by sent DESC LIMIT ?', (self.config['max_recent'],)).fetchall():
+      paste_recent.append(index_row.format(row[0][:10], row[1], row[2], datetime.utcfromtimestamp(row[3]).strftime('%Y/%m/%d %H:%M UTC'), row[4]))
+    with codecs.open(os.path.join(self.config['output_directory'], 'index.html'), 'w', 'UTF-8') as f:
+      f.write(self.t_engine['index'].substitute(pasterows='\n'.join(paste_recent)))
 
   def handle_control(self, lines, timestamp):
     self.log(self.logger.DEBUG, 'got control message: %s' % lines)
@@ -324,60 +344,18 @@ class main(threading.Thread):
           self.log(self.logger.DEBUG, 'should delete message_id %s but there is no article matching this message_id' % message_id)
           continue
         self.log(self.logger.INFO, 'deleting message_id %s' % message_id)
-        try: self.sqlite.execute('DELETE FROM pastes WHERE article_uid = ?', (message_id,))
-        except Exception as e:
-          self.log(self.logger.ERROR, 'could not delete database entry for message_id %s: %s' % (message_id, e))
         try:
-          self.log(self.logger.INFO, 'deleting %s.html..' % sha1(message_id).hexdigest()[:10])
-          os.unlink(os.path.join(self.outputDirectory, "%s.html" % sha1(message_id).hexdigest()[:10]))
-        except Exception as e:
+          self.sqlite.execute('DELETE FROM pastes WHERE article_uid = ?', (message_id,))
+        except sqlite3.Error as e:
+          self.log(self.logger.ERROR, 'could not delete database entry for message_id %s: %s' % (message_id, e))
+        self.log(self.logger.INFO, 'deleting %s.html..' % sha1(message_id).hexdigest()[:10])
+        try:
+          os.unlink(os.path.join(self.config['output_directory'], "%s.html" % sha1(message_id).hexdigest()[:10]))
+        except OSError as e:
           self.log(self.logger.WARNING, 'could not delete paste for message_id %s: %s' % (message_id, e))
         self.sqlite.commit()
       else:
         self.log(self.logger.WARNING, 'unknown control message: %s' % line)
 
-  def handle_new(self, signum, frame):
-    # only standalone
-    # FIXME use try: except around open(), also check for duplicate here
-    if self.busy:
-      self.retry = True
-      return
-    self.busy = True
-    something_new = False
-    for message_id in os.listdir(self.watching):
-      f = open(os.path.join(self.watching, message_id), 'r')
-      message_content = f.readlines()
-      f.close()
-      if len(message_content) == 0:
-        self.log(self.logger.WARNING, 'empty NNTP message \'%s\'. wtf?' % message_id)
-        os.remove(os.path.join(self.watching, message_id))
-        continue
-      if not self.parse_message(message_id, message_content):
-        os.remove(os.path.join(self.watching, message_id))
-        continue
-      something_new = True
-      os.remove(os.path.join(self.watching, message_id))
-    if something_new:
-      self.recreate_index()
-    self.busy = False
-    if self.retry:
-      self.retry = False
-      self.handle_new(None, None)
-
 if __name__ == '__main__':
-  args = dict()
-  args['watch_directory'] = 'hooks/paste'
-  args['template_directory'] = 'plugins/paste/templates'
-  args['output_directory'] = 'plugins/paste/out'
-  args['database_directory'] = 'plugins/paste'
-  args['debug'] = '5'
-  foo = main('paster', args)
-  foo.start()
-  while True:
-    try:
-      #time.sleep(3600)
-      signal.pause()
-    except:
-      print
-      foo.shutdown()
-      exit(0)
+  print "[%s] %s. %s" % ("paste", "this plugin can't run as standalone version.", "bye")

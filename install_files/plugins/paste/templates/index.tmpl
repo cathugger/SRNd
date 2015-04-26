@@ -3,19 +3,19 @@
 
 <html>
   <head>
-    <title>%%title%% - decentralized pastebin</title>
+    <title>${title} - decentralized pastebin</title>
     <meta http-equiv="content-type" content="text/html; charset=utf-8">
     <link rel="stylesheet" href="styles.css" type="text/css">
   </head>
   <body>
     <center>
-      <h3>%%title%% - decentralized pastebin</h3>
+      <h3>${title} - decentralized pastebin</h3>
       <div class="postform">
         <form method="POST" action="/incoming" enctype="multipart/form-data">
           <input type="hidden" name="frontend" value="paste" />
           <input type="hidden" name="board" value="ano.paste" />
-          <input type="hidden" name="reply" value="%%reply%%" />
-          <input type="hidden" name="target" value="%%target%%" />
+          <input type="hidden" name="reply" value="" />
+          <input type="hidden" name="target" value="" />
           <table cellspacing="1" cellpadding="0" width="100%">
             <tr>
               <th>Name</th>
@@ -26,6 +26,22 @@
               <th>E-Mail</th>
               <td><input type="text" name="email" class="posttext" /></td>
               <td>&nbsp;</td>
+            </tr>
+            <tr>
+            <th>Paste private</th>
+              <td>
+                <input name="hidden" type="checkbox" value="true">
+              </td>
+              <td>&nbsp;</td>
+            </tr>
+            <tr>
+            <th>Language</th>
+              <td>
+                <select name="language" class="posttext">
+${language}
+                </select>
+              </td>
+             <td>&nbsp;</td>
             </tr>
             <tr>
               <th>Title</th>
@@ -45,8 +61,9 @@
           <th><a name="recent"></a>subject</th>
           <th>sender</th>
           <th>date</th>
+          <th>type</th>
         </tr>
-        %%pasterows%%
+${pasterows}
       </table>
       </div>
     </center>

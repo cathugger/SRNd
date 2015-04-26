@@ -3,20 +3,20 @@
 
 <html>
 <head>
-  <title>%%title%% - %%paste_title%%</title>
+  <title>${title} - ${paste_title}</title>
   <meta http-equiv="content-type" content="text/html; charset=utf-8">
   <link rel="stylesheet" href="styles.css" type="text/css">
 </head>
 <body>
   <table cellspacing="0" cellpadding="0" width="100%">
     <tr>
-      <td><b>%%paste_title%%</b> <a href="%%identifier%%.txt">raw</a></td>
+      <td><b>${paste_title}</b> <a href="${identifier}.txt">raw</a></td>
       <td align="right"><a href="index.html">new paste</a> <a href="index.html#recent">recent pastes</a></td>
     </tr>
   </table>
-  %%sent%% by %%sender%%<br /><br />
+  <span class="na">${sent}</span> by <span class="s">${sender}</span> <span class="na">lang:</span> <span class="s">${lang}</span><br /><br />
   <div class="paste">
-    %%paste%%
+    ${paste}
   </div>
 </body>
 </html>
