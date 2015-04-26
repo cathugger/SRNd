@@ -28,6 +28,7 @@
         <input type="hidden" name="comment" value="{11}" />
         <input type="hidden" name="file_name" value="{12}" />
         <input type="hidden" name="file_ct" value="{13}" />
+{14}
         <br />
         <input type="submit" class="postbutton" value="solve dat shit" />
       </form>

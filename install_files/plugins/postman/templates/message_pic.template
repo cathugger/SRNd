@@ -7,7 +7,7 @@ Subject: {3}
 Message-ID: {4}
 References: {5}
 Path: {6}{11}
-X-I2P-DestHash: {12}
+X-I2P-DestHash: {12}{13}
 
 This is a multi-part message in MIME format.
 --{7}

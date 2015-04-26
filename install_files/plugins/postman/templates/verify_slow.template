@@ -28,6 +28,7 @@
         <input type="hidden" name="file_name" value="{12}" />
         <input type="hidden" name="file_ct" value="{13}" />
 	<input type="hidden" name="file_b64" value="{14}" />
+{15}
         <input type="text" class="posttext" style="width: 150px;" name="solution" />
         <br />
         <input type="submit" class="postbutton" value="solve dat shit" />

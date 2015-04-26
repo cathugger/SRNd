@@ -7,6 +7,6 @@ Subject: {3}
 Message-ID: {4}
 References: {5}
 Path: {6}{8}
-X-I2P-DestHash: {9}
+X-I2P-DestHash: {9}{10}
 
 {7}

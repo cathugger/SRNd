@@ -62,7 +62,7 @@ class postman(BaseHTTPRequestHandler):
   def do_GET(self):
     cookie = self.get_cookie('sid')
     if cookie and cookie in self.origin.spammers:
-      self.origin.log(self.origin.logger.WARNING, 'GET recognized an earlier spammer trying to access %s! %s' % (self.path, cookie))
+      self.origin.log(self.origin.logger.VERBOSE, 'GET recognized an earlier spammer trying to access %s! %s' % (self.path, cookie))
       self._spammers_spam()
       return
     self.path = unquote(self.path)
@@ -235,6 +235,7 @@ class postman(BaseHTTPRequestHandler):
     passphrase = ''.join([random.choice(self.origin.captcha_alphabet) for i in xrange(self.origin.captcha_len)])
     #passphrase += ' ' + ''.join([random.choice(self.origin.captcha_alphabet) for i in xrange(6)])
     b64 = self.origin.captcha_render_b64(passphrase, self.origin.captcha_tiles, self.origin.get_captcha_font(), self.origin.captcha_filter)
+    custom_headers = self._custom_headers_to_html(self._get_custom_headers(post_vars, frontend))
     if self.origin.captcha_require_cookie:
       cookie = ''.join(random.choice(self.origin.captcha_alphabet) for x in range(32))
       expires, solution_hash = self.origin.captcha_generate(passphrase, self.origin.captcha_secret + cookie)
@@ -251,10 +252,35 @@ class postman(BaseHTTPRequestHandler):
       if file_b64 != '':
         # we can have empty file_b64 here whether captcha was entered wrong first time
         self.origin.temp_file_obj[file_name] = [file_b64, int(time.time())]
-      self.wfile.write(self.origin.template_verify_fast.format(message, b64, solution_hash, expires, frontend, board, reply, target, name, email, subject, comment, file_name, file_ct))
+      self.wfile.write(self.origin.template_verify_fast.format(message, b64, solution_hash, expires, frontend, board, reply, target, name, email, subject, comment, file_name, file_ct, custom_headers))
     else:
-      self.wfile.write(self.origin.template_verify_slow.format(message, b64, solution_hash, expires, frontend, board, reply, target, name, email, subject, comment, file_name, file_ct, file_b64))
+      self.wfile.write(self.origin.template_verify_slow.format(message, b64, solution_hash, expires, frontend, board, reply, target, name, email, subject, comment, file_name, file_ct, file_b64, custom_headers))
     return self.origin.captcha_cache_bump()
+
+  @staticmethod
+  def _custom_headers_to_article(custom_headers):
+    """return headers to insert into the article. Also, bump first letter in key"""
+    form_ = '\n{}{}: {}'
+    return ''.join(form_.format(key[0].upper(), key[1:], value) for key, value in custom_headers.items())
+
+  @staticmethod
+  def _custom_headers_to_html(custom_headers):
+    """return headers to insert into the captcha page"""
+    form_ = '<input type="hidden" name="{}" value="{}" />'
+    return '\n'.join(form_.format(key, value.replace('"', '&quot;')) for key, value in custom_headers.items())
+
+  def _get_custom_headers(self, post_vars, frontend):
+    """extract custom headers. If header empty or missing - use default value if default value not empty. Return header: value dict"""
+    custom_headers = dict()
+    if 'custom' not in self.origin.frontends[frontend]:
+      return custom_headers
+    for key, def_val in self.origin.frontends[frontend]['custom'].items():
+      value = post_vars.getvalue(key, def_val).split('\n')[0].strip()
+      if not value:
+        value = def_val
+      if value:
+        custom_headers[key] = value
+    return custom_headers
 
   def fake_id_to_overchan_id(self, comment, board):
     def reverse_mapping(rematch):
@@ -277,7 +303,6 @@ class postman(BaseHTTPRequestHandler):
       self.die('frontend not in post_vars')
       return
     frontend = post_vars['frontend'].value
-    self.origin.log(self.origin.logger.INFO, "got incoming article from %s:%i for frontend '%s'" % (self.client_address[0], self.client_address[1], frontend))
     if not 'target' in post_vars:
       self.die('target not in post_vars')
       return
@@ -430,16 +455,22 @@ class postman(BaseHTTPRequestHandler):
       if i2p_desthash == 'non-i2p' or not self.origin.allow_this_desthash(i2p_desthash):
         self.die('This frontend uses hardened spamprotect. Come back one hour later.')
         return
-    #f = open('tmp/' + boundary, 'w')
-    if signature:
-      link = os.path.join('incoming', 'tmp', boundary + '_')
+
+    custom_headers = self._get_custom_headers(post_vars, frontend)
+    if custom_headers:
+      head_info = ' Custom headers: {}'.format(', '.join(custom_headers.keys()))
+      custom_headers = self._custom_headers_to_article(custom_headers)
     else:
-      link = os.path.join('incoming', 'tmp', boundary)
+      head_info = ''
+      custom_headers = ''
+    self.origin.log(self.origin.logger.INFO, "got incoming {} from {}:{} for frontend '{}'.{}".format(message_uid, self.client_address[0], self.client_address[1], frontend, head_info))
+
+    link = os.path.join('incoming', 'tmp', boundary + '_') if signature else os.path.join('incoming', 'tmp', boundary)
     f = open(link, 'w')
     if file_name == '':
-      f.write(self.origin.template_message_nopic.format(sender, date, group, subject, message_uid, reply, uid_host, comment, sage, i2p_desthash).replace('\r', ''))
+      f.write(self.origin.template_message_nopic.format(sender, date, group, subject, message_uid, reply, uid_host, comment, sage, i2p_desthash, custom_headers).replace('\r', ''))
     else:
-      f.write(self.origin.template_message_pic.format(sender, date, group, subject, message_uid, reply, uid_host, boundary, comment, content_type, file_name, sage, i2p_desthash).replace('\r', ''))
+      f.write(self.origin.template_message_pic.format(sender, date, group, subject, message_uid, reply, uid_host, boundary, comment, content_type, file_name, sage, i2p_desthash, custom_headers).replace('\r', ''))
       if 'hash' in post_vars:
         if self.origin.fast_uploads:
           # get file looking by file_name
@@ -470,7 +501,7 @@ class postman(BaseHTTPRequestHandler):
       signed = open(link[:-1], 'w')
       f = open(link, 'r')
       link = link[:-1]
-      signed.write(self.origin.template_message_signed.format(sender, date, group, subject, message_uid, reply, uid_host, pubkey, signature, sage, i2p_desthash))
+      signed.write(self.origin.template_message_signed.format(sender, date, group, subject, message_uid, reply, uid_host, pubkey, signature, sage, i2p_desthash, custom_headers))
       f.seek(0)
       for line in f:
         signed.write(line)

@@ -7,7 +7,7 @@ Subject: {3}
 Message-ID: {4}
 References: {5}
 Path: {6}{9}
-X-I2P-DestHash: {10}
+X-I2P-DestHash: {10}{11}
 X-pubkey-ed25519: {7}
 X-signature-ed25519-sha512: {8}
 
