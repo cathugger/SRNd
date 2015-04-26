@@ -1,0 +1,37 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01//EN"
+  "http://www.w3.org/TR/html4/strict.dtd">
+<html>
+  <head>
+    <title>straight into deep space</title>
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <link rel="stylesheet" href="/styles.css" type="text/css">
+    <link rel="stylesheet" href="/user.css" type="text/css">
+  </head>
+  <body class="mod">
+    <center>
+    ${message}
+      <br />
+      <br />
+      <img src="data:image/png;base64,${b64}" />
+      <br />
+      <form ACTION="/incoming/verify" METHOD="POST" enctype="multipart/form-data">
+        <input type="hidden" name="hash" value="${solution_hash}" />
+        <input type="hidden" name="expires" value="${expires}" />
+        <input type="hidden" name="frontend" value="${frontend}" />
+        <input type="hidden" name="board" value="${board}" />
+        <input type="hidden" name="reply" value="${reply}" />
+        <input type="hidden" name="target" value="${target}" />
+        <input type="hidden" name="name" value="${name}" />
+        <input type="hidden" name="email" value="${email}" />
+        <input type="hidden" name="subject" value="${subject}" />
+        <input type="hidden" name="comment" value="${comment}" />
+        <input type="hidden" name="file_name" value="${file_name}" />
+        <input type="hidden" name="file_ct" value="${file_ct}" />
+        <input type="hidden" name="file_b64" value="${file_b64}" />${custom_headers}
+        <input type="text" class="posttext" style="width: 150px;" name="solution" />
+        <br />
+        <input type="submit" class="postbutton" value="solve dat shit" />
+      </form>
+    </center>
+  </body>
+</html>

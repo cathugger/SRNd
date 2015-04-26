@@ -21,7 +21,7 @@ from urllib import unquote
 import Image, ImageDraw, ImageFilter, ImageFont
 import nacl.signing
 
-from srnd.utils import chrootRandom
+from srnd.utils import chrootRandom, str_reaper
 
 class postman(BaseHTTPRequestHandler):
 
@@ -179,9 +179,6 @@ class postman(BaseHTTPRequestHandler):
     if not 'frontend' in post_vars:
       self.die('frontend not in post_vars')
       return
-    else:
-      frontend = post_vars.getvalue('frontend', '').replace('"', '&quot;')
-    reply = post_vars.getvalue('reply', '').replace('"', '&quot;')
     #if frontend == 'overchan' and reply != '':
     #  # FIXME add ^ allow_reply_bypass to frontend configuration
     #  if self.origin.captcha_bypass_after_timestamp_reply < int(time.time()):
@@ -196,78 +193,78 @@ class postman(BaseHTTPRequestHandler):
       elif self.origin.receive_from_friends == 2:
         self.die('Anonymous posting is not allowed on this frontend.')
         return
-    board = post_vars.getvalue('board', '').replace('"', '&quot;')
-    target = post_vars.getvalue('target', '').replace('"', '&quot;')
-    name = post_vars.getvalue('name', '').replace('"', '&quot;')
-    email = post_vars.getvalue('email', '').replace('"', '&quot;')
-    subject = post_vars.getvalue('subject', '').replace('"', '&quot;')
-    if post_vars.getvalue('hash', '') != '':
-      comment = post_vars.getvalue('comment', '').replace('"', '&quot;')
-      file_name = post_vars.getvalue('file_name', '').replace('"', '&quot;')
-      file_ct = post_vars.getvalue('file_ct', '').replace('"', '&quot;')
-      file_b64 = post_vars.getvalue('file_b64', '').replace('"', '&quot;')
-    else:
-      comment = base64.encodestring(post_vars.getvalue('comment', ''))
-      if not 'allowed_files' in self.origin.frontends[frontend]:
-        file_name = ''
-        file_ct = ''
-        file_b64 = ''
-      else:
-        try:
-          file_name = post_vars['file'].filename.replace('"', '&quot;')
-        except KeyError:
-          file_name = ''
-        if file_name == '':
-          file_ct = ''
-          file_b64 = ''
-        else:
-          file_ct = post_vars['file'].type.replace('"', '&quot;')
-          f = cStringIO.StringIO()
-          base64.encode(post_vars['file'].file, f)
-          file_b64 = f.getvalue()
-          f.close()
+    data = self._extract_base_headers(post_vars)
+    data['message'] = message
     if failed:
       identifier = sha256()
-      identifier.update(frontend + board + reply + target + name + email + subject)
-      identifier.update(comment)
+      identifier.update(''.join((data['frontend'], data['board'], data['reply'], data['target'], data['name'], data['email'], data['subject'])))
+      identifier.update(data['comment'])
       self.origin.log(self.origin.logger.WARNING, 'failed capture try for %s' % identifier.hexdigest())
       self.origin.log(self.origin.logger.WARNING, self.headers)
     passphrase = ''.join([random.choice(self.origin.captcha_alphabet) for i in xrange(self.origin.captcha_len)])
-    #passphrase += ' ' + ''.join([random.choice(self.origin.captcha_alphabet) for i in xrange(6)])
-    b64 = self.origin.captcha_render_b64(passphrase, self.origin.captcha_tiles, self.origin.get_captcha_font(), self.origin.captcha_filter)
-    custom_headers = self._custom_headers_to_html(self._get_custom_headers(post_vars, frontend))
+    data['b64'] = self.origin.captcha_render_b64(passphrase, self.origin.captcha_tiles, self.origin.get_captcha_font(), self.origin.captcha_filter)
+    self.send_response(200)
+    self.send_header('Content-type', 'text/html')
     if self.origin.captcha_require_cookie:
       cookie = ''.join(random.choice(self.origin.captcha_alphabet) for x in range(32))
-      expires, solution_hash = self.origin.captcha_generate(passphrase, self.origin.captcha_secret + cookie)
-      self.send_response(200)
-      self.send_header('Content-type', 'text/html')
+      data['expires'], data['solution_hash'] = self.origin.captcha_generate(passphrase, self.origin.captcha_secret + cookie)
       self.send_header('Set-Cookie', 'session=%s; path=/incoming/verify' % cookie)
     else:
-      expires, solution_hash = self.origin.captcha_generate(passphrase, self.origin.captcha_secret)
-      self.send_response(200)
-      self.send_header('Content-type', 'text/html')
+      data['expires'], data['solution_hash'] = self.origin.captcha_generate(passphrase, self.origin.captcha_secret)
     self.end_headers()
     # use file_name as key and file content + current time as value
     if self.origin.fast_uploads:
-      if file_b64 != '':
+      if data['file_b64']:
         # we can have empty file_b64 here whether captcha was entered wrong first time
-        self.origin.temp_file_obj[file_name] = [file_b64, int(time.time())]
-      self.wfile.write(self.origin.template_verify_fast.format(message, b64, solution_hash, expires, frontend, board, reply, target, name, email, subject, comment, file_name, file_ct, custom_headers))
+        self.origin.temp_file_obj[data['file_name']] = [data.pop('file_b64'), int(time.time())]
+      self.wfile.write(self.origin.t_engine['verify_fast'].substitute(data))
     else:
-      self.wfile.write(self.origin.template_verify_slow.format(message, b64, solution_hash, expires, frontend, board, reply, target, name, email, subject, comment, file_name, file_ct, file_b64, custom_headers))
+      self.wfile.write(self.origin.t_engine['verify_slow'].substitute(data))
     return self.origin.captcha_cache_bump()
+
+  def _extract_base_headers(self, post_vars):
+    data = {
+        'frontend': post_vars.getvalue('frontend', '').replace('"', '&quot;'),
+        'reply': post_vars.getvalue('reply', '').replace('"', '&quot;'),
+        'board': post_vars.getvalue('board', '').replace('"', '&quot;'),
+        'target': post_vars.getvalue('target', '').replace('"', '&quot;'),
+        'name': post_vars.getvalue('name', '').replace('"', '&quot;'),
+        'email': post_vars.getvalue('email', '').replace('"', '&quot;'),
+        'subject': post_vars.getvalue('subject', '').replace('"', '&quot;')
+    }
+    data['custom_headers'] = self._custom_headers_to_html(self._get_custom_headers(post_vars, data['frontend']))
+    if post_vars.getvalue('hash', '') != '':
+      data['comment'] = post_vars.getvalue('comment', '').replace('"', '&quot;')
+      data['file_name'] = post_vars.getvalue('file_name', '').replace('"', '&quot;')
+      data['file_ct'] = post_vars.getvalue('file_ct', '').replace('"', '&quot;')
+      data['file_b64'] = post_vars.getvalue('file_b64', '').replace('"', '&quot;')
+    else:
+      data['comment'] = base64.encodestring(post_vars.getvalue('comment', ''))
+      data['file_name'], data['file_ct'], data['file_b64'] = '', '', ''
+      if 'allowed_files' in self.origin.frontends[data['frontend']]:
+        try:
+          data['file_name'] = post_vars['file'].filename.replace('"', '&quot;')
+        except KeyError:
+          pass
+        if data['file_name']:
+          data['file_ct'] = post_vars['file'].type.replace('"', '&quot;')
+          f = cStringIO.StringIO()
+          base64.encode(post_vars['file'].file, f)
+          data['file_b64'] = f.getvalue()
+          f.close()
+    return data
 
   @staticmethod
   def _custom_headers_to_article(custom_headers):
     """return headers to insert into the article. Also, bump first letter in key"""
-    form_ = '\n{}{}: {}'
-    return ''.join(form_.format(key[0].upper(), key[1:], value) for key, value in custom_headers.items())
+    form_ = '\n{}: {}'
+    return ''.join(form_.format(key.capitalize(), str_reaper(value)) for key, value in custom_headers.items())
 
   @staticmethod
   def _custom_headers_to_html(custom_headers):
     """return headers to insert into the captcha page"""
-    form_ = '<input type="hidden" name="{}" value="{}" />'
-    return '\n'.join(form_.format(key, value.replace('"', '&quot;')) for key, value in custom_headers.items())
+    form_ = '\n        <input type="hidden" name="{}" value="{}" />'
+    return ''.join(form_.format(key, value.replace('"', '&quot;')) for key, value in custom_headers.items())
 
   def _get_custom_headers(self, post_vars, frontend):
     """extract custom headers. If header empty or missing - use default value if default value not empty. Return header: value dict"""
@@ -417,7 +414,7 @@ class postman(BaseHTTPRequestHandler):
 
     if 'subject' in post_vars:
       if post_vars['subject'].value.split('\n')[0] != '':
-        subject = post_vars['subject'].value.split('\n')[0]
+        subject = str_reaper(post_vars['subject'].value.split('\n')[0], 128)
 
     sage = ''
     if 'allow_sage' in self.origin.frontends[frontend]:
@@ -426,7 +423,7 @@ class postman(BaseHTTPRequestHandler):
             name.lower().startswith('sage') or name.lower().startswith('saging')):
           sage = "\nX-Sage: True"
 
-    sender = '{0} <{1}>'.format(name, email)
+    sender = '{0} <{1}>'.format(str_reaper(name, 64), str_reaper(email, 64))
     reply = ''
     if 'reply' in post_vars:
       reply = post_vars['reply'].value
@@ -680,14 +677,13 @@ class main(threading.Thread):
     f = open(os.path.join(template_directory, 'redirect.template'), 'r')
     self.httpd.template_redirect = f.read()
     f.close()
+    self.httpd.t_engine = dict()
     if self.httpd.fast_uploads:
-      f = open(os.path.join(template_directory, 'verify_fast.template'), 'r')
-      self.httpd.template_verify_fast = f.read()
-      f.close()
+      with open(os.path.join(template_directory, 'verify_fast.tmpl'), 'r') as f:
+        self.httpd.t_engine['verify_fast'] = string.Template(f.read())
     else:
-      f = open(os.path.join(template_directory, 'verify_slow.template'), 'r')
-      self.httpd.template_verify_slow = f.read()
-      f.close()
+      with open(os.path.join(template_directory, 'verify_slow.tmpl'), 'r') as f:
+        self.httpd.t_engine['verify_slow'] = string.Template(f.read())
 
     # read frontends
     self.httpd.frontends = self._read_frontends(args['frontend_directory'])
