@@ -82,6 +82,7 @@ class main(threading.Thread):
         'title': 'i.did.not.read.the.config',
         'site_url': 'my-address.i2p',
         'local_dest': 'i.did.not.read.the.config',
+        'i2paddresshelper': True,
         'css_file': 'krane.css;user.css',
         'generate_all': True,
         'threads_per_page': 10,

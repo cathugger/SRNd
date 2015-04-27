@@ -138,19 +138,28 @@ class OverchanGeneratorInit(object):
         )
     )
     f.close()
+    if self.config['i2paddresshelper']:
+      with codecs.open(os.path.join(self.config['template_directory'], 'menu_i2paddresshelper.tmpl'), "r", "utf-8") as f:
+        i2paddresshelper = string.Template(f.read()).substitute(
+            site_url=self.config['site_url'],
+            local_dest=self.config['local_dest']
+        )
+    else:
+      i2paddresshelper = u''
     f = codecs.open(os.path.join(self.config['template_directory'], 'menu.tmpl'), "r", "utf-8")
     t_engine['menu'] = string.Template(
         string.Template(f.read()).safe_substitute(
             title=self.config['title'],
             stylesheet=css_headers,
-            site_url=self.config['site_url'],
-            local_dest=self.config['local_dest']
+            i2paddresshelper=i2paddresshelper
         )
     )
     f.close()
-    f = codecs.open(os.path.join(self.config['template_directory'], 'menu_entry.tmpl'), "r", "utf-8")
-    t_engine['menu_entry'] = string.Template(f.read())
-    f.close()
+    recent_link = u'<a href="${group_name}-recent.html" target="main">(${postcount})</a>' if self.config['enable_recent'] else u''
+    with codecs.open(os.path.join(self.config['template_directory'], 'menu_entry.tmpl'), "r", "utf-8") as f:
+      t_engine['menu_entry'] = string.Template(
+          string.Template(f.read()).safe_substitute(recent_link=recent_link)
+      )
     f = codecs.open(os.path.join(self.config['template_directory'], 'overview.tmpl'), "r", "utf-8")
     t_engine['overview'] = string.Template(
         string.Template(f.read()).safe_substitute(
@@ -734,14 +743,15 @@ class OverchanGeneratorStatic(OverchanGeneratorTools):
     menu_entry = dict()
     menu_entries = list()
     exclude_flags = self.cache['flags']['hidden'] | self.cache['flags']['blocked']
-    # get fresh posts count
-    timestamp = int(time.time()) - 3600*24
     for group_row in self.overchandb.execute('SELECT group_name, group_id, ph_name, link FROM groups WHERE \
       (cast(groups.flags as integer) & ?) = 0 ORDER by group_name ASC', (exclude_flags,)).fetchall():
       menu_entry['group_name'] = group_row[0].split('.', 1)[-1].replace('"', '').replace('/', '')
       menu_entry['group_link'] = group_row[3] if self.config['use_unsecure_aliases'] and group_row[3] != '' else '%s-1.html' % menu_entry['group_name']
       menu_entry['group_name_encoded'] = group_row[2] if group_row[2] != '' else basicHTMLencode(menu_entry['group_name'])
-      menu_entry['postcount'] = self.overchandb.execute('SELECT count(article_uid) FROM articles WHERE group_id = ? AND sent > ?', (group_row[1], timestamp)).fetchone()[0]
+      if self.config['enable_recent']:
+        # get fresh posts count
+        timestamp = int(time.time()) - 3600*24
+        menu_entry['postcount'] = self.overchandb.execute('SELECT count(article_uid) FROM articles WHERE group_id = ? AND sent > ?', (group_row[1], timestamp)).fetchone()[0]
       menu_entries.append(self.t_engine['menu_entry'].substitute(menu_entry))
 
     yield 'menu', self.t_engine['menu'].substitute(menu_entries='\n'.join(menu_entries))
