@@ -43,7 +43,7 @@ class main(threading.Thread):
           self.log(self.logger.INFO, 'debuglevel not between 0 and 5, using default of debug = %i' % self.logger.INFO)
         else:
           self.log(self.logger.DEBUG, 'using debuglevel %i' % self.loglevel)
-      except ValueError as e:
+      except ValueError:
         self.loglevel = self.logger.INFO
         self.log(self.logger.INFO, 'debuglevel not between 0 and 5, using default of debug = %i' % self.logger.INFO)
     self.log(self.logger.INFO, 'initializing as plugin..')
@@ -219,7 +219,7 @@ class main(threading.Thread):
             self.handle_line(line, key_id, timestamp)
         else:
           self.log(self.logger.WARNING, 'unknown source: %s' % source)
-      except Queue.Empty as e:
+      except Queue.Empty:
         pass
     self.censordb.close()
     self.dropperdb.close()
@@ -586,14 +586,4 @@ class main(threading.Thread):
     return message_id, groups
 
 if __name__ == '__main__':
-  print "[%s] %s" % ("censor", "this plugin can't run as standalone version.")
-  args = dict()
-  args['debug'] = 5
-  args['srnd'] = None
-  tester = main("testthread", args)
-  tester.start()
-  for article in ("1", "<wxrfozvunv1384881163@web.overchan.deliciouscake.ano>"):
-    tester.add_article(article)
-  tester.add_article(("somefuckeduppublickey", "delete <foobar> #baz #bar # boo\nsomenonexistendcommand foo bar\noverchan-sticky <foobaaaar> 12345"), "httpd")
-  tester.join()
-  exit(0)
+  print "[%s] %s. %s" % ("censor", "this plugin can't run as standalone version.", "bye")

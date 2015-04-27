@@ -1386,7 +1386,7 @@ class censor_httpd(threading.Thread):
           self.log(self.logger.WARNING, 'debuglevel not between 0 and 5, using default of debug = %i' % self.loglevel)
         else:
           self.log(self.logger.DEBUG, 'using debuglevel %i' % self.loglevel)
-      except ValueError as e:
+      except ValueError:
         self.loglevel = self.logger.INFO
         self.log(self.logger.WARNING, 'debuglevel not between 0 and 5, using default of debug = %i' % self.loglevel)
     self.log(self.logger.DEBUG, 'initializing as plugin..')
