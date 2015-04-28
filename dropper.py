@@ -187,17 +187,31 @@ class dropper(threading.Thread):
           additional_headers.append('Path: ' + self.instance_name)
       else:
         if req == 'newsgroups':
-          if '/' in vals[req]:
-            raise Exception('illegal newsgroups \'%s\': contains /' % vals[req])
+          if not self.group_name_validator(vals[req]):
+            raise Exception('illegal newsgroups \'%s\'' % vals[req])
           vals[req] = vals[req].split(',')
-        elif req == 'message-id' and '/' in vals[req]:
-          raise Exception('illegal message-id \'%s\': contains /' % vals[req])
+        elif req == 'message-id' and not self.message_id_validator(vals[req]):
+          raise Exception('illegal message-id \'%s\'' % vals[req])
     if len(vals['newsgroups']) == 0:
       raise Exception('Newsgroup is missing or empty')
     if len(additional_headers) > 0:
       additional_headers.append('')
     compile_header = ''.join(('\n'.join(additional_headers), ''.join(header), '\n'))
     return desthash, vals['message-id'], vals['newsgroups'], compile_header, article_path
+
+  @staticmethod
+  def message_id_validator(name):
+    bad_char = ("&", '"', "'", "/", '\\')
+    name2 = name.encode('ascii', 'ignore')
+    if name2 != name:
+      return False
+    for char_ in bad_char:
+      if char_ in name2:
+        return False
+    return True
+
+  def group_name_validator(self, name):
+    return '<' not in name and '>' not in name and self.message_id_validator(name)
 
   def write_article(self, message_id, compile_header, fd_article):
     link = os.path.join('articles', message_id)

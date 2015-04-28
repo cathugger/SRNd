@@ -20,7 +20,7 @@ from hashlib import sha1, sha512
 import Image
 import nacl.signing
 
-from srnd.utils import basicHTMLencode, css_minifer, trydecode
+from srnd.utils import basicHTMLencode, css_minifer, trydecode, valid_group_name
 from overchan_generator import OverchanGeneratorStatic
 from overchan_markup import OverchanMarkup
 
@@ -501,7 +501,7 @@ class main(threading.Thread):
 
   def overchan_board_add(self, args):
     group_name = args[0].lower()
-    if '/' in group_name:
+    if not valid_group_name(group_name):
       self.log(self.logger.WARNING, 'got overchan-board-add with invalid group name: \'%s\', ignoring' % group_name)
       return
     try:

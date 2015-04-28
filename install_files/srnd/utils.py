@@ -30,6 +30,16 @@ def str_reaper(msg, max_len=78):
   """accurately truncate the string"""
   return trydecode(msg)[:max_len].encode('UTF-8')
 
+def valid_group_name(name):
+  bad_char = ("&", '"', "'", '/', '\\', '<', '>')
+  name2 = name.encode('ascii', 'ignore')
+  if name2 != name:
+    return False
+  for char_ in bad_char:
+    if char_ in name2:
+      return False
+  return True
+
 def generate_pubkey_short_utf_8(full_pubkey_hex, length=6):
   pub_short = ''
   for x in range(0, length / 2):
