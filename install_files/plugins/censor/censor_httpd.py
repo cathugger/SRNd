@@ -695,7 +695,8 @@ class censor(BaseHTTPRequestHandler):
         message_log_row['delete_taget'] = 'post'
       message_log_row['sender'] = row[2][:15]
       message_log_row['subject'] = row[3][:38] + '..' if len(row[3]) > 40 else row[3]
-      message_log_row['message'] = basicHTMLencode(row[4][:200] + ' [..]' if len(row[4]) > 205 else row[4])
+      message_ = row[4][:200] + ' [..]' if len(row[4]) > 205 else row[4]
+      message_log_row['message'] = basicHTMLencode(message_) if db_target == 'pastes' else message_
       message_log_row['group_name'] = row[6]
       message_log_row['sent'] = datetime.utcfromtimestamp(row[5]).strftime('%Y/%m/%d %H:%M')
       message_log_row['articlehash_full'] = articlehash_full
