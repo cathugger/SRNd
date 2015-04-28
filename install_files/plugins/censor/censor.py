@@ -533,11 +533,10 @@ class main(threading.Thread):
       return message_id, None
     if command == 'delete':
       row = self.overchandb.execute('SELECT parent from articles WHERE article_uid = ?', (message_id,)).fetchone()
-      if row != None:
-        if row[0] == '' or row[0] == message_id:
-          self.log(self.logger.DEBUG, "article is a root post, deleting whole thread")
-          for row in self.overchandb.execute('SELECT article_uid from articles where parent = ?', (message_id,)).fetchall():
-            self.delete_article(row[0])
+      if row is not None and row[0] in ('', message_id):
+        self.log(self.logger.DEBUG, "article is a overchan root post, deleting whole thread")
+        for row in self.overchandb.execute('SELECT article_uid from articles where parent = ?', (message_id,)).fetchall():
+          self.delete_article(row[0])
     return self.delete_article(message_id, command)
 
   def delete_article(self, message_id, command=''):
