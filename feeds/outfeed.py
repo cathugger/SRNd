@@ -230,7 +230,7 @@ class OutFeed(feed.BaseFeed):
     sending = 0
     with open(os.path.join('articles', message_id), 'rb') as fd:
       for to_send in self._read_article(fd):
-        sending += self.send(to_send, state)
+        sending += self.send_multiline(to_send, state)
         if self.con_broken:
           break
     if not self.con_broken:

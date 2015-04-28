@@ -284,7 +284,7 @@ class InFeed(feed.BaseFeed):
       self.log(self.logger.VERBOSE, 'should handle empty line')
     elif commands[0] == 'CAPABILITIES':
       # send CAPABILITIES. Work before authentication
-      self.send(self.caps, 'CAPABILITIES')
+      self.send_multiline(self.caps, 'CAPABILITIES')
       self.send('.', 'CAPABILITIES')
     elif commands[0] == 'QUIT':
       self.send('205 bye bye')
@@ -480,7 +480,7 @@ class InFeed(feed.BaseFeed):
           head = head.lower()
           if head in self._OVERVIEW_FMT:
             data[self._OVERVIEW_FMT.index(head) + 1] = value
-      sending += self.send('\t'.join(data), 'XOVER')
+      sending += self.send_multiline('\t'.join(data), 'XOVER')
       if self.con_broken:
         break
     if not self.con_broken:
@@ -505,7 +505,7 @@ class InFeed(feed.BaseFeed):
             head_complit = True
           elif to_send.split(': ')[0].upper() in self._remove_headers:
             continue
-        sending += self.send(to_send, mode[3])
+        sending += self.send_multiline(to_send, mode[3])
         if self.con_broken:
           break
     if not self.con_broken:
@@ -519,7 +519,7 @@ class InFeed(feed.BaseFeed):
     elif commands[0] == 'NEWSGROUPS':
       self.send('215 information follows')
       for line in self.sqlite_dropper.fetchall('SELECT group_name FROM groups'):
-        self.send(line[0])
+        self.send_multiline(line[0])
       self.send('.')
     elif commands[0] == 'OVERVIEW.FMT':
       self.send('215 Order of fields in overview database:')
@@ -534,5 +534,5 @@ class InFeed(feed.BaseFeed):
     else:
       self.send('215 list of newsgroups follows')
       for line in self.sqlite_dropper.fetchall('SELECT group_name, highest_id, lowest_id, flag FROM groups'):
-        self.send(' '.join(str(xx) for xx in line))
+        self.send_multiline(' '.join(str(xx) for xx in line))
       self.send('.')

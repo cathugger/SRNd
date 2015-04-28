@@ -116,6 +116,12 @@ class BaseFeed(threading.Thread):
     if len(commands) == 0:
       self.log(self.logger.VERBOSE, 'should handle empty line')
 
+  def send_multiline(self, message, state='send_multiline'):
+    if not isinstance(message, str):
+      return self.send([xx if not xx.startswith('.') else '.%s' % xx for xx in message], state)
+    else:
+      return self.send(message if not message.startswith('.') else '.%s' % message, state)
+
   def send(self, message, state='sending'):
     r"""Send line or list, tuple adding \r\n, return sending count"""
     if not isinstance(message, str):
