@@ -193,8 +193,7 @@ class main(threading.Thread):
             self.log(self.logger.WARNING, 'something went wrong while parsing new article {}: {}'.format(message_id, e))
             self.log(self.logger.WARNING, traceback.format_exc())
         elif ret[0] == "control":
-          got_control = True
-          self.handle_control(ret[1], ret[2])
+          got_control |= self.handle_control(ret[1], ret[2])
         else:
           self.log(self.logger.WARNING, 'got article with unknown source: %s' % ret[0])
         if self.queue.qsize() > self.config['sleep_threshold']:
@@ -334,6 +333,7 @@ class main(threading.Thread):
 
   def handle_control(self, lines, timestamp):
     self.log(self.logger.DEBUG, 'got control message: %s' % lines)
+    db_change = False
     for line in lines.split("\n"):
       if line.lower().startswith("delete "):
         message_id = line.lower().split(" ")[1]
@@ -348,14 +348,21 @@ class main(threading.Thread):
           self.sqlite.execute('DELETE FROM pastes WHERE article_uid = ?', (message_id,))
         except sqlite3.Error as e:
           self.log(self.logger.ERROR, 'could not delete database entry for message_id %s: %s' % (message_id, e))
-        self.log(self.logger.INFO, 'deleting %s.html..' % sha1(message_id).hexdigest()[:10])
+        else:
+          db_change |= True
+        short_hash = sha1(message_id).hexdigest()[:10]
+        self.log(self.logger.INFO, 'deleting {0}.html & {0}.txt'.format(short_hash))
         try:
-          os.unlink(os.path.join(self.config['output_directory'], "%s.html" % sha1(message_id).hexdigest()[:10]))
+          os.unlink(os.path.join(self.config['output_directory'], "%s.html" % short_hash))
+          os.unlink(os.path.join(self.config['output_directory'], "%s.txt" % short_hash))
         except OSError as e:
           self.log(self.logger.WARNING, 'could not delete paste for message_id %s: %s' % (message_id, e))
-        self.sqlite.commit()
       else:
         self.log(self.logger.WARNING, 'unknown control message: %s' % line)
+    if db_change:
+      self.sqlite.commit()
+    return db_change
+
 
 if __name__ == '__main__':
   print "[%s] %s. %s" % ("paste", "this plugin can't run as standalone version.", "bye")
