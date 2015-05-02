@@ -11,7 +11,7 @@ from binascii import hexlify, unhexlify
 import nacl.signing
 
 import feeds.sockssocket as sockssocket
-from feeds.feed_utils import InBuffer, HandleIncoming
+from feeds.feed_utils import InBuffer, HandleIncoming, Compressor
 
 class BaseFeed(threading.Thread):
 
@@ -129,14 +129,42 @@ class BaseFeed(threading.Thread):
     else:
       to_send = ''.join((message, '\r\n'))
     self.state = state
+    self.log(self.logger.VERBOSE, 'out: %s' % to_send[:-2])
+    return self._send_raw(to_send)
+
+  def _send_raw(self, to_send):
     sent = 0
     length = len(to_send)
     while sent != length and not self.con_broken:
       if sent > 0:
         self.log(self.logger.DEBUG, 'resending part of line, starting at %i to %i' % (sent, length))
       sent += self._socket_worker('send', to_send[sent:])
-    self.log(self.logger.VERBOSE, 'out: %s' % to_send[:-2])
     return sent
+
+  def _send_article(self, fd, state, compression=None, header=True, body=True):
+    zip_ = Compressor(compression) if compression is not None else None
+    start_time = time.time()
+    sending = 0
+    real_len = 0
+    self.state = state
+    for to_send in self._read_article(fd, header, body):
+      if zip_:
+        xx, to_send = zip_.compress(to_send)
+        sending += xx
+        if to_send:
+          real_len += self._send_raw(to_send)
+      else:
+        sending += self.send_multiline(to_send, state)
+      if self.con_broken:
+        break
+    if not self.con_broken:
+      if zip_:
+        xx, to_send = zip_.flush()
+        sending += xx
+        real_len += self._send_raw(to_send)
+      else:
+        sending += self.send('.', state)
+    return sending, real_len, time.time() - start_time
 
   def _handle_received(self):
     """Read and parsing data receive by socket"""

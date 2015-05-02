@@ -189,10 +189,11 @@ class OutFeed(feed.BaseFeed):
 
   def _worker_send_article_stream(self, send_time=120):
     start_time = int(time.time())
+    compression = ' {}'.format(self._support_vars['COMPRESSION']) if 'COMPRESSION' in self._support_vars else ''
     while len(self.articles_queue) > 0 and start_time + send_time > int(time.time()) and not self.con_broken:
       message_id = self.articles_queue.pop()
       if os.path.exists(os.path.join('articles', message_id)):
-        self.send('TAKETHIS {0}'.format(message_id))
+        self.send('TAKETHIS {}{}'.format(message_id, compression))
         self.send_article(message_id, 'outfeed_send_article_stream')
 
   def _send_new_check(self, cmd, max_count=1):
@@ -226,20 +227,17 @@ class OutFeed(feed.BaseFeed):
       self.update_trackdb('000 {} disallow to send'.format(message_id))
       return
     self.log(self.logger.INFO, 'sending article %s' % message_id)
-    start_time = time.time()
-    sending = 0
     with open(os.path.join('articles', message_id), 'rb') as fd:
-      for to_send in self._read_article(fd):
-        sending += self.send_multiline(to_send, state)
-        if self.con_broken:
-          break
+      sending, real_len, send_time = self._send_article(fd, state, self._support_vars.get('COMPRESSION') if self._current_mode == self._MODE['stream'] else None)
     if not self.con_broken:
-      self.send('.', state)
       self.byte_transfer += sending
-      self.time_transfer += time.time() - start_time
+      self.time_transfer += send_time
+      if real_len > 0:
+        diff = -int(float(sending - real_len)/sending * 100) if sending > 0 else 0
+        self.log(self.logger.DEBUG, '{} send: size: {}, {} compressed: {}, diff: {}%'.format(message_id, sending, self._support_vars.get('COMPRESSION', 'ERROR'), real_len, diff))
     # ~ + 4 minute in 1 mb. May be need correct for other network
     # rechecking small articles first
-    multiplier = (sending) / (1024 * 64)
+    multiplier = sending / (1024 * 64)
     multiplier = multiplier * 120 if multiplier > 0 else 120
     if multiplier > 3600:
       multiplier = 3600
@@ -287,12 +285,11 @@ class OutFeed(feed.BaseFeed):
 
   def _check_SUPPORT(self, varlist):
     for line in varlist:
-      key, val = line.split(' ', 1)
+      key, val = line.upper().split(' ', 1)
       self.log(self.logger.DEBUG, 'Server support key="{}", value="{}"'.format(key, val))
-      self._support_vars[key] = val
       if key == 'MAX_SEND_SIZE':
         try:
-          self._support_vars[key] = int(self._support_vars[key])
+          self._support_vars[key] = int(val)
         except ValueError:
           self._support_vars[key] = None
         else:
@@ -302,6 +299,9 @@ class OutFeed(feed.BaseFeed):
           self.log(self.logger.WARNING, 'Error parsing MAX_SEND_SIZE: abnormal value "{}"'.format(val))
         else:
           self.log(self.logger.INFO, 'Server support maximum filesize: {} bytes'.format(self._support_vars[key]))
+      elif key == 'COMPRESSION' and val in ('ZLIB', 'GZIP', 'DEFLATE'):
+        self._support_vars[key] = val.lower()
+        self.log(self.logger.INFO, 'Server support {} compression'.format(self._support_vars[key]))
     # initial start streaming
     self.outstream_currently_testing = 'STREAM'
     self.send('MODE STREAM')
@@ -520,5 +520,5 @@ class OutFeed(feed.BaseFeed):
     elif self._current_mode == self._MODE['none'] and not self._handle_handshake(commands, line):
       pass
     elif self._RESPONSES[self._current_mode](commands, line):
-      self.log(self.logger.ERROR, 'unknown response in mode {}: {}'.format(self._MODE_REVERS[self._current_mode], line))
+      self.log(self.logger.ERROR, 'unknown response in mode {}: {}'.format(self._MODE_REVERS[self._current_mode], repr(line)))
 

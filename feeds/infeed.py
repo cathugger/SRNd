@@ -331,11 +331,11 @@ class InFeed(feed.BaseFeed):
         self.articles_queue.add(message_id)
         self.qsize = len(self.articles_queue)
         self.send('238 {0} go ahead, send to the article'.format(message_id))
-    elif commands[0] == 'TAKETHIS' and len(commands) == 2:
+    elif commands[0] == 'TAKETHIS' and len(commands) > 1:
       self.waitfor = 'article'
       self.variant = 'TAKETHIS'
-      self.message_id_wait = line.split(' ', 1)[1]
-      self.in_buffer.set_multiline()
+      self.message_id_wait = line.split(' ')[1]
+      self.in_buffer.set_multiline(commands[2] if len(commands) > 2 else None)
     elif commands[0] == 'POST':
       self._handshake_state = True
       self.send('340 go ahead, send to the article')

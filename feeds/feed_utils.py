@@ -4,41 +4,64 @@ import random
 import string
 import os
 import time
+import zlib
+
+_WBITS = {'deflate': -zlib.MAX_WBITS, 'zlib': zlib.MAX_WBITS, 'gzip': zlib.MAX_WBITS | 16}
 
 class InBuffer(object):
   def __init__(self):
     self.reset()
 
-  def set_multiline(self):
+  def set_multiline(self, algo=None):
     self.multiline = True
+    if algo is not None and algo.lower() in _WBITS:
+      self._zip = zlib.decompressobj(_WBITS[algo.lower()])
+      if self._buffer:
+        # decompress already received data
+        self._buffer = self._decompress(self._buffer)
 
   def add(self, data):
     # no data. Need reconnection
     if len(data) == 0:
       return False
-    self._buffer += data
-    if not '\r\n' in self._buffer:
-      return True
-    split_data = self._buffer.split('\r\n')
-    self._buffer = split_data.pop(-1)
-    self._data.extend(split_data)
+    self._buffer += data if self._zip is None else self._decompress(data)
     return True
 
+  def _decompress(self, data):
+    data = self._zip.decompress(data)
+    if self._zip.unused_data:
+      # received uncompress data, stop decompressing
+      data += self._zip.unused_data
+      self._zip = None
+    return data
+
   def read(self):
-    if self._data:
-      for line in self._data:
-        if len(line) == 1 and line[0] == '.':
-          self.multiline = False
-          # multiline is complit
-          yield False
-        else:
-          yield line
-      del self._data[:]
+    while '\r\n' in self._buffer:
+      line, self._buffer = self._buffer.split('\r\n', 1)
+      if line == '.':
+        self.multiline = False
+        # multiline is complit
+        yield False
+      else:
+        yield line
 
   def reset(self):
+    self._zip = None
     self._buffer = ''
     self.multiline = False
-    self._data = []
+
+class Compressor(object):
+  def __init__(self, algo):
+    self._zip = zlib.compressobj(9, zlib.DEFLATED, _WBITS[algo])
+
+  def compress(self, data):
+    if data and data[0] == '.':
+      data = '.%s' % data
+    data = '%s\r\n' % data
+    return len(data), self._zip.compress(data)
+
+  def flush(self):
+    return 3, self._zip.compress('.\r\n') + self._zip.flush()
 
 class HandleIncoming(object):
   def __init__(self, infeed_name='_unnamed_', tmp_path=os.path.join('incoming', 'tmp')):
