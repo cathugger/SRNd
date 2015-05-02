@@ -67,13 +67,19 @@ class SRNd(threading.Thread):
     # create jail
     os.chdir(self.config['data_dir'])
 
+    # get initial owner
+    init_owner = (os.geteuid(), os.getegid())
+
     # get owner
     if self.config['setuid'] != '':
       owner = (self.config['uid'], self.config['gid'])
     else:
-      owner = (os.geteuid(), os.getegid())
+      owner = init_owner
 
-    # test and fixing plugins permissions
+    # load\create infeeds.cfg
+    self.infeeds_config = self._load_infeeds_config()
+
+    # test and fixing plugin dir permissions
     for directory in os.listdir('plugins'):
       dir_ = os.path.join('plugins', directory)
       try:
@@ -115,14 +121,18 @@ class SRNd(threading.Thread):
     # migrate db
     self._auto_db_migration()
 
-    # base fixing permissions
-    self._deep_permission_fix(owner, 'config', False)
-    self._deep_permission_fix(owner, self.config['db_dir'], False)
-
     # fix all permission if owner change. it is a long time
     if old_owner != owner:
       self.log(self.logger.INFO, "onwer change, fixing all permissions...")
       self._deep_permission_fix(owner, '.', False)
+
+    # protect some files from changes, if srnd dropping privileges
+    if owner != init_owner:
+      self._protect_files(init_owner)
+
+    # base fixing permissions
+    self._deep_permission_fix(owner, os.path.join('config', 'hooks', 'filesystem'), False)
+    self._deep_permission_fix(owner, self.config['db_dir'], False)
 
     # init db manager
     self._db_manager = __import__('srnd.db_utils').db_utils.DatabaseManager(self.config['db_dir'])
@@ -258,6 +268,22 @@ class SRNd(threading.Thread):
       else:
         self.log(self.logger.CRITICAL, "couldn't change owner or permission of {}: {}".format(path, e))
       exit(1)
+
+  def _protect_files(self, owner):
+    mode_file = 0o664
+    # Prevent add and load plugin after dropping privileges
+    for dir_ in ('config', 'srnd'):
+      self._deep_permission_fix(owner, dir_, False)
+    # Prevent modify files and templates files - plugin can be reload
+    # TODO: Protect all plugin files and directories, without tmp and out. Also, templates directory may be renamed in plugin config
+    for plugin_dir in os.listdir('plugins'):
+      for target in os.listdir(os.path.join('plugins', plugin_dir)):
+        path = os.path.join('plugins', plugin_dir, target)
+        if os.path.isfile(path):
+          self._permission_fix(mode_file, owner, path)
+        elif target == 'templates':
+          self._deep_permission_fix(owner, path, False)
+
 
   def get_info(self, data=None):
     if data is not None and data.get('command', None) in self.ctl_socket_handlers:
@@ -967,8 +993,6 @@ class SRNd(threading.Thread):
     self._load_outfeed_db()
     self.start_plugins()
     self.update_hooks()
-
-    self.infeeds_config = self._load_infeeds_config()
 
     self._sync_on_startup()
 
