@@ -172,7 +172,7 @@ class main(threading.Thread):
         something = something.convert('RGB')
         thumb_name = 'nope_loading_PIL.jpg'
       something = something.resize((x, y), Image.ANTIALIAS)
-      out = os.path.join(self.config['template_directory'], thumb_name)
+      out = os.path.join(self.config['temp_directory'], thumb_name)
       something.save(out, optimize=True)
       del something
       os.remove(out)
