@@ -29,6 +29,7 @@ class dropper(threading.Thread):
     self.running = False
     self.watching = os.path.join(os.getcwd(), "incoming")
     self.DATABASE_VERSION = 3
+    self._redistribute = set()
 
     self.dropperdb = kwargs['db_connector']('dropper', timeout=20)
     self.hashesdb = kwargs['db_connector']('hashes')
@@ -114,6 +115,7 @@ class dropper(threading.Thread):
         fd.close()
         os.remove(link)
         self.data_update(message_id, groups, desthash)
+    self.redistribute_bump()
     self.busy = False
     if self.retry:
       self.retry = False
@@ -227,7 +229,6 @@ class dropper(threading.Thread):
 
   def data_update(self, message_id, groups, desthash):
     self.hashesdb.execute('INSERT OR IGNORE INTO article_hashes VALUES (?, ?, ?)', (message_id, sha1(message_id).hexdigest(), desthash))
-    self.hashesdb.commit()
 
     current_time = int(time.time())
     for group in groups:
@@ -257,7 +258,6 @@ class dropper(threading.Thread):
           self.dropperdb.execute('UPDATE groups SET highest_id = ?, article_count = article_count + 1, last_update = ? WHERE group_id = ?', (article_id, current_time, group_id))
         else:
           article_id = article_id[0]
-      self.dropperdb.commit()
 
       article_link = '../../' + os.path.join('articles', message_id)
       group_link = os.path.join(group_dir, str(article_id))
@@ -270,27 +270,33 @@ class dropper(threading.Thread):
             self.log(self.logger.ERROR, 'found a strange group link which should point to "{}" but instead points to "{}". Won\'t overwrite this link.'.format(message_id, target))
         else:
           self.log(self.logger.ERROR, 'unhandled error when create symlink ({} -> {}): {}'.format(article_link, group_link, e))
-      self.redistribute_command(group, message_id, article_link)
+      self._redistribute.add((group, message_id, article_link))
 
-  def redistribute_command(self, group, message_id, article_link):
-    # TODO add universal redistributor? Add SRNd queue? Currents methods thread-safe?
-    for hook in self.SRNd.get_allow_hooks(group):
-      if hook.startswith('plugin-'):
-        if hook in self.SRNd.plugins:
-          self.SRNd.plugins[hook].add_article(message_id)
+  def redistribute_bump(self):
+    self.hashesdb.commit()
+    self.dropperdb.commit()
+    self.redistribute_command()
+
+  def redistribute_command(self):
+    while self._redistribute:
+      group, message_id, article_link = self._redistribute.pop()
+      for hook in self.SRNd.get_allow_hooks(group):
+        if hook.startswith('plugin-'):
+          if hook in self.SRNd.plugins:
+            self.SRNd.plugins[hook].add_article(message_id)
+          else:
+            self.log(self.logger.ERROR, 'unknown plugin hook detected. wtf? {}'.format(hook))
+        elif hook.startswith('outfeed-'):
+          if hook in self.SRNd.feeds:
+            self.SRNd.feeds[hook].add_article(message_id)
+          else:
+            self.log(self.logger.ERROR, 'unknown outfeed detected. wtf? {}'.format(hook))
+        elif hook.startswith('filesystem-'):
+          link = os.path.join('hooks', hook[11:], message_id)
+          if not os.path.exists(link):
+            os.symlink(article_link, link)
         else:
-          self.log(self.logger.ERROR, 'unknown plugin hook detected. wtf? {}'.format(hook))
-      elif hook.startswith('outfeed-'):
-        if hook in self.SRNd.feeds:
-          self.SRNd.feeds[hook].add_article(message_id)
-        else:
-          self.log(self.logger.ERROR, 'unknown outfeed detected. wtf? {}'.format(hook))
-      elif hook.startswith('filesystem-'):
-        link = os.path.join('hooks', hook[11:], message_id)
-        if not os.path.exists(link):
-          os.symlink(article_link, link)
-      else:
-        self.log(self.logger.ERROR, 'unknown hook detected. wtf? {}'.format(hook))
+          self.log(self.logger.ERROR, 'unknown hook detected. wtf? {}'.format(hook))
 
   def _article_path_up(self, article_path):
     article_path = article_path.split('!')
