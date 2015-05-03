@@ -47,6 +47,7 @@ class main(threading.Thread):
     self.name = thread_name
     self.should_terminate = False
     self.logger = logger
+    self.DATABASE_VERSION = 2
 
     self.config = dict()
     self._init_config(args)
@@ -106,7 +107,8 @@ class main(threading.Thread):
         'enable_top': False,
         'top_step': 10,
         'top_count': 100,
-        'db_maintenance': 3
+        'db_maintenance': 3,
+        'thumb_maxwh': '180x360'
     }
     # (to self.config['thumbs'], from args, default)
     thumbnail_files = (('no_file', 'no_file', 'nope.png'), ('document', 'document_file', 'document.png'), ('invalid', 'invalid_file', 'invalid.png'), ('audio', 'audio_file', 'audio.png'), \
@@ -156,6 +158,15 @@ class main(threading.Thread):
       if 'user.css' not in cfg_new['csss'] and len(cfg_new['csss']) == 1:
         cfg_new['csss'].append('user.css')
 
+    w, _, h = cfg_new.get('thumb_maxwh', '180x360').partition('x')
+    try:
+      cfg_new['thumb_maxwh'] = (int(w), int(h))
+    except ValueError:
+      cfg_new['thumb_maxwh'] = None
+    if cfg_new['thumb_maxwh'] is None or cfg_new['thumb_maxwh'][0] < 1 or cfg_new['thumb_maxwh'][1] < 1:
+      self.log(self.logger.WARNING, 'Incorrect thumb_maxwh {}, use default (180, 360)'.format(cfg_new['thumb_maxwh']))
+      cfg_new['thumb_maxwh'] = (180, 360)
+
     self.config.update(cfg_new)
 
   def init_plugin(self):
@@ -184,20 +195,16 @@ class main(threading.Thread):
 
   def gen_template_thumbs(self, sources):
     for source in sources:
-      link = os.path.join(self.config['output_directory'], 'thumbs', source)
-      if not os.path.exists(link):
-        try:
-          something = Image.open(os.path.join(self.config['template_directory'], source))
-          modifier = float(180) / something.size[0]
-          x = int(something.size[0] * modifier)
-          y = int(something.size[1] * modifier)
-          if not (something.mode == 'RGBA' or something.mode == 'LA'):
-            something = something.convert('RGB')
-          something = something.resize((x, y), Image.ANTIALIAS)
-          something.save(link, optimize=True)
-          del something
-        except IOError as e:
-          self.log(self.logger.ERROR, 'can\'t thumb save %s. wtf? %s' % (link, e))
+      dest = os.path.join(self.config['output_directory'], 'thumbs')
+      target = os.path.join(self.config['template_directory'], source)
+      dest_link = os.path.join(self.config['output_directory'], 'thumbs', source)
+      if not os.path.exists(dest_link):
+        thumb_name, info = self._create_thumb(target, dest, source, True)
+        if info is None:
+          self.log(self.logger.ERROR, 'can\'t template thumb create %s. wtf?' % dest_link)
+        else:
+          self.sqlite.execute('INSERT OR REPLACE INTO thumb_info VALUES (?, ?, ?, ?)', (thumb_name, info[0], info[1], info[2]))
+    self.sqlite.commit()
 
   def copy_out(self, css, sources):
     for source, target in sources:
@@ -235,6 +242,13 @@ class main(threading.Thread):
     # ^ hardlinks not gonna work because of remote filesystems
     # ^ softlinks not gonna work because of nginx chroot
     # ^ => cp
+    self.dropperdb = self.config['db_connector']('dropper', timeout=60)
+    self.censordb = self.config['db_connector']('censor', timeout=60)
+    self.sqlite = self.config['db_connector']('overchan')
+    if not self.config['sqlite_synchronous']:
+      self.sqlite.execute("PRAGMA synchronous = OFF")
+    self.update_overchandb()
+
     self.copy_out(css=False, sources=((self.config['thumbs']['no_file'], os.path.join('img', self.config['thumbs']['no_file'])), ('suicide.txt', os.path.join('img', 'suicide.txt')), \
       ('playbutton.png', os.path.join('img', 'playbutton.png')),))
     self.copy_out(css=True, sources=([(self.config['censor_css'], 'censor.css'),] + [(x, x if self.config['csss'][0] != x else 'styles.css') for x in self.config['csss']]))
@@ -248,99 +262,111 @@ class main(threading.Thread):
     self.cache['moder_flags'] = dict()
     self.board_cache = dict()
 
-    self.dropperdb = self.config['db_connector']('dropper', timeout=60)
-    self.censordb = self.config['db_connector']('censor', timeout=60)
-    self.sqlite = self.config['db_connector']('overchan')
-    if not self.config['sqlite_synchronous']:
-      self.sqlite.execute("PRAGMA synchronous = OFF")
-    # FIXME use config table with current db version + def update_db(db_version) like in censor plugin
-    self.sqlite.execute('''CREATE TABLE IF NOT EXISTS groups
-               (group_id INTEGER PRIMARY KEY AUTOINCREMENT, group_name text UNIQUE, article_count INTEGER, last_update INTEGER)''')
-    self.sqlite.execute('''CREATE TABLE IF NOT EXISTS articles
-               (article_uid text, group_id INTEGER, sender text, email text, subject text, sent INTEGER, parent text, message text, imagename text, imagelink text, thumblink text, last_update INTEGER, public_key text, PRIMARY KEY (article_uid, group_id))''')
-    self.sqlite.execute('''CREATE TABLE IF NOT EXISTS config (key text PRIMARY KEY, value text)''')
-    try:
-      self.sqlite.execute('INSERT INTO config VALUES ("db_maintenance","0")')
-    except sqlite3.IntegrityError:
-      pass
-
-    self.sqlite.execute('''CREATE TABLE IF NOT EXISTS flags
-               (flag_id INTEGER PRIMARY KEY AUTOINCREMENT, flag_name text UNIQUE, flag text)''')
-
-    insert_flags = (("blocked",      0b1),          ("hidden",      0b10),
-                    ("no-overview",  0b100),        ("closed",      0b1000),
-                    ("moder-thread", 0b10000),      ("moder-posts", 0b100000),
-                    ("no-sync",      0b1000000),    ("spam-fix",    0b10000000),
-                    ("no-archive",   0b100000000),  ("sage",        0b1000000000),
-                    ("news",         0b10000000000),)
-    for flag_name, flag in insert_flags:
-      try:
-        self.sqlite.execute('INSERT INTO flags (flag_name, flag) VALUES (?,?)', (flag_name, str(flag)))
-      except sqlite3.IntegrityError:
-        pass
-    for alias in ('ph_name', 'ph_shortname', 'link', 'tag', 'description',):
-      try:
-        self.sqlite.execute('ALTER TABLE groups ADD COLUMN {0} text DEFAULT ""'.format(alias))
-      except sqlite3.OperationalError:
-        pass
-    try:
-      self.sqlite.execute('ALTER TABLE groups ADD COLUMN flags text DEFAULT "0"')
-    except sqlite3.OperationalError:
-      pass
-    try:
-      self.sqlite.execute('ALTER TABLE articles ADD COLUMN public_key text')
-    except sqlite3.OperationalError:
-      pass
-    try:
-      self.sqlite.execute('ALTER TABLE articles ADD COLUMN received INTEGER DEFAULT 0')
-    except sqlite3.OperationalError:
-      pass
-    try:
-      self.sqlite.execute('ALTER TABLE articles ADD COLUMN closed INTEGER DEFAULT 0')
-    except sqlite3.OperationalError:
-      pass
-    try:
-      self.sqlite.execute('ALTER TABLE articles ADD COLUMN sticky INTEGER DEFAULT 0')
-    except sqlite3.OperationalError:
-      pass
-    try:
-      self.sqlite.execute('ALTER TABLE articles ADD COLUMN article_hash text')
-    except sqlite3.OperationalError:
-      pass
-    else:
-      self.log(self.logger.WARNING, 'Starting db update...')
-      try:
-        for row in self.sqlite.execute('SELECT article_uid FROM articles').fetchall():
-          article_hash = sha1(row[0]).hexdigest()
-          self.sqlite.execute('UPDATE articles SET article_hash = ? WHERE article_uid = ?', (article_hash, row[0]))
-          self.sqlite.commit()
-      except sqlite3.Error as e:
-        self.die('DB update status - FAIL. You must fix this error manually. In case this is the first time you are starting SRNd - ignore and restart SRNd. See overchan.py:562 for details. Error: {}'.format(e))
-      else:
-        self.log(self.logger.WARNING, 'DB update status - OK.')
-    self.sqlite.execute('CREATE INDEX IF NOT EXISTS articles_group_idx ON articles(group_id);')
-    self.sqlite.execute('CREATE INDEX IF NOT EXISTS articles_parent_idx ON articles(parent);')
-    self.sqlite.execute('CREATE INDEX IF NOT EXISTS articles_article_idx ON articles(article_uid);')
-    self.sqlite.execute('CREATE INDEX IF NOT EXISTS articles_last_update_idx ON articles(group_id, parent, last_update);')
-    self.sqlite.execute('CREATE INDEX IF NOT EXISTS articles_article_hash_idx ON articles(article_hash);')
-    db_maintenance = self._need_db_maintenance()
-    self.sqlite.commit()
-
-    if db_maintenance:
+    if self._need_db_maintenance():
       self._db_maintenance()
 
     self.cache_init()
-
     self.markup_parser = OverchanMarkup(overchandb=self.sqlite, dropperdb=self.dropperdb, fake_id=self.config['fake_id'], get_board_data=self.get_board_data)
-
     db_conns = {'overchandb': self.sqlite, 'dropperdb': self.dropperdb, 'censordb': self.censordb}
     board_cache_conns = {'get_board_list': self.get_board_list, 'get_board_data': self.get_board_data}
     self.overchan_generator = OverchanGeneratorStatic(db_conns=db_conns, log=self.log, logger=self.logger, config=self.config, cache=self.cache, board_cache_conns=board_cache_conns, markup_parser=self.markup_parser)
-
     self.genegate_first_start()
-
     if self.config['generate_all']:
       self.regenerate_all_html()
+
+  def update_overchandb(self):
+    try:
+      db_version = int(self.sqlite.execute('SELECT value FROM config WHERE key = "db_version"').fetchone()[0])
+    except (sqlite3.OperationalError, TypeError) as e:
+      db_version = 0
+      self.log(self.logger.DEBUG, 'error while fetching db_version: {}. assuming new database'.format(e))
+    if db_version < self.DATABASE_VERSION:
+      self.log(self.logger.INFO, 'should update db from version {}'.format(db_version))
+      while db_version < self.DATABASE_VERSION:
+        self.log(self.logger.INFO, 'updating db from version {} to version {}'.format(db_version, db_version + 1))
+        self._update_db_from(db_version)
+        db_version += 1
+        self.sqlite.execute('UPDATE config SET value = ? WHERE key = "db_version"', (db_version,))
+        self.sqlite.commit()
+
+  def _update_db_from(self, version):
+    if version == 0:
+      # create configuration
+      self.sqlite.execute('''CREATE TABLE IF NOT EXISTS config (key text PRIMARY KEY, value text)''')
+      self.sqlite.execute('INSERT INTO config VALUES ("db_version","0")')
+      try:
+        self.sqlite.execute('INSERT INTO config VALUES ("db_maintenance","0")')
+      except sqlite3.IntegrityError:
+        pass
+
+      self.sqlite.execute('''CREATE TABLE IF NOT EXISTS groups
+                 (group_id INTEGER PRIMARY KEY AUTOINCREMENT, group_name text UNIQUE, article_count INTEGER, last_update INTEGER)''')
+      self.sqlite.execute('''CREATE TABLE IF NOT EXISTS articles
+                 (article_uid text, group_id INTEGER, sender text, email text, subject text, sent INTEGER, parent text, message text, imagename text, imagelink text, thumblink text, last_update INTEGER, public_key text, PRIMARY KEY (article_uid, group_id))''')
+
+      self.sqlite.execute('''CREATE TABLE IF NOT EXISTS flags
+                 (flag_id INTEGER PRIMARY KEY AUTOINCREMENT, flag_name text UNIQUE, flag text)''')
+
+      insert_flags = (("blocked",      0b1),          ("hidden",      0b10),
+                      ("no-overview",  0b100),        ("closed",      0b1000),
+                      ("moder-thread", 0b10000),      ("moder-posts", 0b100000),
+                      ("no-sync",      0b1000000),    ("spam-fix",    0b10000000),
+                      ("no-archive",   0b100000000),  ("sage",        0b1000000000),
+                      ("news",         0b10000000000),)
+      for flag_name, flag in insert_flags:
+        try:
+          self.sqlite.execute('INSERT INTO flags (flag_name, flag) VALUES (?,?)', (flag_name, str(flag)))
+        except sqlite3.IntegrityError:
+          pass
+      for alias in ('ph_name', 'ph_shortname', 'link', 'tag', 'description',):
+        try:
+          self.sqlite.execute('ALTER TABLE groups ADD COLUMN {0} text DEFAULT ""'.format(alias))
+        except sqlite3.OperationalError:
+          pass
+      try:
+        self.sqlite.execute('ALTER TABLE groups ADD COLUMN flags text DEFAULT "0"')
+      except sqlite3.OperationalError:
+        pass
+      try:
+        self.sqlite.execute('ALTER TABLE articles ADD COLUMN public_key text')
+      except sqlite3.OperationalError:
+        pass
+      try:
+        self.sqlite.execute('ALTER TABLE articles ADD COLUMN received INTEGER DEFAULT 0')
+      except sqlite3.OperationalError:
+        pass
+      try:
+        self.sqlite.execute('ALTER TABLE articles ADD COLUMN closed INTEGER DEFAULT 0')
+      except sqlite3.OperationalError:
+        pass
+      try:
+        self.sqlite.execute('ALTER TABLE articles ADD COLUMN sticky INTEGER DEFAULT 0')
+      except sqlite3.OperationalError:
+        pass
+      try:
+        self.sqlite.execute('ALTER TABLE articles ADD COLUMN article_hash text')
+      except sqlite3.OperationalError:
+        pass
+      else:
+        self.log(self.logger.WARNING, 'Starting db update...')
+        try:
+          for row in self.sqlite.execute('SELECT article_uid FROM articles').fetchall():
+            article_hash = sha1(row[0]).hexdigest()
+            self.sqlite.execute('UPDATE articles SET article_hash = ? WHERE article_uid = ?', (article_hash, row[0]))
+            self.sqlite.commit()
+        except sqlite3.Error as e:
+          self.die('DB update status - FAIL. You must fix this error manually. In case this is the first time you are starting SRNd - ignore and restart SRNd. See overchan.py:562 for details. Error: {}'.format(e))
+        else:
+          self.log(self.logger.WARNING, 'DB update status - OK.')
+      self.sqlite.execute('CREATE INDEX IF NOT EXISTS articles_group_idx ON articles(group_id);')
+      self.sqlite.execute('CREATE INDEX IF NOT EXISTS articles_parent_idx ON articles(parent);')
+      self.sqlite.execute('CREATE INDEX IF NOT EXISTS articles_article_idx ON articles(article_uid);')
+      self.sqlite.execute('CREATE INDEX IF NOT EXISTS articles_last_update_idx ON articles(group_id, parent, last_update);')
+      self.sqlite.execute('CREATE INDEX IF NOT EXISTS articles_article_hash_idx ON articles(article_hash);')
+    elif version == 1:
+      self.sqlite.execute('CREATE TABLE thumb_info (name TEXT PRIMARY KEY, x INTEGER, y INTEGER, size INTEGER)')
+    else:
+      raise Exception('Handler for update from {} version not present in code. Fix it!'.format(version))
 
   def regenerate_all_html(self):
     for group_row in self.sqlite.execute('SELECT group_id FROM groups WHERE (cast(groups.flags as integer) & ?) = 0', (self.cache['flags']['blocked'],)).fetchall():
@@ -481,6 +507,8 @@ class main(threading.Thread):
           self.log(self.logger.INFO, 'not deleting %s, %s using it' % (imagename, caringbear[0]))
         else:
           self.log(self.logger.DEBUG, 'nobody not use %s, delete it' % (imagename,))
+          if imagetype == 'thumblink':
+            self.sqlite.execute('DETETE FROM thumb_info WHERE name = ?', (imagename,))
           try:
             os.unlink(imagepath)
           except OSError as e:
@@ -623,6 +651,7 @@ class main(threading.Thread):
     self.log(self.logger.INFO, 'starting up as plugin..')
     self.past_init()
     self.running = True
+    bump_db = False
     got_control_count = 0
     while self.running:
       try:
@@ -639,6 +668,8 @@ class main(threading.Thread):
           try:
             if not self.parse_message(message_id, f):
               f.close()
+            else:
+              bump_db = True
           except Exception as e:
             self.log(self.logger.WARNING, 'something went wrong while trying to parse article %s: %s' % (message_id, e))
             self.log(self.logger.WARNING, traceback.format_exc())
@@ -649,13 +680,16 @@ class main(threading.Thread):
         elif ret[0] == "control":
           got_control_count += 1
           self.handle_control(ret[1], ret[2])
-          self.sqlite.commit()
+          bump_db = True
         else:
           self.log(self.logger.ERROR, 'found article with unknown source: %s' % ret[0])
 
         if self.queue.qsize() > self.config['sleep_threshold']:
           time.sleep(self.config['sleep_time'])
       except Queue.Empty:
+        if bump_db:
+          self.sqlite.commit()
+          bump_db = False
         if len(self.delete_messages) > 0:
           self.handle_overchan_massdelete()
         if self.overchan_generator.regenerate_boards or self.overchan_generator.regenerate_threads:
@@ -668,6 +702,7 @@ class main(threading.Thread):
           self.sqlite.commit()
           got_control_count = 0
     self.censordb.close()
+    self.sqlite.commit()
     self.sqlite.close()
     self.dropperdb.close()
     self.log(self.logger.INFO, 'bye')
@@ -724,46 +759,52 @@ class main(threading.Thread):
       cv2.imwrite(tmp_image, video_frame)
     except Exception as e:
       self.log(self.logger.WARNING, "error creating image from video %s: %s" % (target, e))
-      thumbname = 'video'
+      thumb_data = ('video', None)
     else:
-      try:
-        thumbname = self.gen_thumb(tmp_image, imagehash)
-      except:
-        thumbname = 'invalid'
+      thumb_data = self.gen_thumb(tmp_image, imagehash)
     try:
       os.remove(tmp_image)
     except OSError:
       pass
-    return thumbname
+    return thumb_data
 
   def gen_thumb(self, target, imagehash):
-    if os.path.getsize(target) == 0:
-      return 'invalid'
-    if target.split('.')[-1].lower() == 'gif' and os.path.getsize(target) < (128 * 1024 + 1):
-      thumb_name = imagehash + '.gif'
-      thumb_link = os.path.join(self.config['output_directory'], 'thumbs', thumb_name)
-      o = open(thumb_link, 'w')
-      i = open(target, 'r')
-      o.write(i.read())
-      o.close()
-      i.close()
-      return thumb_name
-    thumb = Image.open(target)
-    modifier = float(180) / thumb.size[0]
-    x = int(thumb.size[0] * modifier)
-    y = int(thumb.size[1] * modifier)
-    self.log(self.logger.DEBUG, 'old image size: %ix%i, new image size: %ix%i' %  (thumb.size[0], thumb.size[1], x, y))
-    if thumb.mode == 'P':
-      thumb = thumb.convert('RGBA')
-    if thumb.mode == 'RGBA' or thumb.mode == 'LA':
-      thumb_name = imagehash + '.png'
-    else:
-      thumb_name = imagehash + '.jpg'
-      thumb = thumb.convert('RGB')
-    thumb_link = os.path.join(self.config['output_directory'], 'thumbs', thumb_name)
-    thumb = thumb.resize((x, y), Image.ANTIALIAS)
-    thumb.save(thumb_link, optimize=True)
-    return thumb_name
+    return self._create_thumb(target, os.path.join(self.config['output_directory'], 'thumbs'), imagehash)
+
+  def _create_thumb(self, target, dest, name, full_name=False):
+    """return thumb filename and update thumb_info table"""
+    image_size = os.path.getsize(target)
+    if not image_size:
+      return 'invalid', None
+    try:
+      thumb = Image.open(target)
+      modifierx = float(self.config['thumb_maxwh'][0]) / thumb.size[0]
+      modifiery = float(self.config['thumb_maxwh'][1]) / thumb.size[1]
+      modifier = modifierx if modifierx < modifiery else modifiery
+      x = int(thumb.size[0] * modifier)
+      y = int(thumb.size[1] * modifier)
+      self.log(self.logger.DEBUG, 'old image size: %ix%i, new image size: %ix%i' %  (thumb.size[0], thumb.size[1], x, y))
+      if os.path.splitext(target)[1].lower() == '.gif' and image_size < (128 * 1024 + 1):
+        # small gif. copy is as
+        thumb_name = name + '.gif' if not full_name else name
+        thumb_link = os.path.join(dest, thumb_name)
+        with open(thumb_link, 'w') as o, open(target, 'r') as i:
+          o.write(i.read())
+      else:
+        if thumb.mode == 'P':
+          thumb = thumb.convert('RGBA')
+        if thumb.mode == 'RGBA' or thumb.mode == 'LA':
+          thumb_name = name + '.png' if not full_name else name
+        else:
+          thumb_name = name + '.jpg' if not full_name else name
+          thumb = thumb.convert('RGB')
+        thumb_link = os.path.join(dest, thumb_name)
+        thumb = thumb.resize((x, y), Image.ANTIALIAS)
+        thumb.save(thumb_link, optimize=True)
+    except Exception as e:
+      self.log(self.logger.WARNING, 'error creating thumb from image {}: {}'.format(target, e))
+      return 'invalid', None
+    return thumb_name, (x, y, os.path.getsize(thumb_link))
 
   def _get_exist_thumb_name(self, image_name):
     result = self.sqlite.execute('SELECT thumblink FROM articles WHERE imagelink = ? LIMIT 1', (image_name,)).fetchone()
@@ -782,6 +823,7 @@ class main(threading.Thread):
     sage = False
     signature = None
     public_key = ''
+    thumb_info = None
     header_found = False
     parser = FeedParser()
     line = fd.readline()
@@ -908,17 +950,13 @@ class main(threading.Thread):
         if exist_thumb_name is not None:
           thumb_name = exist_thumb_name
         elif local_mime_maintype == 'image':
-          try:
-            thumb_name = self.gen_thumb(out_link, imagehash)
-          except Exception as e:
-            thumb_name = 'invalid'
-            self.log(self.logger.WARNING, 'Error creating thumb in %s: %s' % (image_name, e))
+          thumb_name, thumb_info = self.gen_thumb(out_link, imagehash)
         elif local_mime_type in ('application/pdf', 'application/postscript', 'application/ps'):
           thumb_name = 'document'
         elif local_mime_type in ('audio/ogg', 'audio/mpeg', 'audio/mp3', 'audio/opus'):
           thumb_name = 'audio'
         elif local_mime_maintype == 'video' and local_mime_subtype in ('webm', 'mp4'):
-          thumb_name = self.gen_thumb_from_video(out_link, imagehash) if cv2_load_result == 'true' else 'video'
+          thumb_name, thumb_info = self.gen_thumb_from_video(out_link, imagehash) if cv2_load_result == 'true' else ['video', None]
         elif local_mime_maintype == 'application' and local_mime_subtype == 'x-bittorrent':
           thumb_name = 'torrent'
         elif local_mime_maintype == 'application' and local_mime_subtype in ('x-7z-compressed', 'zip', 'x-gzip', 'x-tar', 'rar'):
@@ -977,7 +1015,6 @@ class main(threading.Thread):
     if not result:
       try:
         self.sqlite.execute('INSERT INTO groups(group_name, article_count, last_update) VALUES (?,?,?)', (group_name, 1, int(time.time())))
-        self.sqlite.commit()
       except sqlite3.Error:
         self.log(self.logger.INFO, 'ignoring message for blocked group %s' % group_name)
       else:
@@ -1001,7 +1038,6 @@ class main(threading.Thread):
         if parent_result is not None:
           if self.config['bump_limit'] == 0 or self.sqlite.execute('SELECT count(article_uid) FROM articles WHERE parent = ? AND parent != article_uid ', (parent,)).fetchone()[0] < self.config['bump_limit']:
             self.sqlite.execute('UPDATE articles SET last_update=? WHERE article_uid=?', (sent, parent))
-            self.sqlite.commit()
           else:
             last_update = sent - 10
         else:
@@ -1031,7 +1067,6 @@ class main(threading.Thread):
       # post has been censored and is now being restored. just delete post for all groups so it can be reinserted
       self.log(self.logger.INFO, 'post has been censored and is now being restored: %s' % message_id)
       self.sqlite.execute('DELETE FROM articles WHERE article_uid=?', (message_id,))
-      self.sqlite.commit()
 
     if len(image_name) > 40:
       censored_articles = self.sqlite.execute('SELECT article_uid FROM articles WHERE thumblink = "censored" AND imagelink = ?', (image_name,)).fetchall()
@@ -1053,6 +1088,9 @@ class main(threading.Thread):
           # attach has been censored and is now being restored. Restore all thumblink
           self.log(self.logger.INFO, 'Attach %s restored. Restore %s thumblinks for this attach' % (image_name, censored_count))
           self.sqlite.execute('UPDATE articles SET thumblink = ? WHERE imagelink = ?', (thumb_name, image_name))
+
+    if thumb_info and len(thumb_name) > 41:
+      self.sqlite.execute('INSERT OR REPLACE INTO thumb_info VALUES (?, ?, ?, ?)', (thumb_name, thumb_info[0], thumb_info[1], thumb_info[2]))
 
     if image_name == '' and thumb_name == '' and self.config['replace_root_nope'] and (parent == '' or parent == message_id):
       # Get random image for root post
@@ -1082,7 +1120,6 @@ class main(threading.Thread):
     del insert_list[-1]
     self.sqlite.execute(insert_request, [x[1] for x in insert_list] + [group_id,])
     self.sqlite.execute('UPDATE groups SET last_update=?, article_count = (SELECT count(article_uid) FROM articles WHERE group_id = ?) WHERE group_id = ?', (int(time.time()), group_id, group_id))
-    self.sqlite.commit()
     return True
 
   def check_board_flags(self, group_id, *args):

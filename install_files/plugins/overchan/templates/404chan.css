@@ -81,13 +81,9 @@
   .image_root {
     border-radius: 5px;
     border: 1px solid #363636;
-    width: 180px;
-    max-height: 360px;
   }
   .image {
     border-radius: 5px;
-    width: 150px;
-    max-height: 300px;
   }
   .thread {
     padding-top: 15px;

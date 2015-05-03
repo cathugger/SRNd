@@ -236,6 +236,7 @@ class OverchanGeneratorTools(OverchanGeneratorInit):
     self.get_board_list = board_cache_conns['get_board_list']
     self.get_board_data = board_cache_conns['get_board_data']
     self.cache = cache
+    self.thumb_cache = dict()
 
     self.markup_parser = markup_parser
 
@@ -258,6 +259,20 @@ class OverchanGeneratorTools(OverchanGeneratorInit):
     else:
       frontend = 'nntp'
     return frontend
+
+  def _get_thumb_info(self, thumbname, isroot, standart=False):
+    if standart and thumbname in self.thumb_cache:
+      # standart thumb - use cache
+      xy = self.thumb_cache[thumbname]
+    else:
+      xy = self.overchandb.fetchone('SELECT x, y FROM thumb_info WHERE name = ?', (thumbname,))
+      if standart:
+        self.thumb_cache[thumbname] = xy
+    if xy is None:
+      # legacy - use old value
+      return 'width="180" max-height="360"' if isroot else 'width="150" max-height="300"'
+    else:
+      return 'width="%s" height="%s"' % (xy[0], xy[1])
 
   def _delete_thread_page(self, thread_name):
     thread_path = os.path.join(self.config['output_directory'], '.'.join((thread_name, 'html')))
@@ -330,12 +345,15 @@ class OverchanGeneratorTools(OverchanGeneratorInit):
       imagelink = data[6]
       if data[7] in self.config['thumbs']:
         thumblink = self.config['thumbs'][data[7]]
+        parsed_data['thumb_info'] = self._get_thumb_info(thumblink, father == '', True)
       else:
         thumblink = data[7]
+        parsed_data['thumb_info'] = self._get_thumb_info(thumblink, father == '')
         if data[6] != data[7] and data[6].rsplit('.', 1)[-1] in ('gif', 'webm', 'mp4'):
           is_playable = True
     else:
       imagelink = thumblink = self.config['thumbs'].get('no_file', 'error')
+      parsed_data['thumb_info'] = self._get_thumb_info(thumblink, father == '', True)
     if data[8] != '':
       parsed_data['signed'] = self.t_engine['signed'].substitute(
           articlehash=message_id_hash[:10],

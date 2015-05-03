@@ -61,14 +61,10 @@
       .image_root {
         border-radius: 0px;
         border: 1px solid #363636;
-        width: 180px;
-        max-height: 360px;
       }
       .image {
         border-radius: 0px; 
         border: 1px solid #363636;
-        width: 150px;
-        max-height: 300px;
       }
       .thread {
         padding-top: 5px;
