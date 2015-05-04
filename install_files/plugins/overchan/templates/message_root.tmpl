@@ -1,11 +1,22 @@
       <div class="messageroot" id="${articlehash}">
-        <a href="img/${imagelink}" class="image_link" target="_blank" title="${imagename}"><img src="thumbs/${thumblink}" class="image_root" ${thumb_info} />${play_button}</a>
-        <a name="${articlehash}"></a><span class="topicline"><b>${subject}</b> ${author} <span class=published>${sent}</span>  ${root_quickreply} <a href="thread-${articlehash}.html">[${click_action}]</a> <span class="frontend">${thread_status}</span></span>
-${signed}        <div class="stillevil">
-${evil_root}
-        </div><br />
-        <span class="frontend">[ ${frontend} ]</span>
-        <br /><br />
-        <span class="message_span">${message}</span>
-        <br style="clear: both;"/>
+        <p class="intro">
+          <a href="img/${imagelink}" class="image_link" target="_blank" title="${imagename}">
+             <img src="thumbs/${thumblink}" class="image_root" ${thumb_info} />${play_button}
+          </a>
+          <a name="${articlehash}"></a>
+          <span class="topicline">
+            <b>${subject}</b> ${author}
+            <span class=published>${sent}</span>
+            ${root_quickreply}
+            <a href="thread-${articlehash}.html">[${click_action}]</a>
+            <span class="frontend">${thread_status}</span>
+          </span>
+          ${signed}
+          <div class="stillevil">${evil_root}</div>
+          <span class="frontend">[ ${frontend} ]</span>
+        </p>
+        <div class="overchan_body">
+          ${message}
+        </div>
       </div>
+      <br />
