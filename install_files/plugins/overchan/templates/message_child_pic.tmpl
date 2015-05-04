@@ -1,11 +1,24 @@
-      <div class="message" id="${articlehash}">
-        <a href="img/${imagelink}" class="image_link" target="_blank" title="${imagename}"><img src="thumbs/${thumblink}" class="image" ${thumb_info} />${play_button}</a>
-        <a name="${articlehash}"></a><span class="topicline"><b>${subject}</b> ${author} <span class=published>${sent}</span>  <a href="thread-${parenthash}.html#${articlehash}" onclick="return highlight('${articlehash}');">&#8470;</a> ${child_quickreply}</span>
-${signed}        <div class="stillevil">
-${evil_child_pic}
-        </div><br />
-        <span class="frontend">[ ${frontend} ]</span>
-        <br /><br />
-        <span class="message_span">${message}</span>
-        <br style="clear: both;"/>
-      </div>
+<div class="message" id="${articlehash}">
+  <div class="message_filepart">
+    <a href="img/${imagelink}" class="image_link" target="_blank" title="${imagename}">
+      <img src="thumbs/${thumblink}" class="image_root" ${thumb_info} />${play_button}
+    </a>
+  </div>
+  <p class="intro">
+    <a name="${articlehash}"></a>
+    <span class="topicline">
+      <b>${subject}</b> ${author}
+      <span class=published>${sent}</span>
+      ${root_quickreply}
+      <a href="thread-${articlehash}.html">[${click_action}]</a>
+      <span class="frontend">${thread_status}</span>
+    </span>
+    ${signed}
+    <span class="frontend">[ ${frontend} ]</span>
+    <span class="stillevil">${evil_root}</span>
+  </p>
+  <div class="overchan_body">
+    ${message}
+  </div>
+</div>
+<br />
