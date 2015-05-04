@@ -287,7 +287,7 @@ class main(threading.Thread):
         self._update_db_from(db_version)
         db_version += 1
         self.sqlite.execute('UPDATE config SET value = ? WHERE key = "db_version"', (db_version,))
-        self.sqlite.commit()
+      self.sqlite.commit()
 
   def _update_db_from(self, version):
     if version == 0:
@@ -401,7 +401,6 @@ class main(threading.Thread):
     self.log(self.logger.INFO, 'db maintenance: VACUUM and REINDEX')
     start_time = time.time()
     self.sqlite.execute('VACUUM;')
-    self.sqlite.commit()
     self.sqlite.execute('REINDEX;')
     self.sqlite.commit()
     self.log(self.logger.INFO, 'db maintenance: Complit at {}s'.format(int(time.time() - start_time)))
@@ -649,8 +648,8 @@ class main(threading.Thread):
     if self.should_terminate:
       return
     self.log(self.logger.INFO, 'starting up as plugin..')
-    self.past_init()
     self.running = True
+    self.past_init()
     bump_db = False
     got_control_count = 0
     while self.running:
