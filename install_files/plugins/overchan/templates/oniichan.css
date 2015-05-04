@@ -1,0 +1,27 @@
+table {
+  margin: auto;
+  width: 100%;
+}
+
+table {
+	margin: auto;
+	width: 100%;
+}
+table tbody td {
+	margin: 0;
+	padding: 4px 15px 4px 4px;
+	
+	text-align: left;
+}
+table thead th {
+	border: 1px solid #000333;
+	padding: 4px 15px 5px 5px;
+	
+	background: #98E;
+	color: #000333;
+	text-align: left;
+	white-space: nowrap;
+}
+table tbody tr:nth-of-type( even ) {
+	background-color: #D6DAF0;
+}
