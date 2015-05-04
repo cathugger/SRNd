@@ -9,13 +9,11 @@
     <span class="topicline">
       <b>${subject}</b> ${author}
       <span class=published>${sent}</span>
-      ${root_quickreply}
-      <a href="thread-${articlehash}.html">[${click_action}]</a>
-      <span class="frontend">${thread_status}</span>
+      <a href="thread-${parenthash}.html#${articlehash}" onclick="return highlight('${articlehash}');">&#8470;</a>
     </span>
     ${signed}
     <span class="frontend">[ ${frontend} ]</span>
-    <span class="stillevil">${evil_root}</span>
+    <span class="stillevil">${evil_child_pic}</span>
   </p>
   <div class="overchan_body">
     ${message}
