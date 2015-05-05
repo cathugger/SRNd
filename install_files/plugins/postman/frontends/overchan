@@ -2,7 +2,7 @@
 # () == list
 # [] == dict
 
-uid_host=web.overchan.i.did.not.read.the.config
+uid_host=web.overchan.oniichan
 #enforce_target=%%sha1_message_uid_10%%.html
 #enforce_board=some.board.name
 allow_signatures=True
@@ -28,10 +28,6 @@ application/pdf
 application/ps
 application/postscript
 application/x-bittorrent
-application/zip
-application/x-gzip
-application/x-rar-compressed
-application/x-tar
 application/x-tex
 audio/*
 video/*

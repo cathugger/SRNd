@@ -17,7 +17,7 @@
 #start_param css_file=krane.css
 #start_param pages_per_board=10
 #start_param debug=2
-#start_param title=overchan.i.did.not.read.the.config
+#start_param title=overchan.oniichan
 #start_param sync_on_startup=True
 #start_param enable_archive=True
 #start_param enable_recent=True
@@ -27,7 +27,7 @@
 #start_param webm_file=video.png
 #start_param news_uid=<lwmueokaxt1389929084@web.overchan.sfor.ano>
 #start_param sqlite_synchronous=True
-#start_param site_url=my-address.i2p
-#start_param local_dest=i.did.not.read.the.config
+#start_param site_url=False
+#start_param local_dest=False
 
 overchan.*
