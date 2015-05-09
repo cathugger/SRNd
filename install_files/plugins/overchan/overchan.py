@@ -508,7 +508,7 @@ class main(threading.Thread):
         else:
           self.log(self.logger.DEBUG, 'nobody not use %s, delete it' % (imagename,))
           if imagetype == 'thumblink':
-            self.sqlite.execute('DETETE FROM thumb_info WHERE name = ?', (imagename,))
+            self.sqlite.execute('DELETE FROM thumb_info WHERE name = ?', (imagename,))
           try:
             os.unlink(imagepath)
           except OSError as e:
