@@ -11,7 +11,20 @@ import string
 import threading
 import time
 import traceback
-from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer
+from BaseHTTPServer import BaseHTTPRequestHandler
+from BaseHTTPServer import HTTPServer as HTTPD
+
+try:
+  from SocketServer import ThreadingMixIn
+  class ThreadedHTTPServer(ThreadingMixIn, HTTPD):
+    """
+    multithreaded http server
+    """
+except ImportError:
+  HTTPServer = HTTPD
+else:
+  HTTPServer = ThreadedHTTPServer
+  
 from binascii import hexlify
 from cgi import FieldStorage
 from datetime import datetime
@@ -613,6 +626,7 @@ class main(threading.Thread):
         return
 
     self.log(self.logger.DEBUG, 'initializing httpserver..')
+
     self.httpd = HTTPServer((self.ip, self.port), postman)
     self.httpd.seed = chrootRandom(32)
 
