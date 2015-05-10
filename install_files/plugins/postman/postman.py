@@ -22,10 +22,8 @@ try:
     """
 except ImportError:
   HTTPServer = HTTPD
-  print "don't use threading"
 else:
   HTTPServer = ThreadedHTTPServer
-  print "use threading"
   
 from binascii import hexlify
 from cgi import FieldStorage
@@ -627,7 +625,7 @@ class main(threading.Thread):
         self.log(self.logger.CRITICAL, 'terminating..')
         return
 
-    self.log(self.logger.DEBUG, 'initializing httpserver..')
+    self.log(self.logger.INFO, 'using {}'.format(HTTPServer.__name__))
 
     self.httpd = HTTPServer((self.ip, self.port), postman)
     self.httpd.seed = chrootRandom(32)
