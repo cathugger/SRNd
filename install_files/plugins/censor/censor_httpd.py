@@ -12,7 +12,22 @@ import threading
 import time
 import json
 import urlparse
-from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer
+
+from BaseHTTPServer import BaseHTTPRequestHandler
+from BaseHTTPServer import HTTPServer as HTTPD
+
+try:
+  from SocketServer import ThreadingMixIn
+  class ThreadedHTTPServer(ThreadingMixIn, HTTPD):
+    """
+    multithreaded http server
+    """
+except ImportError:
+  HTTPServer = HTTPD
+else:
+  HTTPServer = ThreadedHTTPServer
+
+
 from binascii import hexlify, unhexlify
 from cgi import FieldStorage
 from datetime import datetime, timedelta
@@ -1452,7 +1467,7 @@ class censor_httpd(threading.Thread):
         return
     #self.censor = args['censor']
 
-    self.log(self.logger.DEBUG, 'initializing httpserver..')
+    self.log(self.logger.INFO, 'using {}'.format(HTTPServer.__name__))
     self.httpd = HTTPServer((self.ip, self.port), censor)
     if 'reject_debug' in args:
       tmp = args['reject_debug']
