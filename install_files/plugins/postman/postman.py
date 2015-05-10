@@ -22,6 +22,7 @@ try:
     """
 except ImportError:
   HTTPServer = HTTPD
+  print "don't use threading"
 else:
   HTTPServer = ThreadedHTTPServer
   print "use threading"
