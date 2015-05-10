@@ -23,7 +23,7 @@ try:
 except ImportError:
   HTTPServer = HTTPD
 else:
-  HTTPServer = ThreadedHTTPServer
+  HTTPServer = HTTPD
   
 from binascii import hexlify
 from cgi import FieldStorage
