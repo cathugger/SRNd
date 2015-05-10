@@ -24,6 +24,7 @@ except ImportError:
   HTTPServer = HTTPD
 else:
   HTTPServer = ThreadedHTTPServer
+  print "use threading"
   
 from binascii import hexlify
 from cgi import FieldStorage
