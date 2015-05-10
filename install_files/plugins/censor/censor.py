@@ -31,7 +31,7 @@ class main(threading.Thread):
     self.logger = logger
     # TODO: move sleep stuff to config table
     self.sleep_threshold = 10
-    self.sleep_time = 0.05
+    self.sleep_time = 0.03
     if 'debug' not in args:
       self.loglevel = self.logger.INFO
       self.log(self.logger.INFO, 'debuglevel not defined, using default of debug = %i' % self.logger.INFO)
@@ -107,7 +107,7 @@ class main(threading.Thread):
         self._update_db_from(db_version)
         db_version += 1
         self.censordb.execute('UPDATE config SET value = ? WHERE key = "db_version"', (db_version,))
-        self.censordb.commit()
+      self.censordb.commit()
 
     if self.add_admin:
       self.censordb.execute("INSERT OR IGNORE INTO keys VALUES (NULL,?,?,?)", (self.add_admin, "admin", self.ALL_FLAGS))
@@ -205,22 +205,28 @@ class main(threading.Thread):
     self.httpd.start()
 
     self.running = True
+    db_commit = False
     while self.running:
       try:
         source, data = self.queue.get(block=True, timeout=1)
         if source == "article":
           if self.process_article(data) and self.queue.qsize() > self.sleep_threshold:
             time.sleep(self.sleep_time)
+          db_commit = True
         elif source == "httpd":
           public_key, data = data
           key_id = self.get_key_id(public_key)
           timestamp = int(time.time())
           for line in data.split("\n"):
             self.handle_line(line, key_id, timestamp)
+          db_commit = True
         else:
           self.log(self.logger.WARNING, 'unknown source: %s' % source)
       except Queue.Empty:
-        pass
+        if db_commit:
+          self.censordb.commit()
+          db_commit = False
+    self.censordb.commit()
     self.censordb.close()
     self.dropperdb.close()
     self.overchandb.close()
@@ -291,7 +297,6 @@ class main(threading.Thread):
     else:
       # add missing time
       self.censordb.execute('UPDATE signature_cache SET received = ? WHERE message_uid = ?', (current_time, message_id))
-      self.censordb.commit()
     return True
 
   def process_article(self, message_id):
@@ -333,7 +338,6 @@ class main(threading.Thread):
       self.log(self.logger.VERBOSE, "seeking from %i back to %i" % (f.tell(), bodyoffset))
       f.seek(bodyoffset)
       self.censordb.execute('INSERT INTO signature_cache (message_uid, valid, received) VALUES (?, ?, ?)', (message_id, 1, current_time))
-      self.censordb.commit()
     except Exception as e:
       if self.loglevel < self.logger.INFO:
         self.log(self.logger.DEBUG, "could not verify signature: %s: %s" % (message_id, e))
@@ -341,7 +345,6 @@ class main(threading.Thread):
         self.log(self.logger.INFO, "could not verify signature: %s" % message_id)
       f.close()
       self.censordb.execute('INSERT INTO signature_cache (message_uid, valid, received) VALUES (?, ?, ?)', (message_id, 0, current_time))
-      self.censordb.commit()
       return True
     self.parse_article(f, message_id, self.get_key_id(public_key))
     f.close()
@@ -440,7 +443,6 @@ class main(threading.Thread):
     try:
       self.censordb.execute('INSERT INTO log (accepted, command_id, data, key_id, reason_id, comment, timestamp, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', \
         (accepted, command_id, data.decode('UTF-8'), key_id, reason_id, basicHTMLencode(comment).decode('UTF-8'), int(time.time()), source))
-      self.censordb.commit()
     except sqlite3.Error:
       pass
 

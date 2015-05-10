@@ -66,6 +66,9 @@ class OutFeed(feed.BaseFeed):
     self._handshake_state = False
     self._current_mode = self._MODE['none']
     self.outstream_currently_testing = ''
+    # gzip
+    self._srndgzip = None
+    self._srndgzip_error = False
     # for POST and IHAVE mode
     self._wait_response = False
     self._wait_response_time = 0
@@ -189,12 +192,14 @@ class OutFeed(feed.BaseFeed):
 
   def _worker_send_article_stream(self, send_time=120):
     start_time = int(time.time())
-    compression = ' {}'.format(self._support_vars['COMPRESSION']) if 'COMPRESSION' in self._support_vars else ''
+    if self.config['infinity_stream']:
+      self._infinity_stream_on()
     while len(self.articles_queue) > 0 and start_time + send_time > int(time.time()) and not self.con_broken:
       message_id = self.articles_queue.pop()
-      if os.path.exists(os.path.join('articles', message_id)):
-        self.send('TAKETHIS {}{}'.format(message_id, compression))
+      if os.path.exists(os.path.join('articles', message_id)) and not self._disallow_to_send(message_id):
+        self.sendM('TAKETHIS {}'.format(message_id))
         self.send_article(message_id, 'outfeed_send_article_stream')
+    self._infinity_stream_off()
 
   def _send_new_check(self, cmd, max_count=1):
     """Collect IHAVE and CHECK article id and re-add in queue if don't response or connect broken when send this """
@@ -219,22 +224,20 @@ class OutFeed(feed.BaseFeed):
   def _disallow_to_send(self, message_id):
     if self._support_vars.get('MAX_SEND_SIZE') is not None and self._support_vars['MAX_SEND_SIZE'] < os.path.getsize(os.path.join('articles', message_id)):
       self.log(self.logger.INFO, 'not sending article {}. Server allow max file size {} bytes'.format(message_id, self._support_vars['MAX_SEND_SIZE']))
+      self.update_trackdb('000 {} disallow to send'.format(message_id))
       return True
     return False
 
   def send_article(self, message_id, state='sending_article'):
-    if self._disallow_to_send(message_id):
-      self.update_trackdb('000 {} disallow to send'.format(message_id))
-      return
     self.log(self.logger.INFO, 'sending article %s' % message_id)
     with open(os.path.join('articles', message_id), 'rb') as fd:
-      sending, real_len, send_time = self._send_article(fd, state, self._support_vars.get('COMPRESSION') if self._current_mode == self._MODE['stream'] else None)
+      sending, real_len, send_time = self._send_article(fd, state)
     if not self.con_broken:
       self.byte_transfer += sending
       self.time_transfer += send_time
       if real_len > 0:
         diff = -int(float(sending - real_len)/sending * 100) if sending > 0 else 0
-        self.log(self.logger.DEBUG, '{} send: size: {}, {} compressed: {}, diff: {}%'.format(message_id, sending, self._support_vars.get('COMPRESSION', 'ERROR'), real_len, diff))
+        self.log(self.logger.DEBUG, '{} send: size: {}, compressed: {}, diff: {}%'.format(message_id, sending, real_len, diff))
     # ~ + 4 minute in 1 mb. May be need correct for other network
     # rechecking small articles first
     multiplier = sending / (1024 * 64)
@@ -265,8 +268,11 @@ class OutFeed(feed.BaseFeed):
       self._check_CAPABILITIES(self._caps_cache)
 
   def _check_CAPABILITIES(self, caps):
-    # server support SRNDAUTH and key present and not authenticate.
-    if 'SRNDAUTH' in caps and not (self.config['srndauth_key'] is None or self._srnd_auth or self._try_srndauth_bypass):
+    if not self._srndgzip_error and self._srndgzip is None and 'SRNDGZIP' in caps:
+      # server support gzip - handshake
+      self.send('SRNDGZIP')
+    elif 'SRNDAUTH' in caps and not (self.config['srndauth_key'] is None or self._srnd_auth or self._try_srndauth_bypass):
+      # server support SRNDAUTH and key present and not authenticate.
       pubkey = self._key_from_private(self.config['srndauth_key'])
       if pubkey is None:
         self.log(self.logger.ERROR, 'Private key invalid. Check srndauth_key in outfeed config')
@@ -275,8 +281,8 @@ class OutFeed(feed.BaseFeed):
       else:
         # authentication - send pubkey
         self.send('SRNDAUTH {} {}'.format(self._SRNDAUTH_REQU[0], pubkey), 'SRNDAUTH')
-    # server support SUPPORT, send it and wait response 191
     elif 'SUPPORT' in caps:
+      # server support SUPPORT, send it and wait response 191
       self.send('SUPPORT')
     else:
       # old server, go stream
@@ -299,9 +305,6 @@ class OutFeed(feed.BaseFeed):
           self.log(self.logger.WARNING, 'Error parsing MAX_SEND_SIZE: abnormal value "{}"'.format(val))
         else:
           self.log(self.logger.INFO, 'Server support maximum filesize: {} bytes'.format(self._support_vars[key]))
-      elif key == 'COMPRESSION' and val in ('ZLIB', 'GZIP', 'DEFLATE'):
-        self._support_vars[key] = val.lower()
-        self.log(self.logger.INFO, 'Server support {} compression'.format(self._support_vars[key]))
     # initial start streaming
     self.outstream_currently_testing = 'STREAM'
     self.send('MODE STREAM')
@@ -509,6 +512,16 @@ class OutFeed(feed.BaseFeed):
       self.log(self.logger.WARNING, 'bad key or signature')
       self.state = 'SRNDAUTH_error'
       self._srndauth_bypass()
+    elif commands[0] == '952':
+      # SRNDGZIP 952 - ok enable gzip
+      self._enable_gzip()
+      self.log(self.logger.INFO, 'Enable compression')
+      self._get_CAPABILITIES()
+    elif commands[0] == '954':
+      # SRNDGZIP 954 - server not support gzip
+      self._srndgzip_error = True
+      self.log(self.logger.WARNING, 'error handshake for compression. WTF?')
+      self._get_CAPABILITIES()
     else:
       return True
 

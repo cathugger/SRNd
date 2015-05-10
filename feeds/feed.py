@@ -11,7 +11,7 @@ from binascii import hexlify, unhexlify
 import nacl.signing
 
 import feeds.sockssocket as sockssocket
-from feeds.feed_utils import InBuffer, HandleIncoming, Compressor
+import feeds.feed_utils as utils
 
 class BaseFeed(threading.Thread):
 
@@ -50,11 +50,23 @@ class BaseFeed(threading.Thread):
     self.con_broken = ''
     self._SRNDAUTH_REQU = ('PUBKEY', 'SIGNATURE')
     self._current_mode = self._MODE['none']
+    self._srndgzip = None
+    # if True - self.sendM() not send flush(zlib.Z_SYNC_FLUSH).
+    self._infinity_stream = False
+
+  def _enable_gzip(self):
+    try:
+      self.in_buffer.enable_gzip()
+    except utils.GzipError as e:
+      self.con_broken = 'Gzip error: {}'.format(e)
+      self.log(self.logger.ERROR, self.con_broken)
+    else:
+      self._srndgzip = utils.Compressor()
 
   def run(self):
     self.running = True
-    self.incoming_file = HandleIncoming(self.name)
-    self.in_buffer = InBuffer()
+    self.incoming_file = utils.HandleIncoming(self.name)
+    self.in_buffer = utils.InBuffer()
     self.state = 'idle'
     if not self.terminated:
       self.main_loop()
@@ -116,22 +128,6 @@ class BaseFeed(threading.Thread):
     if len(commands) == 0:
       self.log(self.logger.VERBOSE, 'should handle empty line')
 
-  def send_multiline(self, message, state='send_multiline'):
-    if not isinstance(message, str):
-      return self.send([xx if not xx.startswith('.') else '.%s' % xx for xx in message], state)
-    else:
-      return self.send(message if not message.startswith('.') else '.%s' % message, state)
-
-  def send(self, message, state='sending'):
-    r"""Send line or list, tuple adding \r\n, return sending count"""
-    if not isinstance(message, str):
-      to_send = ''.join(('\r\n'.join(message), '\r\n'))
-    else:
-      to_send = ''.join((message, '\r\n'))
-    self.state = state
-    self.log(self.logger.VERBOSE, 'out: %s' % to_send[:-2])
-    return self._send_raw(to_send)
-
   def _send_raw(self, to_send):
     sent = 0
     length = len(to_send)
@@ -141,29 +137,59 @@ class BaseFeed(threading.Thread):
       sent += self._socket_worker('send', to_send[sent:])
     return sent
 
-  def _send_article(self, fd, state, compression=None, header=True, body=True):
-    zip_ = Compressor(compression) if compression is not None else None
+  def send(self, data, state='sending'):
+    """send oneline command"""
+    if isinstance(data, str):
+      to_send = '%s\r\n' % data
+    elif isinstance(data, (list, tuple, set)):
+      to_send = '\r\n'.join(data) + '\r\n'
+    else:
+      raise Exception('sendL: incorrect type {}'.format(type(data)))
+    self.state = state
+    self.log(self.logger.VERBOSE, 'outL: %s' % to_send[:-2])
+    return self._send_raw(self._srndgzip.sync(to_send)) if self._srndgzip else self._send_raw(to_send)
+
+  def sendM(self, data=None, state='send_multiline'):
+    """send multiline, if data is None send '.\r\n'. Return sending len and real sending len (if srndgzip, else 0)"""
+    if data is None:
+      to_send = '.\r\n'
+    elif isinstance(data, str):
+      to_send = '%s\r\n' % data if not data.startswith('.') else '.%s\r\n' % data
+    elif isinstance(data, (list, tuple, set)):
+      to_send = '\r\n'.join(line if not line.startswith('.') else '.%s' % line for line in data) + '\r\n'
+    else:
+      raise Exception('sendM: incorrect type {}'.format(type(data)))
+    self.state = state
+    self.log(self.logger.VERBOSE, 'outM: %s' % to_send[:-2])
+    if self._srndgzip:
+      if data is None and not self._infinity_stream:
+        return len(to_send), self._send_raw(self._srndgzip.sync(to_send))
+      else:
+        return len(to_send), self._send_raw(self._srndgzip.compress(to_send))
+    else:
+      return self._send_raw(to_send), 0
+
+  def _infinity_stream_on(self):
+    if self._srndgzip:
+      self._infinity_stream = True
+
+  def _infinity_stream_off(self):
+    if self._infinity_stream:
+      self._infinity_stream = False
+      self._send_raw(self._srndgzip.sync_force())
+
+  def _send_article(self, fd, state, header=True, body=True):
     start_time = time.time()
     sending = 0
     real_len = 0
-    self.state = state
     for to_send in self._read_article(fd, header, body):
-      if zip_:
-        xx, to_send = zip_.compress(to_send)
-        sending += xx
-        if to_send:
-          real_len += self._send_raw(to_send)
-      else:
-        sending += self.send_multiline(to_send, state)
+      a, b = self.sendM(to_send, state)
+      sending, real_len = sending + a, real_len + b
       if self.con_broken:
         break
     if not self.con_broken:
-      if zip_:
-        xx, to_send = zip_.flush()
-        sending += xx
-        real_len += self._send_raw(to_send)
-      else:
-        sending += self.send('.', state)
+      a, b = self.sendM(None, state)
+      sending, real_len = sending + a, real_len + b
     return sending, real_len, time.time() - start_time
 
   def _handle_received(self):
@@ -177,7 +203,7 @@ class BaseFeed(threading.Thread):
           self.incoming_file.complit()
           self.handle_multiline(self.incoming_file)
           self.incoming_file.bye()
-          self.incoming_file = HandleIncoming(self.name)
+          self.incoming_file = utils.HandleIncoming(self.name)
         elif self.in_buffer.multiline:
           self.log(self.logger.VERBOSE, 'multiline in: %s' % line)
           self.incoming_file.add(line)
@@ -220,6 +246,10 @@ class BaseFeed(threading.Thread):
         self._socket_exception(e)
     except sockssocket.ProxyError as e:
       self._proxy_exception(e)
+    except utils.GzipError as e:
+      self.con_broken = 'Gzip error: {}'.format(e)
+      self.log(self.logger.ERROR, self.con_broken)
+      self.log(self.logger.ERROR, traceback.format_exc())
     return 0
 
   def _socket_exception(self, except_):

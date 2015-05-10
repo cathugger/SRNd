@@ -32,6 +32,8 @@ class InFeed(feed.BaseFeed):
         'STREAMING'
     ]
     # append caps
+    if self.config['srndgzip']:
+      self.caps.append('SRNDGZIP')
     if self.config['support']:
       self.caps.append('SUPPORT')
     if self.config['auth_required'] > 0:
@@ -284,8 +286,18 @@ class InFeed(feed.BaseFeed):
       self.log(self.logger.VERBOSE, 'should handle empty line')
     elif commands[0] == 'CAPABILITIES':
       # send CAPABILITIES. Work before authentication
-      self.send_multiline(self.caps, 'CAPABILITIES')
-      self.send('.', 'CAPABILITIES')
+      self.sendM(self.caps, 'CAPABILITIES')
+      self.sendM(None, 'CAPABILITIES')
+    elif commands[0] == 'SRNDGZIP':
+      if self.config['srndgzip']:
+        if self._srndgzip is None:
+          self.send('952 ok go gzip')
+          self._enable_gzip()
+          self.log(self.logger.INFO, 'Enable compression')
+        else:
+          self.send('952 gzip already enabled.')
+      else:
+        self.send('954 gzip not supported')
     elif commands[0] == 'QUIT':
       self.send('205 bye bye')
       self.state = 'closing down'
@@ -331,11 +343,11 @@ class InFeed(feed.BaseFeed):
         self.articles_queue.add(message_id)
         self.qsize = len(self.articles_queue)
         self.send('238 {0} go ahead, send to the article'.format(message_id))
-    elif commands[0] == 'TAKETHIS' and len(commands) > 1:
+    elif commands[0] == 'TAKETHIS' and len(commands) == 2:
       self.waitfor = 'article'
       self.variant = 'TAKETHIS'
-      self.message_id_wait = line.split(' ')[1]
-      self.in_buffer.set_multiline(commands[2] if len(commands) > 2 else None)
+      self.message_id_wait = line.split(' ', 1)[1]
+      self.in_buffer.set_multiline()
     elif commands[0] == 'POST':
       self._handshake_state = True
       self.send('340 go ahead, send to the article')
@@ -480,12 +492,13 @@ class InFeed(feed.BaseFeed):
           head = head.lower()
           if head in self._OVERVIEW_FMT:
             data[self._OVERVIEW_FMT.index(head) + 1] = value
-      sending += self.send_multiline('\t'.join(data), 'XOVER')
+      a, _ = self.sendM('\t'.join(data), 'XOVER')
+      sending += a
       if self.con_broken:
         break
     if not self.con_broken:
-      self.send('.', 'XOVER')
-      self.byte_transfer += sending
+      a, _ = self.sendM(None, 'XOVER')
+      self.byte_transfer += sending + a
       self.time_transfer += time.time() - start_time
 
   def _send_article_READER(self, message_uid, message_id, mode):
@@ -497,7 +510,7 @@ class InFeed(feed.BaseFeed):
     self.log(self.logger.DEBUG, '{} {}'.format(mode[3], message_uid))
     start_time = time.time()
     sending = 0
-    self.send('{} {} {}'.format(mode[0], message_id, message_uid))
+    self.sendM('{} {} {}'.format(mode[0], message_id, message_uid))
     with open(os.path.join('articles', message_uid), 'rb') as fd:
       for to_send in self._read_article(fd, mode[1], mode[2]):
         if not head_complit:
@@ -505,26 +518,27 @@ class InFeed(feed.BaseFeed):
             head_complit = True
           elif to_send.split(': ')[0].upper() in self._remove_headers:
             continue
-        sending += self.send_multiline(to_send, mode[3])
+        a, _ = self.sendM(to_send, mode[3])
+        sending += a
         if self.con_broken:
           break
     if not self.con_broken:
-      self.send('.', mode[3])
-      self.byte_transfer += sending
+      a, _ = self.sendM(None, mode[3])
+      self.byte_transfer += sending + a
       self.time_transfer += time.time() - start_time
 
   def _response_LIST(self, commands):
     if not commands or commands[0] == 'ACTIVE':
       self._response_LIST_ACTIVE(commands[1:])
     elif commands[0] == 'NEWSGROUPS':
-      self.send('215 information follows')
+      self.sendM('215 information follows')
       for line in self.sqlite_dropper.fetchall('SELECT group_name FROM groups'):
-        self.send_multiline(line[0])
-      self.send('.')
+        self.sendM(line[0])
+      self.sendM()
     elif commands[0] == 'OVERVIEW.FMT':
-      self.send('215 Order of fields in overview database:')
-      self.send(self._OVERVIEW_FMT)
-      self.send('.')
+      self.sendM('215 Order of fields in overview database:')
+      self.sendM(self._OVERVIEW_FMT)
+      self.sendM()
     else:
       self.send('503 program error, {} not performed'.format(commands[0]))
 
@@ -532,7 +546,7 @@ class InFeed(feed.BaseFeed):
     if commands:
       self.send('501 Syntax Error')
     else:
-      self.send('215 list of newsgroups follows')
+      self.sendM('215 list of newsgroups follows')
       for line in self.sqlite_dropper.fetchall('SELECT group_name, highest_id, lowest_id, flag FROM groups'):
-        self.send_multiline(' '.join(str(xx) for xx in line))
-      self.send('.')
+        self.sendM(' '.join(str(xx) for xx in line))
+      self.sendM()

@@ -1148,6 +1148,7 @@ class SRNd(threading.Thread):
 
   def _infeed_config_sanitize(self, config):
     # 0 - disallow 1 - allow 2 - required
+    config['srndgzip'] = config.get('srndgzip', 'false').lower() in ('true', 'enable', 'on')
     try:
       auth_required = int(config.get('auth_required', 0))
     except ValueError:
@@ -1168,6 +1169,7 @@ class SRNd(threading.Thread):
     return config
 
   def _outfeed_config_sanitize(self, config):
+    config['infinity_stream'] = config.get('infinity_stream', 'false').lower() in ('true', 'on', 'yes', '1')
     config['srndauth_key'] = config.get('srndauth_key')
     if config['srndauth_key'] is not None and len(config['srndauth_key']) != 64:
       self.log(self.logger.WARNING, 'len srndauth_key != 64. Set None')
