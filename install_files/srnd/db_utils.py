@@ -1,7 +1,7 @@
 #!/usr/bin/python
 
 import sqlite3
-import sqlalchemy
+import psycopg2
 import os
 
 class SQLiteConnector(object):
@@ -24,8 +24,7 @@ class SQLiteConnector(object):
 class AlchemyConnector(object):
 
   def __init__(self, url, schema):
-    self._engine = sqlalchemy.create_engine(url)
-    self._conn = self._engine.connect()
+    self._conn = psycopg2.connect(url)
     self._cur = self._conn.cursor()
     self._cur.execute('set search_path to {},public'.format(schema))
     self.commit = self._cur.commit
