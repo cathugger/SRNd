@@ -28,9 +28,11 @@ class AlchemyConnector(object):
     self._conn = self._engine.connect()
     self._conn.execute('set search_path to {},public'.format(schema))
     
-    self.commit = self._conn.commit
     self.close = self._conn.close
 
+  def commit(self):
+    pass
+    
   def execute(self, sql, *parameters):
     sql = sql.replace('""', "''")
     sql = sql.replace('?', '%s')
