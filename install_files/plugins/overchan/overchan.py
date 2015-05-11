@@ -242,11 +242,9 @@ class main(threading.Thread):
     # ^ hardlinks not gonna work because of remote filesystems
     # ^ softlinks not gonna work because of nginx chroot
     # ^ => cp
-    self.dropperdb = self.config['db_connector']('dropper', timeout=60)
-    self.censordb = self.config['db_connector']('censor', timeout=60)
+    self.dropperdb = self.config['db_connector']('dropper')
+    self.censordb = self.config['db_connector']('censor')
     self.sqlite = self.config['db_connector']('overchan')
-    if not self.config['sqlite_synchronous']:
-      self.sqlite.execute("PRAGMA synchronous = OFF")
     self.update_overchandb()
 
     self.copy_out(css=False, sources=((self.config['thumbs']['no_file'], os.path.join('img', self.config['thumbs']['no_file'])), ('suicide.txt', os.path.join('img', 'suicide.txt')), \
@@ -275,6 +273,8 @@ class main(threading.Thread):
       self.regenerate_all_html()
 
   def update_overchandb(self):
+    # we don't do this we assume everything is migrated
+    return
     try:
       db_version = int(self.sqlite.execute('SELECT value FROM config WHERE key = "db_version"').fetchone()[0])
     except (sqlite3.OperationalError, TypeError) as e:
@@ -290,6 +290,8 @@ class main(threading.Thread):
       self.sqlite.commit()
 
   def _update_db_from(self, version):
+    # we don't do this we assume everything is migrated
+    return
     if version == 0:
       # create configuration
       self.sqlite.execute('''CREATE TABLE IF NOT EXISTS config (key text PRIMARY KEY, value text)''')
@@ -400,8 +402,8 @@ class main(threading.Thread):
   def _db_maintenance(self):
     self.log(self.logger.INFO, 'db maintenance: VACUUM and REINDEX')
     start_time = time.time()
-    self.sqlite.execute('VACUUM;')
-    self.sqlite.execute('REINDEX;')
+    #self.sqlite.execute('VACUUM;')
+    #self.sqlite.execute('REINDEX;')
     self.sqlite.commit()
     self.log(self.logger.INFO, 'db maintenance: Complit at {}s'.format(int(time.time() - start_time)))
 

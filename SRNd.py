@@ -44,12 +44,13 @@ class SRNd(threading.Thread):
         'bind_use_ipv6': (False, 3),
         'data_dir': ('data', 4),
         'db_dir': ('database', 5),
-        'use_chroot': (True, 6),
-        'setuid': ('news', 7),
-        'srnd_debuglevel': (self.logger.INFO, 8),
-        'infeed_debuglevel': (self.logger.INFO, 9),
-        'dropper_debuglevel': (self.logger.INFO, 10),
-        'instance_name': ('SRNd', 11)
+        'db_url': ('postgres://root:root@localhost', 6),
+        'use_chroot': (True, 7),
+        'setuid': ('news', 8),
+        'srnd_debuglevel': (self.logger.INFO, 9),
+        'infeed_debuglevel': (self.logger.INFO, 10),
+        'dropper_debuglevel': (self.logger.INFO, 11),
+        'instance_name': ('SRNd', 12)
     }
     self.config = self.init_srnd_config(def_config)
 
@@ -135,7 +136,7 @@ class SRNd(threading.Thread):
     self._deep_permission_fix(owner, self.config['db_dir'], False)
 
     # init db manager
-    self._db_manager = __import__('srnd.db_utils').db_utils.DatabaseManager(self.config['db_dir'])
+    self._db_manager = __import__('srnd.db_utils').db_utils.DatabaseManager(self.config['db_url'])
 
     # importing plugins
     # we need to do this before chrooting because plugins may need to import other libraries

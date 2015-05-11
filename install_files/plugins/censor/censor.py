@@ -95,6 +95,8 @@ class main(threading.Thread):
     #self.log('this plugin does not handle any article. remove hook parts from {0}'.format(os.path.join('config', 'plugins', self.name.split('-', 1)[1])), 0)
 
   def update_censordb(self):
+    # don't update we assume everything is migrated
+    return
     try:
       db_version = int(self.censordb.execute('SELECT value FROM config WHERE key = "db_version"').fetchone()[0])
     except sqlite3.OperationalError as e:
@@ -114,6 +116,8 @@ class main(threading.Thread):
       self.censordb.commit()
 
   def _update_db_from(self, version):
+    # don't upgrade we assume everything is migrated
+    return
     if version == 0:
       # create configuration
       self.censordb.execute("CREATE TABLE config (key text PRIMARY KEY, value text)")

@@ -148,6 +148,8 @@ class main(threading.Thread):
       o.write(css)
 
   def update_pastesdb(self):
+    #don't update db
+    return
     self.sqlite.execute('''CREATE TABLE IF NOT EXISTS pastes
                   (article_uid text, hash text PRIMARY KEY, sender text, email text, subject text, sent INTEGER, body text, root text, received INTEGER)''')
     try:

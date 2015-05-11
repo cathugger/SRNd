@@ -25,7 +25,7 @@ try:
 except ImportError:
   HTTPServer = HTTPD
 else:
-  HTTPServer = HTTPD
+  HTTPServer = ThreadedHTTPServer
 
 
 from binascii import hexlify, unhexlify

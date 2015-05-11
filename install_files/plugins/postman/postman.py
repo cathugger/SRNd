@@ -23,7 +23,7 @@ try:
 except ImportError:
   HTTPServer = HTTPD
 else:
-  HTTPServer = HTTPD
+  HTTPServer = ThreadedHTTPServer
   
 from binascii import hexlify
 from cgi import FieldStorage
@@ -854,6 +854,8 @@ class main(threading.Thread):
 
 
   def update_db(self, current_version):
+    # assume everything is migrated
+    return
     self.log(self.logger.INFO, "should update db from version %i" % current_version)
     if current_version == 0:
       self.log(self.logger.INFO, "updating db from version %i to version %i" % (current_version, 1))
@@ -892,10 +894,10 @@ class main(threading.Thread):
         self.httpd.socket.close()
       return
     self.db_version = 3
-    self.httpd.sqlite = self._db_connector('hashes', timeout=60)
+    self.httpd.sqlite = self._db_connector('hashes')
     if self.httpd.overchan_fake_id:
-      self.httpd.dropperdb = self._db_connector('dropper', timeout=60)
-    self.httpd.postmandb = self._db_connector('postman', timeout=60)
+      self.httpd.dropperdb = self._db_connector('dropper')
+    self.httpd.postmandb = self._db_connector('postman')
     try:
       db_version = int(self.httpd.postmandb.execute("SELECT value FROM config WHERE key = ?", ("db_version",)).fetchone()[0])
     except sqlite3.OperationalError as e:
@@ -1025,6 +1027,8 @@ class main(threading.Thread):
         self.httpd.dest_cache.pop(random.choice(self.httpd.dest_cache.keys()))
 
   def get_db_last_update(self):
+    # we don't have this
+    return 0
     db_last_update = self.httpd.postmandb.execute("SELECT changed_at FROM modifications WHERE table_name = 'userkey'").fetchone()
     if db_last_update:
       return int(db_last_update[0])
