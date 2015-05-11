@@ -1,7 +1,7 @@
 #!/usr/bin/python
 
 import sqlite3
-import psycopg2
+import sqlalchemy
 import os
 
 class SQLiteConnector(object):
@@ -24,9 +24,8 @@ class SQLiteConnector(object):
 class AlchemyConnector(object):
 
   def __init__(self, url, schema):
-    self._conn = psycopg2.connect(url)
-    self._cur = self._conn.cursor()
-    self._cur.execute('set search_path to {},public'.format(schema))
+    self._conn = sqlalchemy.create_engine(url).connect()
+    self._conn.execute('set search_path to {},public'.format(schema))
     self.commit = self._conn.commit
     
     self.close = self._conn.close
@@ -35,8 +34,7 @@ class AlchemyConnector(object):
   def execute(self, sql, parameters=()):
     sql = sql.replace('""', "''")
     sql = sql.replace('?', '%s')
-    self._cur.execute(sql, parameters)
-    return self._cur
+    return self._conn.execute(sql, parameters)
     
   def fetchone(self, sql, parameters=()):
     sql = sql.replace('""', "''")
