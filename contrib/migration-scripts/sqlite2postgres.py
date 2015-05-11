@@ -184,10 +184,8 @@ def migrate(db, litedb):
         print ('migrate {} to {}.{}'.format(num, db, table))
         cur.execute('CREATE TABLE IF NOT EXISTS {}.{}{}'.format(db, table, create))
         for tup in lite.execute('SELECT * FROM {}'.format(table)).fetchall():
-            try:
-                cur.execute('INSERT INTO {}.{}{}'.format(db, table, insert), tup)
-            except:
-                print ('drop insert')
+            cur.execute('INSERT INTO {}.{}{}'.format(db, table, insert), tup)
+
     print ('create indexes for {}'.format(db))
     for query in stuff[db][1]:
         cur.execute(query)
