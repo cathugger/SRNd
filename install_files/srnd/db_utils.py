@@ -26,17 +26,17 @@ class AlchemyConnector(object):
   def __init__(self, url, schema):
     self._engine = sqlalchemy.create_engine(url)
     self._conn = self._engine.connect()
-    self._conn.execute('set search_path to {},public'.format(schema))
+    self._cur = self._conn.cursor()
+    self._cur.execute('set search_path to {},public'.format(schema))
+    self.commit = self._cur.commit
     
     self.close = self._conn.close
 
-  def commit(self):
-    pass
     
   def execute(self, sql, *parameters):
     sql = sql.replace('""', "''")
     sql = sql.replace('?', '%s')
-    return self._conn.execute(sql, *parameters)
+    return self._cur.execute(sql, *parameters)
 
     
   def fetchone(self, sql, parameters=()):
