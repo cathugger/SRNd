@@ -32,7 +32,7 @@ class AlchemyConnector(object):
     self.close = self._conn.close
 
     
-  def execute(self, sql, parameters):
+  def execute(self, sql, parameters=()):
     sql = sql.replace('""', "''")
     sql = sql.replace('?', '%s')
     self._cur.execute(sql, parameters)
