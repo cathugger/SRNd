@@ -26,7 +26,7 @@ class AlchemyConnector(object):
   def __init__(self, url, schema):
     self._engine = sqlalchemy.create_engine(url)
     self._conn = self._engine.connect()
-    self._con.execute('set search_path to {},public'.format(schema))
+    self._conn.execute('set search_path to {},public'.format(schema))
     
     self.commit = self._conn.commit
     self.close = self._conn.close
