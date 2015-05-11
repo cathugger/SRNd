@@ -386,6 +386,7 @@ class main(threading.Thread):
       f.write(data)
 
   def _need_db_maintenance(self):
+    return
     result = self.sqlite.execute('SELECT value FROM config WHERE key = "db_maintenance"').fetchone()
     try:
       result = int(result[0])
@@ -400,6 +401,7 @@ class main(threading.Thread):
       return False
 
   def _db_maintenance(self):
+    return
     self.log(self.logger.INFO, 'db maintenance: VACUUM and REINDEX')
     start_time = time.time()
     #self.sqlite.execute('VACUUM;')
