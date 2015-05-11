@@ -47,7 +47,7 @@ class InFeed(feed.BaseFeed):
     self.current_article_id = -1
     self.message_id_wait = ''
     # get flag srnd-infeed-access from db
-    self._srnd_infeed_access = self._db_connector('censor', timeout=60).fetchone('SELECT flag FROM commands WHERE command="srnd-infeed-access"')
+    self._srnd_infeed_access = self._db_connector('censor', timeout=60).fetchone("SELECT flag FROM commands WHERE command='srnd-infeed-access'")
     self._srnd_infeed_access = 0 if self._srnd_infeed_access is None else int(self._srnd_infeed_access[0])
     # list not sending headers in READER MODE.
     self._remove_headers = ('X-I2P-DESTHASH',)
