@@ -31,9 +31,10 @@ class dropper(threading.Thread):
     self.DATABASE_VERSION = 3
     self._redistribute = set()
 
-    self.dropperdb = kwargs['db_connector']('dropper', timeout=20)
+    self.dropperdb = kwargs['db_connector']('dropper')
     self.hashesdb = kwargs['db_connector']('hashes')
 
+    '''
     self.hashesdb.execute('''CREATE TABLE IF NOT EXISTS article_hashes
                (message_id text PRIMARY KEY, message_id_hash text, sender_desthash text)''')
     try:
@@ -44,7 +45,8 @@ class dropper(threading.Thread):
     self.hashesdb.execute('CREATE INDEX IF NOT EXISTS article_hash_idx ON article_hashes(message_id_hash);')
     self.hashesdb.commit()
     self.update_dropperdb()
-
+    '''
+               
   def update_dropperdb(self):
     try:
       db_version = int(self.dropperdb.execute('SELECT value FROM config WHERE key = "db_version"').fetchone()[0])
