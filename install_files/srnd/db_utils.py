@@ -34,18 +34,18 @@ class AlchemyConnector(object):
     
   def execute(self, sql, *parameters):
     sql = sql.replace('""', "''")
-    sql = sql.replace('?', '%s')
+    #sql = sql.replace('?', '%s')
     self._cur.execute(sql, *parameters)
     return self._cur
     
   def fetchone(self, sql, parameters=()):
     sql = sql.replace('""', "''")
-    sql = sql.replace('?', '%s')
+    #sql = sql.replace('?', '%s')
     return self.execute(sql, *parameters).fetchone()
 
   def fetchall(self, sql, parameters=()):
     sql = sql.replace('""', "''")
-    sql = sql.replace('?', '%s')
+    #sql = sql.replace('?', '%s')
     return self.execute(sql, *parameters).fetchall()
     
 class SqliteManager(object):
