@@ -27,7 +27,7 @@ class AlchemyConnector(object):
     self._conn = psycopg2.connect(url)
     self._cur = self._conn.cursor()
     self._cur.execute('set search_path to {},public'.format(schema))
-    self.commit = self._cur.commit
+    self.commit = self._conn.commit
     
     self.close = self._conn.close
 
