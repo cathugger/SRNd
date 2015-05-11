@@ -33,19 +33,6 @@ class dropper(threading.Thread):
 
     self.dropperdb = kwargs['db_connector']('dropper')
     self.hashesdb = kwargs['db_connector']('hashes')
-
-    '''
-    self.hashesdb.execute('''CREATE TABLE IF NOT EXISTS article_hashes
-               (message_id text PRIMARY KEY, message_id_hash text, sender_desthash text)''')
-    try:
-      self.hashesdb.execute('ALTER TABLE article_hashes ADD COLUMN sender_desthash text DEFAULT ""')
-    except sqlite3.OperationalError:
-      pass
-    self.hashesdb.execute('CREATE INDEX IF NOT EXISTS article_desthash_idx ON article_hashes(sender_desthash);')
-    self.hashesdb.execute('CREATE INDEX IF NOT EXISTS article_hash_idx ON article_hashes(message_id_hash);')
-    self.hashesdb.commit()
-    self.update_dropperdb()
-    '''
                
   def update_dropperdb(self):
     try:
