@@ -14,7 +14,7 @@ import os
 DB_HOST='database'
 DB_USER='overchan'
 DB_PASSWORD='overchan'
-DB_PORT='5433'
+DB_PORT='5434'
 
 def migrate(db, litedb):
     print ('migrate {}'.format(db))
@@ -184,8 +184,10 @@ def migrate(db, litedb):
         print ('migrate {} to {}.{}'.format(num, db, table))
         cur.execute('CREATE TABLE IF NOT EXISTS {}.{}{}'.format(db, table, create))
         for tup in lite.execute('SELECT * FROM {}'.format(table)).fetchall():
-            cur.execute('INSERT INTO {}.{}{}'.format(db, table, insert), tup)
-
+            try:
+                cur.execute('INSERT INTO {}.{}{}'.format(db, table, insert), tup)
+            except:
+                pass
     print ('create indexes for {}'.format(db))
     for query in stuff[db][1]:
         cur.execute(query)
