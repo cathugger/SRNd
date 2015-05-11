@@ -11,9 +11,10 @@ import os
 #
 # change these as needed
 #
-DB_HOST='127.0.0.1'
-DB_USER='jeff'
-DB_PASSWORD='jeff'
+DB_HOST='database'
+DB_USER='overchan'
+DB_PASSWORD='overchan'
+DB_PORT='5433'
 
 def migrate(db, litedb):
     print ('migrate {}'.format(db))
@@ -22,7 +23,7 @@ def migrate(db, litedb):
     lite = sqlite3.connect(litedb)
     
     # connect to new database
-    con = psycopg2.connect('user={} password={} host={}'.format(DB_USER, DB_PASSWORD, DB_HOST))
+    con = psycopg2.connect('user={} password={} host={} port={}'.format(DB_USER, DB_PASSWORD, DB_HOST, DB_PORT))
     cur = con.cursor()
     stuff = {
         'censor' : (
@@ -183,8 +184,10 @@ def migrate(db, litedb):
         print ('migrate {} to {}.{}'.format(num, db, table))
         cur.execute('CREATE TABLE IF NOT EXISTS {}.{}{}'.format(db, table, create))
         for tup in lite.execute('SELECT * FROM {}'.format(table)).fetchall():
-            cur.execute('INSERT INTO {}.{}{}'.format(db, table, insert), tup)
-            
+            try:
+                cur.execute('INSERT INTO {}.{}{}'.format(db, table, insert), tup)
+            except:
+                print ('drop insert')
     print ('create indexes for {}'.format(db))
     for query in stuff[db][1]:
         cur.execute(query)
