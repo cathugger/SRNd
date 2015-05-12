@@ -40,13 +40,9 @@ class AlchemyConnector(object):
     return self._conn.execute(sql, parameters)
     
   def fetchone(self, sql, parameters=()):
-    sql = sql.replace('""', "''")
-    sql = sql.replace('?', '%s')
     return self.execute(sql, parameters).fetchone()
 
   def fetchall(self, sql, parameters=()):
-    sql = sql.replace('""', "''")
-    sql = sql.replace('?', '%s')
     return self.execute(sql, parameters).fetchall()
     
 class SqliteManager(object):
