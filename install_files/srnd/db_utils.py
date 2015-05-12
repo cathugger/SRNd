@@ -2,6 +2,7 @@
 
 import sqlite3
 import sqlalchemy
+from sqlalchemy.orm import sessionmaker
 import os
 
 class SQLiteConnector(object):
@@ -24,12 +25,14 @@ class SQLiteConnector(object):
 class AlchemyConnector(object):
 
   def __init__(self, url, schema):
-    self._conn = sqlalchemy.create_engine(url).connect()
+    self._engine = sqlalchemy.create_engine(url, isolation_level='AUTOCOMMIT')
+    self._conn = self._engine.connect()
     self._conn.execute('set search_path to {},public'.format(schema))
-    self.commit = self._conn.commit
     
     self.close = self._conn.close
 
+  def commit(self):
+    pass
     
   def execute(self, sql, parameters=()):
     sql = sql.replace('""', "''")
