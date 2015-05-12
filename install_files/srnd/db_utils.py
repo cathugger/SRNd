@@ -37,7 +37,7 @@ class AlchemyConnector(object):
   def execute(self, sql, parameters=()):
     sql = sql.replace('""', "''")
     sql = sql.replace('?', '%s')
-    return self._conn.execute(sql, parameters)
+    return self._conn.execute(sqlalchemy.text(sql), parameters)
     
   def fetchone(self, sql, parameters=()):
     return self.execute(sql, parameters).fetchone()
