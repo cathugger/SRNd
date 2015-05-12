@@ -25,7 +25,7 @@ class SQLiteConnector(object):
 class AlchemyConnector(object):
 
   def __init__(self, url, schema):
-    self._engine = sqlalchemy.create_engine(url, isolation_level='AUTOCOMMIT')
+    self._engine = sqlalchemy.create_engine(url)
     self._conn = self._engine.connect()
     self._conn.execute('set search_path to {},public'.format(schema))
     
