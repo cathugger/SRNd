@@ -497,7 +497,7 @@ class OverchanGeneratorTools(OverchanGeneratorInit):
         fname = os.path.join(self.config["output_directory"],"img", row[1])
         if os.path.exists(fname):
           self.log(self.logger.INFO, "deleting %s" % fname)
-          os.unlink(fname
+          os.unlink(fname)
       if len(row[2]) > 0:
         fname = os.path.join(self.config["output_directory"],"thumbs", row[1])
         if os.path.exists(fname):
