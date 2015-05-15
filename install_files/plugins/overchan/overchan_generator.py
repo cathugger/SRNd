@@ -504,7 +504,8 @@ class OverchanGeneratorTools(OverchanGeneratorInit):
           self.log(self.logger.INFO, "deleting %s" % fname)
           os.unlink(fname)
       self._expire_article(row[0])
-      
+      self.overchandb.execute('DELETE FROM articles WHERE article_uid = ?', row[0])
+      self.overchandb.commit()
       
   def _expire_article(self, message_id):
     groups = list()
