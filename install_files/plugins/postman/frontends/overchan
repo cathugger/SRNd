@@ -33,5 +33,5 @@ audio/*
 video/*
 
 (allowed_boards)
-overchan.*
 !overchan.oniichan
+overchan.*
