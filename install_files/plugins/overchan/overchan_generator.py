@@ -484,6 +484,43 @@ class OverchanGeneratorTools(OverchanGeneratorInit):
       childs.append(self.t_engine['message_'+ nopic +'pic'+ closed].substitute(childs_message))
     return childs
 
+  def expire_board(self, group_id):
+    threads =  self.config['threads_per_page'] * self.config['pages_per_board']
+    for row self.overchandb.execute('SELECT article_uid FROM articles WHERE parent = "" AND group_id = ? AND article_uid NOT IN ( SELECT article_uid FROM articles WHERE parent = "" ORDER BY sent DESC LIMIT ? )', (group_id, threads)).fetchall():
+      self._expire_thread(group_id, row[0])
+    
+
+  def _expire_thread(self, group_id, root_post):
+    self.log(self.logger.INFO, "expire old thread %s" % root_post)
+    for row in self.overchandb.execute('SELECT article_uid FROM articles WHERE parent = ? AND group_id = ? ', (parent, group_id, child_count)).fetchall():
+      self._expire_article(row[0])
+      
+      
+  def _expire_article(self, message_id):
+    groups = list()
+    group_rows = list()
+    article_path = os.path.join('articles', message_id)
+    censore_path = os.path.join('articles', 'censored', message_id)
+    for row in self.dropperdb.execute('SELECT group_name, article_id from articles, groups WHERE message_id=? and groups.group_id = articles.group_id', (message_id,)).fetchall():
+      group_rows.append((row[0], row[1]))
+      groups.append(row[0])
+    if os.path.exists(article_path):
+      self.log(self.logger.DEBUG, "moving %s to articles/censored/" % message_id)
+      os.rename(article_path, censore_path)
+      for group in group_rows:
+        self.log(self.logger.DEBUG, "deleting groups/%s/%i" % (group[0], group[1]))
+        try:
+          # FIXME race condition with dropper if currently processing this very article
+          os.unlink(os.path.join("groups", str(group[0]), str(group[1])))
+        except Exception as e:
+          self.log(self.logger.WARNING, "could not delete %s: %s" % (os.path.join("groups", str(group[0]), str(group[1])), e))
+    elif not os.path.exists(censore_path):
+      f = open(censore_path, 'w')
+      f.close()
+    return message_id, groups
+
+
+    
   def _message_uid_to_fake_id(self, message_uid):
     fake_id = self.dropperdb.execute('SELECT article_id FROM articles WHERE message_id = ?', (message_uid,)).fetchone()
     return fake_id[0] if fake_id is not None else sha1(message_uid).hexdigest()[:10]
@@ -603,7 +640,6 @@ class OverchanGeneratorStatic(OverchanGeneratorTools):
       generate_archive = True
     else:
       generate_archive = False
-
     generation = list()
     basic_board = dict()
     basic_board['board_subtype'] = ''
@@ -632,6 +668,8 @@ class OverchanGeneratorStatic(OverchanGeneratorTools):
       yield '%s-%s' % (board_name_unquoted, board), prepared_template.substitute(t_engine_mapper_board)
     last_root_message = board_data[-1][0] if thread_count > 0 else None
     del board_data, t_engine_mapper_board, prepared_template
+    if self.config['enable_rollover']:
+      self.expire_board(group_id)
     if len(generation) > 0:
       self.log(self.logger.INFO, 'generating {}/{}-({}).html at {:0.4f}s'.format(self.config['output_directory'], board_name_unquoted, ','.join(generation), (time.time() - start_time)))
     if generate_archive and (self._page_stamp['board'][group_id].get(0, '') != last_root_message or (not isgenerated and len(self.regenerate_threads) > 0)):
