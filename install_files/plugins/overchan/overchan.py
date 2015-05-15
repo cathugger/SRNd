@@ -89,7 +89,7 @@ class main(threading.Thread):
         'threads_per_page': 10,
         'pages_per_board': 10,
         'enable_archive': False,
-        'enable_rollover': True
+        'enable_rollover': True,
         'enable_recent': True,
         'archive_threads_per_page': 500,
         'archive_pages_per_board': 20,
