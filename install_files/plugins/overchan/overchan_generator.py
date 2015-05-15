@@ -492,7 +492,17 @@ class OverchanGeneratorTools(OverchanGeneratorInit):
 
   def _expire_thread(self, group_id, root_post):
     self.log(self.logger.INFO, "expire old thread %s" % root_post)
-    for row in self.overchandb.execute('SELECT article_uid FROM articles WHERE parent = ? AND group_id = ? ', (parent, group_id, child_count)).fetchall():
+    for row in self.overchandb.execute('SELECT article_uid, imagelink, thumblink FROM articles WHERE parent = ? AND group_id = ? ', (parent, group_id, child_count)).fetchall():
+      if len(row[1]) > 0:
+        fname = os.path.join(self.config["output_directory"],"img", row[1])
+        if os.path.exists(fname):
+          self.log(self.logger.INFO, "deleting %s" % fname)
+          os.unlink(fname
+      if len(row[2]) > 0:
+        fname = os.path.join(self.config["output_directory"],"thumbs", row[1])
+        if os.path.exists(fname):
+          self.log(self.logger.INFO, "deleting %s" % fname)
+          os.unlink(fname)
       self._expire_article(row[0])
       
       
@@ -514,10 +524,9 @@ class OverchanGeneratorTools(OverchanGeneratorInit):
           os.unlink(os.path.join("groups", str(group[0]), str(group[1])))
         except Exception as e:
           self.log(self.logger.WARNING, "could not delete %s: %s" % (os.path.join("groups", str(group[0]), str(group[1])), e))
-    elif not os.path.exists(censore_path):
+    if os.path.exists(censore_path) and os.stat(censore_path).st_size > 0:
       f = open(censore_path, 'w')
       f.close()
-    return message_id, groups
 
 
     
