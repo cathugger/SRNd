@@ -18,7 +18,7 @@
 #start_param pages_per_board=10
 #start_param debug=2
 #start_param title=overchan.oniichan
-#start_param sync_on_startup=True
+#start_param sync_on_startup=False
 #start_param enable_archive=False
 #start_param enable_rollover=True
 #start_param enable_recent=True

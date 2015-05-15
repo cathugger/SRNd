@@ -487,13 +487,13 @@ class OverchanGeneratorTools(OverchanGeneratorInit):
   def expire_board(self, group_id):
     threads =  self.config['threads_per_page'] * self.config['pages_per_board']
     for row in self.overchandb.execute('SELECT article_uid FROM articles WHERE parent = "" AND group_id = ? AND article_uid NOT IN ( SELECT article_uid FROM articles WHERE group_id = ? AND parent = "" ORDER BY sent DESC LIMIT ? )', (group_id, threads, group_id)).fetchall():
-      self._expire_thread(group_id, row[0])
+      self._expire_thread(row[0])
     
 
-  def _expire_thread(self, group_id, root_post):
+  def _expire_thread(self, root_post):
     thread_html = os.path.join(self.config["output_directory"], "thread-%s.html" % sha1(root_post).hexdigest()[:10])
     self.log(self.logger.INFO, "expire old thread %s" % root_post)
-    for row in self.overchandb.execute('SELECT article_uid, imagelink, thumblink FROM articles WHERE parent = ? AND group_id = ? ', (root_post, group_id)).fetchall():
+    for row in self.overchandb.execute('SELECT article_uid, imagelink, thumblink FROM articles WHERE parent = ?', (root_post,)).fetchall():
       if len(row[1]) > 0:
         fname = os.path.join(self.config["output_directory"],"img", row[1])
         if os.path.exists(fname):

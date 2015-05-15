@@ -9,7 +9,7 @@ class SQLiteConnector(object):
     self._sqlite = self._conn.cursor()
 
     self.execute = self._sqlite.execute
-    self.commit = self._conn.commit
+    self.commit = self._sqlite.commit
     self.close = self._conn.close
 
   def fetchone(self, sql, parameters=()):
