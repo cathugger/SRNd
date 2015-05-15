@@ -34,3 +34,4 @@ video/*
 
 (allowed_boards)
 overchan.*
+!overchan.oniichan
