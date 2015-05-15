@@ -643,6 +643,9 @@ class OverchanGeneratorStatic(OverchanGeneratorTools):
     self.regenerate_threads.clear()
 
   def generate_board(self, group_id):
+    
+    if self.config['enable_rollover']:
+      self.expire_board(group_id)
     start_time = time.time()
     threads_per_page = self.config['threads_per_page']
     pages_per_board = self.config['pages_per_board']
@@ -682,8 +685,6 @@ class OverchanGeneratorStatic(OverchanGeneratorTools):
       yield '%s-%s' % (board_name_unquoted, board), prepared_template.substitute(t_engine_mapper_board)
     last_root_message = board_data[-1][0] if thread_count > 0 else None
     del board_data, t_engine_mapper_board, prepared_template
-    if self.config['enable_rollover']:
-      self.expire_board(group_id)
     if len(generation) > 0:
       self.log(self.logger.INFO, 'generating {}/{}-({}).html at {:0.4f}s'.format(self.config['output_directory'], board_name_unquoted, ','.join(generation), (time.time() - start_time)))
     if generate_archive and (self._page_stamp['board'][group_id].get(0, '') != last_root_message or (not isgenerated and len(self.regenerate_threads) > 0)):
