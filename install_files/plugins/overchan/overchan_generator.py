@@ -491,7 +491,7 @@ class OverchanGeneratorTools(OverchanGeneratorInit):
     
 
   def _expire_thread(self, group_id, root_post):
-    thread_html = os.path.join(self.config["output_directory"], "thread-%.html" % sha1(root_post).hexdigest()[:10])
+    thread_html = os.path.join(self.config["output_directory"], "thread-%s.html" % sha1(root_post).hexdigest()[:10])
     self.log(self.logger.INFO, "expire old thread %s" % root_post)
     for row in self.overchandb.execute('SELECT article_uid, imagelink, thumblink FROM articles WHERE parent = ? AND group_id = ? ', (root_post, group_id)).fetchall():
       if len(row[1]) > 0:
