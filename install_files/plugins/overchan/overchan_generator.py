@@ -486,11 +486,11 @@ class OverchanGeneratorTools(OverchanGeneratorInit):
 
   def expire_board(self, group_id):
     threads =  self.config['threads_per_page'] * self.config['pages_per_board']
-    for row in self.overchandb.execute('SELECT article_uid FROM articles WHERE article_uid NOT IN \
-                                        (SELECT article_uid FROM articles WHERE article_uid IN \
-                                        (SELECT parent FROM articles ORDER BY received DESC LIMIT ? )\ 
-                                        OR article_uid IN ( SELECT article_uid FROM articles WHERE parent="" ORDER BY received DESC LIMIT ? )\
-                                        ORDER BY received DESC LIMIT ?)', (threads, threads, threads)).fetchall():
+    for row in self.overchandb.execute('''SELECT article_uid FROM articles WHERE article_uid NOT IN
+                                        (SELECT article_uid FROM articles WHERE article_uid IN
+                                        (SELECT parent FROM articles ORDER BY received DESC LIMIT ? ) 
+                                        OR article_uid IN ( SELECT article_uid FROM articles WHERE parent="" ORDER BY received DESC LIMIT ? )
+                                        ORDER BY received DESC LIMIT ?)''', (threads, threads, threads)).fetchall():
     self._expire_thread(row[0])
     
 
