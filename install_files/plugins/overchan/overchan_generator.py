@@ -491,7 +491,7 @@ class OverchanGeneratorTools(OverchanGeneratorInit):
                                         (SELECT parent FROM articles ORDER BY received DESC LIMIT ? ) 
                                         OR article_uid IN ( SELECT article_uid FROM articles WHERE parent="" ORDER BY received DESC LIMIT ? )
                                         ORDER BY received DESC LIMIT ?)''', (threads, threads, threads)).fetchall():
-    self._expire_thread(row[0])
+      self._expire_thread(row[0])
     
 
   def _expire_thread(self, root_post):
