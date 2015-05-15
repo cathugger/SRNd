@@ -505,7 +505,7 @@ class OverchanGeneratorTools(OverchanGeneratorInit):
           self.log(self.logger.INFO, "deleting %s" % fname)
           os.unlink(fname)
       self._expire_article(row[0])
-      self.overchandb.execute('DELETE FROM articles WHERE article_uid = ?', (row[0],))
+      self.overchandb.execute('DELETE FROM articles WHERE article_uid = ?', (row[0],)).fetchall()
       self.overchandb.commit()
     if os.path.exists(thread_html):
       self.log(self.logger.INFO, "deleting %s" % thread_html)
