@@ -20,7 +20,7 @@ from hashlib import sha1, sha512
 import Image
 import nacl.signing
 
-from srnd.utils import basicHTMLencode, css_minifer, trydecode, valid_group_name
+from srnd.utils import basicHTMLencode, css_minifer, trydecode, valid_group_name, overchan_thread_unlink
 from overchan_generator import OverchanGeneratorStatic
 from overchan_markup import OverchanMarkup
 
@@ -469,10 +469,8 @@ class main(threading.Thread):
           # root posts without child posts
           self.log(self.logger.INFO, 'deleting root message_id %s' % message_id)
         self.sqlite.execute('DELETE FROM articles WHERE article_uid = ?', (message_id,))
-        try:
-          os.unlink(os.path.join(self.config['output_directory'], "thread-%s.html" % sha1(message_id).hexdigest()[:10]))
-        except OSError as e:
-          self.log(self.logger.WARNING, 'could not delete thread for message_id %s: %s' % (message_id, e))
+        for error_ in overchan_thread_unlink(self.config['output_directory'], 'thread-{}'.format(sha1(message_id).hexdigest()[:10])):
+          self.log(self.logger.WARNING, 'could not delete thread for message_id %s, %s' % (message_id, error_))
       else:
         # child post and root not deleting
         if row[2] not in self.delete_messages:
