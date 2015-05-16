@@ -487,10 +487,10 @@ class OverchanGeneratorTools(OverchanGeneratorInit):
   def expire_board(self, group_id):
     threads =  self.config['threads_per_page'] * self.config['pages_per_board']
     for row in self.overchandb.execute('''SELECT article_uid FROM articles WHERE group_id = ? AND article_uid NOT IN
-                                        (SELECT article_uid FROM articles WHERE article_uid IN
+                                        (SELECT article_uid FROM articles WHERE group_id = ? article_uid IN
                                         (SELECT parent FROM articles WHERE group_id = ? ORDER BY received DESC LIMIT ? ) 
                                         OR article_uid IN ( SELECT article_uid FROM articles WHERE parent="" AND group_id = ? ORDER BY received DESC LIMIT ? )
-                                        ORDER BY received DESC LIMIT ?)''', (group_id, group_id, threads, group_id, threads, threads)).fetchall():
+                                        ORDER BY received DESC LIMIT ?)''', (group_id, group_id, group_id, threads, group_id, threads, threads)).fetchall():
       self._expire_thread(row[0])
     
 
@@ -510,7 +510,7 @@ class OverchanGeneratorTools(OverchanGeneratorInit):
           os.unlink(fname)
       self._expire_article(row[0])
       self.overchandb.execute('DELETE FROM articles WHERE article_uid = ?', (row[0],)).fetchall()
-      self.overchandb.commit()
+    self.overchandb.commit()
     if os.path.exists(thread_html):
       self.log(self.logger.INFO, "deleting %s" % thread_html)
       os.unlink(thread_html)
