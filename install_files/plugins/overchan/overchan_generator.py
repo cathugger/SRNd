@@ -341,6 +341,8 @@ class OverchanGeneratorTools(OverchanGeneratorInit):
       imagelink = data[6]
       if data[7] in self.config['thumbs']:
         thumblink = self.config['thumbs'][data[7]]
+        if data[6] in self.config['thumbs']:
+          imagelink = self.config['thumbs'][data[6]]
         parsed_data['thumb_info'] = self._get_thumb_info(thumblink, father == '', True)
       else:
         thumblink = data[7]

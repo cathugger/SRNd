@@ -206,7 +206,7 @@ class main(threading.Thread):
           self.sqlite.execute('INSERT OR REPLACE INTO thumb_info VALUES (?, ?, ?, ?)', (thumb_name, info[0], info[1], info[2]))
     self.sqlite.commit()
 
-  def copy_out(self, css, sources):
+  def copy_out(self, sources, css=False):
     for source, target in sources:
       try:
         i = open(os.path.join(self.config['template_directory'], source), 'r')
@@ -249,9 +249,13 @@ class main(threading.Thread):
       self.sqlite.execute("PRAGMA synchronous = OFF")
     self.update_overchandb()
 
-    self.copy_out(css=False, sources=((self.config['thumbs']['no_file'], os.path.join('img', self.config['thumbs']['no_file'])), ('suicide.txt', os.path.join('img', 'suicide.txt')), \
-      ('playbutton.png', os.path.join('img', 'playbutton.png')),))
-    self.copy_out(css=True, sources=([(self.config['censor_css'], 'censor.css'),] + [(x, x if self.config['csss'][0] != x else 'styles.css') for x in self.config['csss']]))
+    self.copy_out((
+        (self.config['thumbs']['no_file'], os.path.join('img', self.config['thumbs']['no_file'])),
+        (self.config['thumbs']['invalid'], os.path.join('img', self.config['thumbs']['invalid'])),
+        ('suicide.txt', os.path.join('img', 'suicide.txt')),
+        ('playbutton.png', os.path.join('img', 'playbutton.png'))
+        ))
+    self.copy_out(([(self.config['censor_css'], 'censor.css'),] + [(x, x if self.config['csss'][0] != x else 'styles.css') for x in self.config['csss']]), True)
     self.config['csss'][0] = 'styles.css'
     self.gen_template_thumbs(self.config['thumbs'].values())
 
