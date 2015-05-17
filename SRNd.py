@@ -2,7 +2,6 @@
 import json
 import os
 import pwd
-import random
 import select
 import socket
 import sys
@@ -28,6 +27,7 @@ class SRNd(threading.Thread):
       self.logger.log('SRNd', message, loglevel)
 
   def __init__(self, logger):
+    self.ctl_groups = set(['ctl'])
     self.logger = logger
     self.config = {'srnd_debuglevel': self.logger.INFO}
     self.log(self.logger.VERBOSE,  'srnd test logging with VERBOSE')
@@ -834,11 +834,12 @@ class SRNd(threading.Thread):
       return {"blacklist": self.hook_blacklist, "whitelist": self.hooks}
     return "obviously all fine in %s" % str(data["data"])
 
-  def get_message_list_by_group(self, group):
+  def get_message_list_by_group(self, group, sort_=True):
     group_dir = os.path.join('groups', group)
-    # send fresh articles first
     file_list = [int(k) for k in os.listdir(group_dir)]
-    file_list.sort()
+    if sort_:
+    # send fresh articles first
+      file_list.sort()
 
     message_list = list()
     for link in file_list:
@@ -899,8 +900,7 @@ class SRNd(threading.Thread):
     # targets - object name. None - any
     groups = [x for x in os.listdir('groups') if os.path.isdir(os.path.join('groups', x))]
     synclist = dict()
-    # sync groups in random order
-    random.shuffle(groups)
+    ctl_synclist = dict()
     for group in groups:
       self.log(self.logger.DEBUG, 'startup sync, checking {}..'.format(group))
       current_sync_targets = set()
@@ -916,8 +916,18 @@ class SRNd(threading.Thread):
         else:
           self.log(self.logger.WARNING, 'unknown hook detected. wtf? {}'.format(sync_target))
       if len(current_sync_targets) > 0:
-        synclist[group] = {'targets': current_sync_targets, 'file_list': self.get_message_list_by_group(group)}
+        if group in self.ctl_groups:
+          ctl_synclist[group] = {'targets': current_sync_targets, 'file_list': self.get_message_list_by_group(group, False)}
+        else:
+          synclist[group] = {'targets': current_sync_targets, 'file_list': self.get_message_list_by_group(group)}
 
+    self._send_synclist(synclist)
+    self._send_synclist(ctl_synclist, True)
+
+    self.log(self.logger.DEBUG, 'startup_sync done. hopefully.')
+    self.feed_db.clear()
+
+  def _send_synclist(self, synclist, ctl=False):
     while len(synclist) > 0:
       empty_sync_group = list()
       for group in synclist:
@@ -928,15 +938,12 @@ class SRNd(threading.Thread):
             for current_hook in synclist[group]['targets']:
               if current_hook.startswith('outfeed-'):
                 if message_id not in self.feed_db.get(current_hook, ''):
-                  self.feeds[current_hook].add_article(message_id)
+                  self.feeds[current_hook].add_article(message_id, ctl)
               elif current_hook.startswith('plugin-'):
                 self.plugins[current_hook].add_article(message_id)
           del synclist[group]['file_list'][:500]
       for group in empty_sync_group:
         del synclist[group]
-
-    self.log(self.logger.DEBUG, 'startup_sync done. hopefully.')
-    self.feed_db.clear()
 
   def _load_outfeed_db(self, targets=None):
     for target in (xx for xx in self.feeds if xx.startswith('outfeed-')):

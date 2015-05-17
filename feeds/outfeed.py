@@ -19,6 +19,7 @@ class OutFeed(feed.BaseFeed):
     feed.BaseFeed.__init__(self, master, logger, self.config['debug'], 'outfeed-{}-{}'.format(*self.config['server']))
     self.sync_on_startup = self.config['sync_on_startup']
     self.queue = Queue.LifoQueue()
+    self.ctl_queue = Queue.Queue()
     self.polltimeout = 500 # 1 * 1000
     self.cooldown_period = 60
     self.cooldown_counter = 0
@@ -52,11 +53,14 @@ class OutFeed(feed.BaseFeed):
       self.running = False
     return socket_
 
-  def add_article(self, message_id):
-    self.queue.put(message_id)
+  def add_article(self, message_id, ctl=False):
+    if ctl:
+      self.ctl_queue.put(message_id)
+    else:
+      self.queue.put(message_id)
 
   def bump_qsize(self):
-    self.qsize = self.queue.qsize() + len(self.articles_queue) + len(self.rechecking)
+    self.qsize = self.queue.qsize() + len(self.articles_queue) + len(self.rechecking) + self.ctl_queue.qsize()
 
   def outstream_flags_reset(self):
     self._support_vars = dict()
@@ -103,6 +107,14 @@ class OutFeed(feed.BaseFeed):
     except sockssocket.ProxyError as e:
       self._proxy_exception(e)
 
+  def _queue_allow(self):
+    if self.queue.qsize():
+      return True
+    if self.ctl_queue.qsize():
+      self.queue.put(self.ctl_queue.get())
+      return True
+    return False
+
   def _handle_connect(self, reconnect=False):
     """Work while not connected and outfeed running. Return poll if connect else None"""
     self._socket_shutdown()
@@ -119,7 +131,7 @@ class OutFeed(feed.BaseFeed):
       if reconnect and self.qsize == 0:
         self.log(self.logger.INFO, 'connection broken. no article to send, sleeping: {}'.format(self.con_broken))
         self.state = 'nothing_to_send'
-        while self.running and self.queue.qsize() == 0:
+        while self.running and not self._queue_allow():
           time.sleep(2)
         continue
       self._cooldown(self.con_broken)
@@ -164,7 +176,7 @@ class OutFeed(feed.BaseFeed):
         self._worker_send_article_stream()
       else:
         self._send_new_check('CHECK', 50)
-    elif self.queue.qsize() > 0:
+    elif self._queue_allow():
       if not self._wait_response:
         if self._current_mode == self._MODE['ihave']:
           self._send_new_check('IHAVE')
@@ -205,7 +217,7 @@ class OutFeed(feed.BaseFeed):
     """Collect IHAVE and CHECK article id and re-add in queue if don't response or connect broken when send this """
     to_send = list()
     count = 0
-    while self.queue.qsize() > 0 and count < max_count:
+    while self._queue_allow() and count < max_count:
       self.message_id = self.queue.get()
       if os.path.isfile(os.path.join('articles', self.message_id)):
         to_send.append(self.message_id)
