@@ -19,7 +19,7 @@ class BaseFeed(threading.Thread):
     if loglevel >= self.loglevel:
       self.logger.log(self.name, message, loglevel)
 
-  def __init__(self, master, logger, debug, name):
+  def __init__(self, kill_me, logger, debug, name):
     threading.Thread.__init__(self)
     self._MODE_REVERS = (
         'none',
@@ -32,7 +32,7 @@ class BaseFeed(threading.Thread):
     self.state = 'init'
     self.loglevel = debug
     self.logger = logger
-    self.SRNd = master
+    self.kill_me = kill_me
     self.name = name
     self.socket = None
     self.buffersize = 2**16
@@ -74,7 +74,7 @@ class BaseFeed(threading.Thread):
     self.incoming_file.bye()
     self._socket_shutdown()
     self._socket_close()
-    self.SRNd.terminate_feed(self.name)
+    self.kill_me(self.name)
 
   def shutdown(self):
     self.running = False

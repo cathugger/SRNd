@@ -14,9 +14,9 @@ import feeds.feed as feed
 
 class OutFeed(feed.BaseFeed):
 
-  def __init__(self, master, logger, config):
+  def __init__(self, kill_me, logger, config):
     self.config = config
-    feed.BaseFeed.__init__(self, master, logger, self.config['debug'], 'outfeed-{}-{}'.format(*self.config['server']))
+    feed.BaseFeed.__init__(self, kill_me, logger, self.config['debug'], 'outfeed-{}-{}'.format(*self.config['server']))
     self.sync_on_startup = self.config['sync_on_startup']
     self.queue = Queue.LifoQueue()
     self.ctl_queue = Queue.Queue()
@@ -53,7 +53,7 @@ class OutFeed(feed.BaseFeed):
       self.running = False
     return socket_
 
-  def add_article(self, message_id, ctl=False):
+  def add_article(self, message_id, ctl):
     if ctl:
       self.ctl_queue.put(message_id)
     else:

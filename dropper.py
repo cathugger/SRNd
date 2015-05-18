@@ -287,8 +287,8 @@ class dropper(threading.Thread):
           else:
             self.log(self.logger.ERROR, 'unknown plugin hook detected. wtf? {}'.format(hook))
         elif hook.startswith('outfeed-'):
-          if hook in self.SRNd.feeds:
-            self.SRNd.feeds[hook].add_article(message_id, group in self.SRNd.ctl_groups)
+          if self.SRNd.feeds.is_outfeed(hook):
+            self.SRNd.feeds.add_article(hook, message_id, group in self.SRNd.ctl_groups)
           else:
             self.log(self.logger.ERROR, 'unknown outfeed detected. wtf? {}'.format(hook))
         elif hook.startswith('filesystem-'):

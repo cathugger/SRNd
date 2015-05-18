@@ -7,12 +7,12 @@ import threading
 import feeds.outfeed
 import feeds.infeed
 
-def OutFeed(master, logger, config):
+def OutFeed(kill_me, logger, config):
   if 'multiconn' not in config or config['multiconn'] < 2 or config['multiconn'] > 10:
     handler = feeds.outfeed.OutFeed
   else:
     handler = MultiOutFeed
-  return handler(master, logger, config)
+  return handler(kill_me, logger, config)
 
 class MultiFeed(object):
   """base wrapper"""
@@ -46,11 +46,11 @@ class MultiInFeed(MultiFeed):
     if loglevel >= self.loglevel:
       self.logger.log(self.name, message, loglevel)
 
-  def __init__(self, logger, debug, master, wrapper_name):
+  def __init__(self, logger, debug, kill_me, wrapper_name):
     MultiFeed.__init__(self)
     self.logger = logger
     self.loglevel = debug
-    self._srnd = master
+    self._kill_me = kill_me
     self.name = wrapper_name
     self.sync_on_startup = False
 
@@ -60,8 +60,8 @@ class MultiInFeed(MultiFeed):
       return None
     self._feeds_lock.acquire()
     try:
-      # change master link
-      infeed_instance.SRNd = self
+      # change kill_me link
+      infeed_instance.kill_me = self.kill_me
       # rename infeed force
       if name is not None:
         infeed_instance.name = '{}-{}'.format(self.name, self._feeds_count)
@@ -71,7 +71,7 @@ class MultiInFeed(MultiFeed):
     finally:
       self._feeds_lock.release()
 
-  def terminate_feed(self, name):
+  def kill_me(self, name):
     if self.terminated:
       return
     self._feeds_lock.acquire()
@@ -103,11 +103,12 @@ class MultiInFeed(MultiFeed):
     status = [True for xx in self._feeds if xx.isAlive()]
     if status:
       self.log(self.logger.ERROR, 'Not shutdown {} infeeds instance: {} work. Fix it'.format(self._feeds_count, len(status)))
-    self._srnd.terminate_feed(self.name)
+    self._kill_me(self.name)
 
 class OutFeedInstance(feeds.outfeed.OutFeed):
-  def __init__(self, postfix, **kwargs):
+  def __init__(self, postfix, add_trackdb, **kwargs):
     feeds.outfeed.OutFeed.__init__(self, **kwargs)
+    self._add_trackdb = add_trackdb
     self.name += '-{}'.format(postfix)
 
   def update_trackdb(self, line):
@@ -116,7 +117,7 @@ class OutFeedInstance(feeds.outfeed.OutFeed):
     message_id = line.split(' ')[1]
     # remove existing\sending\etc article
     self._recheck_sending(message_id, 'remove')
-    self.SRNd.add_trackdb(message_id)
+    self._add_trackdb(message_id)
 
 class MultiOutFeed(MultiFeed):
 
@@ -124,30 +125,31 @@ class MultiOutFeed(MultiFeed):
     if loglevel >= self.loglevel:
       self.logger.log(self.name, message, loglevel)
 
-  def __init__(self, master, logger, config):
+  def __init__(self, kill_me, logger, config):
     MultiFeed.__init__(self)
     self.sync_on_startup = config['sync_on_startup']
     # tuple(host, port)
     self.name = 'outfeed-{}-{}'.format(*config['server'])
     self.loglevel = config['debug']
     self.logger = logger
-    self._srnd = master
+    self._kill_me = kill_me
     self._trackdb_busy = False
     self.trackdb_queue = Queue.Queue()
     self._feeds_count = config['multiconn']
     for target in range(self._feeds_count):
       self._feeds.append(
           OutFeedInstance(
-              master=self,
+              kill_me=self.kill_me,
               logger=logger,
               config=config,
-              postfix=target
+              postfix=target,
+              add_trackdb=self.add_trackdb
           )
       )
     self._current_outfeed = 0
 
-  def add_article(self, message_id):
-    self._feeds[self._current_outfeed].add_article(message_id)
+  def add_article(self, message_id, ctl):
+    self._feeds[self._current_outfeed].add_article(message_id, ctl)
     self._current_outfeed += 1
     if self._current_outfeed >= self._feeds_count:
       self._current_outfeed = 0
@@ -177,10 +179,10 @@ class MultiOutFeed(MultiFeed):
       self.log(self.logger.ERROR, 'Not shutdown {} outfeeds instance: {} work. Fix it'.format(self._feeds_count, len(status)))
     self._feeds = None
     self._update_trackdb()
-    self._srnd.terminate_feed(self.name)
+    self._kill_me(self.name)
 
   @staticmethod
-  def terminate_feed(_):
+  def kill_me(_):
     # dummy
     return True
 

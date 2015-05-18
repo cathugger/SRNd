@@ -13,10 +13,11 @@ import feeds.feed as feed
 
 class InFeed(feed.BaseFeed):
 
-  def __init__(self, master, logger, config, connection, debug, db_connector):
-    feed.BaseFeed.__init__(self, master, logger, debug, 'infeed-{}-{}'.format(*connection[1]))
+  def __init__(self, rename_infeed, kill_me, logger, config, connection, debug, db_connector):
+    feed.BaseFeed.__init__(self, kill_me, logger, debug, 'infeed-{}-{}'.format(*connection[1]))
     self.infeed_hooks = config.get('rules', None)
     self.config = config['config']
+    self.rename_infeed = rename_infeed
     self.socket = connection[0]
     self.polltimeout = -1
     self._db_connector = db_connector
@@ -177,7 +178,7 @@ class InFeed(feed.BaseFeed):
 
   def _set_infeed_pretty_name(self, to_name):
     new_name = 'infeed-' + to_name
-    new_name_ = self.SRNd.rename_infeed(self.name, new_name)
+    new_name_ = self.rename_infeed(self.name, new_name)
     if new_name_ is not None:
       self.name = new_name_
     else:
