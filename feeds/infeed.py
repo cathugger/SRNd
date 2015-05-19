@@ -219,7 +219,9 @@ class InFeed(feed.BaseFeed):
     if self.waitfor == 'article':
       self.byte_transfer += handle_incoming.read_byte
       self.time_transfer += handle_incoming.transfer_time
+      message_id_ = handle_incoming.message_id
       self._handle_article(handle_incoming)
+      self.articles_queue.discard(message_id_)
     else:
       self.log(self.logger.INFO, 'should handle multi line while waiting for %s:' % self.waitfor)
       self.log(self.logger.INFO, ''.join(handle_incoming.header))
@@ -240,7 +242,6 @@ class InFeed(feed.BaseFeed):
       return
     error = ''
     add_headers = list()
-    self.articles_queue.discard(handle_incoming.message_id)
 
     # check for errors
     if not handle_incoming.body_found:
