@@ -53,7 +53,7 @@ class OutFeed(feed.BaseFeed):
       self.running = False
     return socket_
 
-  def add_article(self, message_id, ctl):
+  def add_article(self, message_id, ctl=False):
     if ctl:
       self.ctl_queue.put(message_id)
     else:
@@ -426,15 +426,17 @@ class OutFeed(feed.BaseFeed):
       article_wanted = line.split(' ')[1]
       self.articles_queue.add(article_wanted)
       self._recheck_sending(article_wanted, 'remove')
-    elif commands[0] in ('239', '438', '439'):
+    elif commands[0] in ('239', '438'):
       # TAKETHIS 239 == Article transferred OK, record successfully sent message-id to database
       # CHECK 438 == Article not wanted
+      self.update_trackdb(line)
+    elif commands[0] == '439':
       # TAKETHIS 439 == Transfer rejected; do not retry
+      self.log(self.logger.WARNING, repr(line))
       self.update_trackdb(line)
     elif commands[0] == '431':
       # CHECK 431 == try again later
-      self.add_article(line.split(' ')[1])
-      self._recheck_sending(line.split(' ')[1], 'remove')
+      self._recheck_sending(line.split(' ')[1], 'add', 300)
     else:
       return True
 
@@ -448,7 +450,7 @@ class OutFeed(feed.BaseFeed):
       self._wait_response = False
     elif commands[0] == '436':
       # IHAVE 436 == try again later
-      self._recheck_sending(self.message_id, 'add', 600)
+      self._recheck_sending(self.message_id, 'add', 300)
       self._wait_response = False
     elif commands[0] == '335':
       # IHAVE 335 == waiting for article

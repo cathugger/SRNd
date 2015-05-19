@@ -33,6 +33,7 @@ class FeedsManager(object):
     self._in[name] = InFeed(
         rename_infeed=self._rename_infeed,
         kill_me=self._terminate_infeed,
+        already_wait=self.already_wait,
         logger=self.logger,
         config=self._infeed_config,
         connection=connection,
@@ -146,7 +147,7 @@ class FeedsManager(object):
           # convert normal infeed to MultiInFeed.
           # pop old infeed, create instance MultiInFeed, append old infeed to multiinfeed
           darling = self._in.pop(new_name)
-          self._in[new_name] = MultiInFeed(logger=self.logger, debug=self.infeed_debuglevel, kill_me=self._terminate_infeed, wrapper_name=new_name)
+          self._in[new_name] = MultiInFeed(logger=self.logger, debug=self.infeed_debuglevel, kill_me=self._terminate_infeed, already_wait=self.already_wait, wrapper_name=new_name)
           self._in[new_name].append_infeed(darling, new_name)
         return self._in[new_name].append_infeed(self._in.pop(old_name))
       else:
@@ -155,3 +156,9 @@ class FeedsManager(object):
     finally:
       self._in.lock.release()
 
+  def already_wait(self, name, message_id):
+    """Maybe other infeed already waiting or receiving this message?"""
+    for key, val in self._in.iteritems():
+      if name != key and val.i_wait(message_id):
+        return True
+    return False

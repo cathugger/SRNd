@@ -46,10 +46,11 @@ class MultiInFeed(MultiFeed):
     if loglevel >= self.loglevel:
       self.logger.log(self.name, message, loglevel)
 
-  def __init__(self, logger, debug, kill_me, wrapper_name):
+  def __init__(self, logger, debug, kill_me, already_wait, wrapper_name):
     MultiFeed.__init__(self)
     self.logger = logger
     self.loglevel = debug
+    self._already_wait = already_wait
     self._kill_me = kill_me
     self.name = wrapper_name
     self.sync_on_startup = False
@@ -62,6 +63,8 @@ class MultiInFeed(MultiFeed):
     try:
       # change kill_me link
       infeed_instance.kill_me = self.kill_me
+      # change already_wait link
+      infeed_instance.already_wait = self.already_wait
       # rename infeed force
       if name is not None:
         infeed_instance.name = '{}-{}'.format(self.name, self._feeds_count)
@@ -70,6 +73,15 @@ class MultiInFeed(MultiFeed):
       return '{}-{}'.format(self.name, self._feeds_count - 1)
     finally:
       self._feeds_lock.release()
+
+  def i_wait(self, message_id):
+    for target in self._feeds:
+      if target.i_wait(message_id):
+        return True
+    return False
+
+  def already_wait(self, _, message_id):
+    return self._already_wait(self.name, message_id)
 
   def kill_me(self, name):
     if self.terminated:
