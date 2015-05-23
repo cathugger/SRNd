@@ -20,7 +20,7 @@ from hashlib import sha1, sha512
 import Image
 import nacl.signing
 
-from srnd.utils import basicHTMLencode, css_minifer, trydecode, valid_group_name
+from srnd.utils import basicHTMLencode, css_minifer, trydecode, valid_group_name, overchan_thread_unlink
 from overchan_generator import OverchanGeneratorStatic
 from overchan_markup import OverchanMarkup
 
@@ -206,7 +206,7 @@ class main(threading.Thread):
           self.sqlite.execute('INSERT OR REPLACE INTO thumb_info VALUES (?, ?, ?, ?)', (thumb_name, info[0], info[1], info[2]))
     self.sqlite.commit()
 
-  def copy_out(self, css, sources):
+  def copy_out(self, sources, css=False):
     for source, target in sources:
       try:
         i = open(os.path.join(self.config['template_directory'], source), 'r')
@@ -249,9 +249,13 @@ class main(threading.Thread):
       self.sqlite.execute("PRAGMA synchronous = OFF")
     self.update_overchandb()
 
-    self.copy_out(css=False, sources=((self.config['thumbs']['no_file'], os.path.join('img', self.config['thumbs']['no_file'])), ('suicide.txt', os.path.join('img', 'suicide.txt')), \
-      ('playbutton.png', os.path.join('img', 'playbutton.png')),))
-    self.copy_out(css=True, sources=([(self.config['censor_css'], 'censor.css'),] + [(x, x if self.config['csss'][0] != x else 'styles.css') for x in self.config['csss']]))
+    self.copy_out((
+        (self.config['thumbs']['no_file'], os.path.join('img', self.config['thumbs']['no_file'])),
+        (self.config['thumbs']['invalid'], os.path.join('img', self.config['thumbs']['invalid'])),
+        ('suicide.txt', os.path.join('img', 'suicide.txt')),
+        ('playbutton.png', os.path.join('img', 'playbutton.png'))
+        ))
+    self.copy_out(([(self.config['censor_css'], 'censor.css'),] + [(x, x if self.config['csss'][0] != x else 'styles.css') for x in self.config['csss']]), True)
     self.config['csss'][0] = 'styles.css'
     self.gen_template_thumbs(self.config['thumbs'].values())
 
@@ -469,10 +473,8 @@ class main(threading.Thread):
           # root posts without child posts
           self.log(self.logger.INFO, 'deleting root message_id %s' % message_id)
         self.sqlite.execute('DELETE FROM articles WHERE article_uid = ?', (message_id,))
-        try:
-          os.unlink(os.path.join(self.config['output_directory'], "thread-%s.html" % sha1(message_id).hexdigest()[:10]))
-        except OSError as e:
-          self.log(self.logger.WARNING, 'could not delete thread for message_id %s: %s' % (message_id, e))
+        for error_ in overchan_thread_unlink(self.config['output_directory'], 'thread-{}'.format(sha1(message_id).hexdigest()[:10])):
+          self.log(self.logger.WARNING, 'could not delete thread for message_id %s, %s' % (message_id, error_))
       else:
         # child post and root not deleting
         if row[2] not in self.delete_messages:

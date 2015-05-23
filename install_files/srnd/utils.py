@@ -3,6 +3,7 @@
 import re
 import string
 import random
+import os
 
 def basicHTMLencode(inputString):
   return basicHTMLencodeNoStrip(inputString).strip(' \t\n\r')
@@ -101,3 +102,18 @@ def css_minifer(css):
     if properties:
       minifed_css.append("%s{%s}" % (','.join(selectors), ''.join(['%s:%s;' % (x, properties[x]) for x in porder])[:-1]))
   return '\n'.join(minifed_css)
+
+def overchan_thread_unlink(path, name, ext='.html'):
+  postfix = ''
+  step = 50
+  while True:
+    target = os.path.join(path, name + postfix + ext)
+    if os.path.isfile(target):
+      try:
+        os.unlink(target)
+      except OSError as e:
+        yield '{}: {}'.format(target, e)
+    else:
+      break
+    postfix = '-%s' % step
+    step += 100
