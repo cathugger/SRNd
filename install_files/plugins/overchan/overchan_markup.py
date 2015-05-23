@@ -147,7 +147,7 @@ class OverchanMarkup(object):
 
   @staticmethod
   def _regex_largespoilit(rematch):
-    return u'<details class="details">%s</details>' %rematch.group(1)
+    return u'<details class="details">%s</details>' % rematch.group(1)
 
   @staticmethod
   def _regex_boldit(rematch):

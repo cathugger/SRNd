@@ -13,10 +13,12 @@ import feeds.feed as feed
 
 class InFeed(feed.BaseFeed):
 
-  def __init__(self, master, logger, config, connection, debug, db_connector):
-    feed.BaseFeed.__init__(self, master, logger, debug, 'infeed-{}-{}'.format(*connection[1]))
+  def __init__(self, rename_infeed, kill_me, already_wait, logger, config, connection, debug, db_connector):
+    feed.BaseFeed.__init__(self, kill_me, logger, debug, 'infeed-{}-{}'.format(*connection[1]))
     self.infeed_hooks = config.get('rules', None)
     self.config = config['config']
+    self.already_wait = already_wait
+    self.rename_infeed = rename_infeed
     self.socket = connection[0]
     self.polltimeout = -1
     self._db_connector = db_connector
@@ -62,6 +64,9 @@ class InFeed(feed.BaseFeed):
 
   def bump_qsize(self):
     self.qsize = len(self.articles_queue)
+
+  def i_wait(self, message_id):
+    return message_id in self.articles_queue
 
   def main_loop(self):
     self.log(self.logger.INFO, 'connection established')
@@ -177,7 +182,7 @@ class InFeed(feed.BaseFeed):
 
   def _set_infeed_pretty_name(self, to_name):
     new_name = 'infeed-' + to_name
-    new_name_ = self.SRNd.rename_infeed(self.name, new_name)
+    new_name_ = self.rename_infeed(self.name, new_name)
     if new_name_ is not None:
       self.name = new_name_
     else:
@@ -214,7 +219,9 @@ class InFeed(feed.BaseFeed):
     if self.waitfor == 'article':
       self.byte_transfer += handle_incoming.read_byte
       self.time_transfer += handle_incoming.transfer_time
+      message_id_ = handle_incoming.message_id
       self._handle_article(handle_incoming)
+      self.articles_queue.discard(message_id_)
     else:
       self.log(self.logger.INFO, 'should handle multi line while waiting for %s:' % self.waitfor)
       self.log(self.logger.INFO, ''.join(handle_incoming.header))
@@ -235,7 +242,6 @@ class InFeed(feed.BaseFeed):
       return
     error = ''
     add_headers = list()
-    self.articles_queue.discard(handle_incoming.message_id)
 
     # check for errors
     if not handle_incoming.body_found:
@@ -331,7 +337,6 @@ class InFeed(feed.BaseFeed):
       self._current_mode = self._MODE['reader']
       self.log(self.logger.DEBUG, 'switch to MODE READER')
     elif commands[0] == 'CHECK' and len(commands) == 2:
-      #TODO 431 message-id   Transfer not possible; try again later
       message_id = line.split(' ', 1)[1]
       if '/' in message_id:
         self.send('438 {0} illegal message-id'.format(message_id))
@@ -339,6 +344,8 @@ class InFeed(feed.BaseFeed):
         self.send('438 {0} i know this article already'.format(message_id))
       elif os.path.exists(os.path.join('articles', 'censored', message_id)):
         self.send('438 {0} article is blacklisted'.format(message_id))
+      elif self.already_wait(self.name, message_id):
+        self.send('431 {0} try again later'.format(message_id))
       else:
         self.articles_queue.add(message_id)
         self.qsize = len(self.articles_queue)
@@ -366,8 +373,10 @@ class InFeed(feed.BaseFeed):
         self.send('435 already have this article')
       elif os.path.exists(os.path.join('articles', 'censored', arg)):
         self.send('435 article is blacklisted')
+      elif self.already_wait(self.name, arg):
+        self.send('436 {0} try again later'.format(arg))
       else:
-        #TODO: add currently receiving same message_id from another feed == 436, try again later
+        self.articles_queue.add(arg)
         self.send('335 go ahead, send to the {}'.format(arg))
         self.waitfor = 'article'
         self.variant = 'IHAVE'

@@ -2,7 +2,6 @@
 import json
 import os
 import pwd
-import random
 import select
 import socket
 import sys
@@ -18,8 +17,7 @@ except ImportError:
   psutil_import_result = False
 
 import dropper
-from feeds.infeed import InFeed
-from feeds.feed_wrapper import OutFeed, MultiInFeed
+from feeds.feed_manager import FeedsManager
 
 class SRNd(threading.Thread):
 
@@ -28,6 +26,7 @@ class SRNd(threading.Thread):
       self.logger.log('SRNd', message, loglevel)
 
   def __init__(self, logger):
+    self.ctl_groups = set(['ctl'])
     self.logger = logger
     self.config = {'srnd_debuglevel': self.logger.INFO}
     self.log(self.logger.VERBOSE,  'srnd test logging with VERBOSE')
@@ -76,8 +75,8 @@ class SRNd(threading.Thread):
     else:
       owner = init_owner
 
-    # load\create infeeds.cfg
-    self.infeeds_config = self._load_infeeds_config()
+    # init feeds
+    self.feeds = FeedsManager(log=self.log, logger=self.logger, infeed_config=self._load_infeeds_config(), infeed_debuglevel=self.config['infeed_debuglevel'])
 
     # test and fixing plugin dir permissions
     for directory in os.listdir('plugins'):
@@ -528,7 +527,7 @@ class SRNd(threading.Thread):
             continue
           name = 'outfeed-{}-{}'.format(*server_)
         # ignore hooks for inactive plugins and outfeeds
-        if (hook_name == 'outfeed' and name not in self.feeds) or (hook_name == 'plugin' and name not in self.plugins):
+        if (hook_name == 'outfeed' and not self.feeds.is_outfeed(name)) or (hook_name == 'plugin' and name not in self.plugins):
           continue
         # read hooks into self.hooks[group_name] = hook_name
         rules = self._read_hook_rules(link)
@@ -724,25 +723,21 @@ class SRNd(threading.Thread):
         continue
       name = 'outfeed-{}-{}'.format(*config['server'])
       current_feedlist.append(name)
-      if name not in self.feeds:
+      if not self.feeds.is_outfeed(name):
         if config['proxy']:
           self.log(self.logger.INFO, 'starting outfeed {} using proxy: {proxy_type} {proxy_ip}:{proxy_port}'.format(name, **config['proxy']))
         try:
           self.log(self.logger.DEBUG, 'starting outfeed: %s' % name)
-          self.feeds[name] = OutFeed(
-              self,
-              self.logger,
-              config=config
-          )
-          self.feeds[name].start()
+          self.feeds.add_outfeed(name, config)
+          self.feeds.start_outfeed(name)
         except Exception as e:
           self.log(self.logger.WARNING, 'could not start outfeed %s: %s' % (name, e))
           self.log(self.logger.WARNING, traceback.format_exc())
         else:
           counter_new += 1
     counter_removed = 0
-    for name in [xx for xx in self.feeds if xx.startswith('outfeed') and xx not in current_feedlist]:
-      self.feeds[name].shutdown()
+    for name in [xx for xx in self.feeds.list_outfeed() if xx not in current_feedlist]:
+      self.feeds.shutdown_outfeed(name)
       counter_removed += 1
     self.log(self.logger.INFO, 'outfeeds added: %i' % counter_new)
     self.log(self.logger.INFO, 'outfeeds removed: %i' % counter_removed)
@@ -790,8 +785,8 @@ class SRNd(threading.Thread):
     if not 'stats' in self.__dict__:
       self.stats = {"start_up_timestamp": self.start_up_timestamp}
       self.stats_last_update = 0
-    self.stats["infeeds"]  = sum(1 for x in self.feeds if x.startswith('infeed-'))
-    self.stats["outfeeds"] = sum(1 for x in self.feeds if x.startswith('outfeed-'))
+    self.stats["infeeds"]  = len(self.feeds.list_infeed())
+    self.stats["outfeeds"] = len(self.feeds.list_outfeed())
     self.stats["plugins"]  = len(self.plugins)
     if time.time() - self.stats_last_update > 5:
       self.stats["groups"]    = os.stat('groups').st_nlink - 2
@@ -803,42 +798,28 @@ class SRNd(threading.Thread):
       self.stats_last_update = time.time()
     return self.stats
 
-  def _get_feed_stat(self, name):
-    return {
-        "state": self.feeds[name].get_status('state'),
-        "queue": self.feeds[name].get_status('qsize'),
-        "transfer": self.feeds[name].get_status('byte_transfer'),
-        "transfer_time": self.feeds[name].get_status('time_transfer'),
-        "mode": self.feeds[name].get_status('mode')
-    }
-
   def ctl_socket_handler_status(self, data, fd=None):
     if not data["data"]:
       return "all fine"
-    ret = dict()
-    if data["data"] == "feeds":
-      infeeds = dict()
-      for name in self.feeds:
-        if name.startswith("outfeed-"):
-          ret[name[8:]] = self._get_feed_stat(name)
-        else:
-          infeeds[name[7:]] = self._get_feed_stat(name)
-      return {"infeeds": infeeds, "outfeeds": ret}
-    if data["data"] == "plugins":
+    elif data["data"] == "feeds":
+      return self.feeds.status()
+    elif data["data"] == "plugins":
+      ret = dict()
       for name in self.plugins:
         ret[name] = {
           #"queue": self.plugins[name].qsize
         }
       return {"active": ret}
-    if data["data"] == "hooks":
+    elif data["data"] == "hooks":
       return {"blacklist": self.hook_blacklist, "whitelist": self.hooks}
     return "obviously all fine in %s" % str(data["data"])
 
-  def get_message_list_by_group(self, group):
+  def get_message_list_by_group(self, group, sort_=True):
     group_dir = os.path.join('groups', group)
-    # send fresh articles first
     file_list = [int(k) for k in os.listdir(group_dir)]
-    file_list.sort()
+    if sort_:
+    # send fresh articles first
+      file_list.sort()
 
     message_list = list()
     for link in file_list:
@@ -872,7 +853,15 @@ class SRNd(threading.Thread):
     return targets
 
   def _is_valid_outfeed(self, target, hook, targets):
-    return self._is_allow_sync(target, hook, targets) and self._is_valid_any(self.feeds, target, 'outfeed')
+    if not self._is_allow_sync(target, hook, targets):
+      return False
+    if self.feeds.is_outfeed(target):
+      if self.feeds.sync_outfeed(target):
+        self.log(self.logger.DEBUG, 'startup sync, adding {}'.format(target))
+        return True
+    else:
+      self.log(self.logger.WARNING, 'unknown outfeed detected. wtf? {}'.format(target))
+    return False
 
   def _is_valid_plugin(self, target, hook, targets):
     return self._is_allow_sync(target, hook, targets) and self._is_valid_any(self.plugins, target, 'plugin')
@@ -899,8 +888,7 @@ class SRNd(threading.Thread):
     # targets - object name. None - any
     groups = [x for x in os.listdir('groups') if os.path.isdir(os.path.join('groups', x))]
     synclist = dict()
-    # sync groups in random order
-    random.shuffle(groups)
+    ctl_synclist = dict()
     for group in groups:
       self.log(self.logger.DEBUG, 'startup sync, checking {}..'.format(group))
       current_sync_targets = set()
@@ -916,8 +904,18 @@ class SRNd(threading.Thread):
         else:
           self.log(self.logger.WARNING, 'unknown hook detected. wtf? {}'.format(sync_target))
       if len(current_sync_targets) > 0:
-        synclist[group] = {'targets': current_sync_targets, 'file_list': self.get_message_list_by_group(group)}
+        if group in self.ctl_groups:
+          ctl_synclist[group] = {'targets': current_sync_targets, 'file_list': self.get_message_list_by_group(group, False)}
+        else:
+          synclist[group] = {'targets': current_sync_targets, 'file_list': self.get_message_list_by_group(group)}
 
+    self._send_synclist(synclist)
+    self._send_synclist(ctl_synclist, True)
+
+    self.log(self.logger.DEBUG, 'startup_sync done. hopefully.')
+    self.feed_db.clear()
+
+  def _send_synclist(self, synclist, ctl=False):
     while len(synclist) > 0:
       empty_sync_group = list()
       for group in synclist:
@@ -928,19 +926,16 @@ class SRNd(threading.Thread):
             for current_hook in synclist[group]['targets']:
               if current_hook.startswith('outfeed-'):
                 if message_id not in self.feed_db.get(current_hook, ''):
-                  self.feeds[current_hook].add_article(message_id)
+                  self.feeds.add_article(current_hook, message_id, ctl)
               elif current_hook.startswith('plugin-'):
                 self.plugins[current_hook].add_article(message_id)
           del synclist[group]['file_list'][:500]
       for group in empty_sync_group:
         del synclist[group]
 
-    self.log(self.logger.DEBUG, 'startup_sync done. hopefully.')
-    self.feed_db.clear()
-
   def _load_outfeed_db(self, targets=None):
-    for target in (xx for xx in self.feeds if xx.startswith('outfeed-')):
-      if self.feeds[target].sync_on_startup and targets is None or target in targets:
+    for target in self.feeds.list_outfeed():
+      if self.feeds.sync_outfeed(target) and targets is None or target in targets:
         self.feed_db[target] = self._trackdb_reder('{0}.trackdb'.format(target))
 
   def internal_ctl(self, args):
@@ -963,31 +958,25 @@ class SRNd(threading.Thread):
       return True
     # shutdown
     elif args['action'] == 'die' and args.get('hook') in ('infeed', 'outfeed', 'plugin'):
-      wait_count = 8
-      wait_time = 0.5
-      status = False
-      if args.get('hook') in ('infeed', 'outfeed'):
-        for feed_ in [xx for xx in self.feeds if xx.startswith(args.get('hook'))]:
-          if args.get('targets') is None or feed_ in args.get('targets'):
-            self.feeds[feed_].shutdown()
-            c_count = 0
-            while feed_ in self.feeds and c_count < wait_count:
-              c_count += 1
-              time.sleep(wait_time)
-            status = feed_ not in self.feeds
-      if args.get('hook') == 'plugin':
+      status = True
+      if args['hook'] == 'infeed':
+        for feed_ in [xx for xx in self.feeds.list_infeed() if args.get('targets') is None or xx in args.get('targets')]:
+          status &= self.feeds.shutdown_infeed(feed_)
+      elif args['hook'] == 'outfeed':
+        for feed_ in [xx for xx in self.feeds.list_outfeed() if args.get('targets') is None or xx in args.get('targets')]:
+          status &= self.feeds.shutdown_outfeed(feed_)
+      elif args.get('hook') == 'plugin':
         for plugin in [xx for xx in self.plugins]:
           if plugin in args.get('targets', plugin):
             if self._close_plugin(plugin):
               del self.plugins[plugin]
-              status = True
+              status &= True
       return status
     self.log(self.logger.WARNING, 'Invalid control request: {}'.format(args))
     return False
 
   def run(self):
     self.running = True
-    self.feeds = dict()
     self.feed_db = dict()
     self.update_outfeeds()
     self._load_outfeed_db()
@@ -1037,9 +1026,9 @@ class SRNd(threading.Thread):
           try:
             con = self.socket.accept()
             name = 'infeed-{0}-{1}'.format(con[1][0], con[1][1])
-            if name not in self.feeds:
-              self.feeds[name] = InFeed(self, self.logger, config=self.infeeds_config, connection=con, debug=self.config['infeed_debuglevel'], db_connector=self._db_manager.connect)
-              self.feeds[name].start()
+            if not self.feeds.is_infeed(name):
+              self.feeds.add_infeed(name=name, connection=con, db_connector=self._db_manager.connect)
+              self.feeds.start_infeed(name)
             else:
               self.log(self.logger.WARNING, 'got connection from %s but its still in feeds. wtf?' % name)
           except socket.error as e:
@@ -1109,42 +1098,9 @@ class SRNd(threading.Thread):
     except: pass
     del self.ctl_socket_clients[fd]
 
-  def terminate_feed(self, name):
-    self._feeds_lock.acquire()
-    try:
-      if name in self.feeds:
-        del self.feeds[name]
-      else:
-        self.log(self.logger.WARNING, 'should remove %s but not in dict. wtf?' % name)
-    finally:
-      self._feeds_lock.release()
-
-
   def relay_dropper_handler(self, signum, frame):
     #TODO: remove, this is not needed anymore at all?
     self.dropper.handler_progress_incoming(signum, frame)
-
-  def rename_infeed(self, old_name, new_name, allow_multiconn=True):
-    self._feeds_lock.acquire()
-    try:
-      if not (old_name.startswith('infeed-') and new_name.startswith('infeed-') and old_name in self.feeds):
-        return None
-      if new_name in self.feeds:
-        if not allow_multiconn:
-          # multiconnection not allowed for this key\name\whatever
-          return None
-        if not isinstance(self.feeds[new_name], MultiInFeed):
-          # convert normal infeed to MultiInFeed.
-          # pop old infeed from self.feeds, create instance MultiInFeed, append old infeed to multiinfeed
-          darling = self.feeds.pop(new_name)
-          self.feeds[new_name] = MultiInFeed(logger=self.logger, debug=self.config['infeed_debuglevel'], master=self, wrapper_name=new_name)
-          self.feeds[new_name].append_infeed(darling, new_name)
-        return self.feeds[new_name].append_infeed(self.feeds.pop(old_name))
-      else:
-        self.feeds[new_name] = self.feeds.pop(old_name)
-        return new_name
-    finally:
-      self._feeds_lock.release()
 
   def _infeed_config_sanitize(self, config):
     # 0 - disallow 1 - allow 2 - required
@@ -1214,7 +1170,7 @@ class SRNd(threading.Thread):
 
   def _close_plugin(self, name):
     wait_count = 50
-    wait_time = 0.2
+    wait_time = 0.4
     c_count = 0
     self.plugins[name].shutdown()
     while self.plugins[name].isAlive() and c_count < wait_count:
@@ -1235,10 +1191,4 @@ class SRNd(threading.Thread):
     for plugin in self.plugins:
       self._close_plugin(plugin)
     self.log(self.logger.INFO, 'closing feeds..')
-    feeds = list()
-    for name in self.feeds:
-      feeds.append(name)
-    for name in feeds:
-      if name in self.feeds:
-        self.feeds[name].shutdown()
-    self.log(self.logger.INFO, 'waiting for feeds to shut down..')
+    self.feeds.shutdown_all()

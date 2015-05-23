@@ -9,7 +9,7 @@ import json
 from hashlib import sha1
 from datetime import datetime
 
-from srnd.utils import basicHTMLencode, generate_pubkey_short_utf_8, html_minifer
+from srnd.utils import basicHTMLencode, generate_pubkey_short_utf_8, html_minifer, overchan_thread_unlink
 
 
 
@@ -275,13 +275,9 @@ class OverchanGeneratorTools(OverchanGeneratorInit):
       return 'width="%s" height="%s"' % (xy[0], xy[1])
 
   def _delete_thread_page(self, thread_name):
-    thread_path = os.path.join(self.config['output_directory'], '.'.join((thread_name, 'html')))
-    if os.path.isfile(thread_path):
-      self.log(self.logger.INFO, 'this page belongs to some blocked board. deleting %s.' % thread_path)
-      try:
-        os.unlink(thread_path)
-      except OSError as e:
-        self.log(self.logger.ERROR, 'could not delete %s: %s' % (thread_path, e))
+    self.log(self.logger.DEBUG, 'this page belongs to some blocked board. deleting %s.html' % thread_name)
+    for error_ in overchan_thread_unlink(self.config['output_directory'], thread_name):
+      self.log(self.logger.WARNING, 'could not delete %s' % error_)
 
   def _generate_news_data(self):
     t_engine_mappings_news = {'subject': '', 'sent': '', 'author': '', 'pubkey_short': '', 'pubkey': '', 'comment_count': ''}
@@ -345,6 +341,8 @@ class OverchanGeneratorTools(OverchanGeneratorInit):
       imagelink = data[6]
       if data[7] in self.config['thumbs']:
         thumblink = self.config['thumbs'][data[7]]
+        if data[6] in self.config['thumbs']:
+          imagelink = self.config['thumbs'][data[6]]
         parsed_data['thumb_info'] = self._get_thumb_info(thumblink, father == '', True)
       else:
         thumblink = data[7]
@@ -781,12 +779,9 @@ class OverchanGeneratorStatic(OverchanGeneratorTools):
       self._delete_thread_page(thread_name)
     else:
       yield thread_name, self._create_thread_page(root_row[:-1], thread_name, 10000, root_message_id_hash, group_id, silence)
-    if child_count > 80:
-      for max_child_view in range(50, child_count, 100):
-        thread_name = 'thread-%s-%s' % (root_message_id_hash[:10], max_child_view)
-        if isblocked_board:
-          self._delete_thread_page(thread_name)
-        else:
+      if child_count > 80:
+        for max_child_view in range(50, child_count, 100):
+          thread_name = 'thread-%s-%s' % (root_message_id_hash[:10], max_child_view)
           yield thread_name, self._create_thread_page(root_row[:-1], thread_name, max_child_view, root_message_id_hash, group_id, silence)
 
   def _create_thread_page(self, root_row, thread_name, max_child_view, root_message_id_hash, group_id, silence):
