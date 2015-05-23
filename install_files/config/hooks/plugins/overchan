@@ -20,7 +20,7 @@
 #start_param title=overchan.oniichan
 #start_param sync_on_startup=False
 #start_param enable_archive=False
-#start_param enable_rollover=True
+#start_param enable_rollover=False
 #start_param enable_recent=True
 #start_param archive_threads_per_page=500
 #start_param archive_pages_per_board=20
