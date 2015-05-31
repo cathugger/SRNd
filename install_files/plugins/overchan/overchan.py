@@ -985,7 +985,7 @@ class main(threading.Thread):
 
     if image_name == '' and thumb_name == '' and self.config['replace_root_nope'] and (headers['parent'] == '' or headers['parent'] == message_id):
       # Get random image for root post
-      result = self.sqlite.execute('SELECT imagelink, thumblink FROM articles WHERE group_id = ? AND length(thumblink) > 40 ORDER BY RANDOM() LIMIT 1', (group_id,)).fetchone()
+      result = self.sqlite.fetchone('SELECT imagelink, thumblink FROM articles WHERE group_id = ? AND length(thumblink) > 40 AND imagename != "pic unrelated" ORDER BY RANDOM() LIMIT 1', (group_id,))
       if result:
         image_name, thumb_name = result
         image_name_original = 'pic unrelated'
