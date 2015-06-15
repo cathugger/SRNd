@@ -633,7 +633,6 @@ class censor(BaseHTTPRequestHandler):
     self._substitute_and_send(self.origin.t_engine_log, log_body, help_target)
 
   def send_piclog(self, page=1, pagecount=30):
-    #out = '<html><head><link type="text/css" href="/styles.css" rel="stylesheet"><style type="text/css">body { margin: 10px; margin-top: 20px; font-family: monospace; font-size: 9pt; } .navigation { background: #101010; padding-top: 19px; position: fixed; top: 0; width: 100%; }</style></head><body>%%navigation%%'
     out = '<html><head><title>piclog</title><link type="text/css" href="/styles.css" rel="stylesheet"></head>\n<body class="mod">\n%%navigation%%\n'
     pagination = '<div style="float:right;">'
     if page > 1:
@@ -644,9 +643,8 @@ class censor(BaseHTTPRequestHandler):
     out = out.replace("%%navigation%%", self.__get_navigation('pic_log', add_after=pagination))
     table = list()
     table.append(out.replace("%%pagination%%", pagination))
-    #self.wfile.write(out)
-    for row in self.origin.sqlite_overchan.execute('SELECT * FROM (SELECT thumblink, parent, article_uid, last_update, sent FROM articles WHERE thumblink != "" AND thumblink != "invalid" AND thumblink != "document" ORDER BY last_update DESC) ORDER by sent DESC LIMIT ?, ?', ((page-1)*pagecount, pagecount)).fetchall():
-      cur_template = '<a href="/%%target%%" target="_blank"><img src="%%thumblink%%" class="image" style="height: 200px;" /></a>'
+    for row in self.origin.sqlite_overchan.fetchall('SELECT thumblink, parent, article_uid FROM articles WHERE length(thumblink) > 40 GROUP BY thumblink ORDER BY last_update DESC, sent DESC LIMIT ?, ?', ((page-1)*pagecount, pagecount)):
+      cur_template = '<a href="/%%target%%" target="_blank"><img src="%%thumblink%%" class="image" width="150" max-height="300" /></a>'
       if row[1] == '' or row[1] == row[2]:
         target = 'thread-%s.html' % sha1(row[2]).hexdigest()[:10]
       else:

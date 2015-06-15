@@ -10,19 +10,14 @@ import math
 import mimetypes
 mimetypes.init()
 import Queue
-from binascii import unhexlify
-from calendar import timegm
-from datetime import datetime, timedelta
-from email.feedparser import FeedParser
-from email.utils import parsedate_tz
-from hashlib import sha1, sha512
+from hashlib import sha1
 
 import Image
-import nacl.signing
 
 from srnd.utils import basicHTMLencode, css_minifer, trydecode, valid_group_name, overchan_thread_unlink
 from overchan_generator import OverchanGeneratorStatic
 from overchan_markup import OverchanMarkup
+from overchan_parser import MessageParser
 
 try:
   import cv2
@@ -664,21 +659,9 @@ class main(threading.Thread):
           if message_thumblink and (message_thumblink[0] != 'censored' or not os.path.exists(os.path.join("articles", "restored", message_id))):
             self.log(self.logger.DEBUG, '%s already in database..' % message_id)
             continue
-          #message_id = self.queue.get(block=True, timeout=1)
           self.log(self.logger.DEBUG, 'got article %s' % message_id)
           f = open(os.path.join('articles', message_id), 'r')
-          try:
-            if not self.parse_message(message_id, f):
-              f.close()
-            else:
-              bump_db = True
-          except Exception as e:
-            self.log(self.logger.WARNING, 'something went wrong while trying to parse article %s: %s' % (message_id, e))
-            self.log(self.logger.WARNING, traceback.format_exc())
-            try:
-              f.close()
-            except IOError:
-              pass
+          bump_db |= self.parse_message(message_id, f)
         elif ret[0] == "control":
           got_control_count += 1
           self.handle_control(ret[1], ret[2])
@@ -814,251 +797,174 @@ class main(threading.Thread):
       return result[0]
     return None
 
+  def _attach_processing(self, data, message_id):
+    image_name = data['hash'] + data['ext']
+    image_name_original = data['name']
+    thumb_info = None
+    out_link = os.path.join(self.config['output_directory'], 'img', image_name)
+    if os.path.isfile(out_link):
+      exist_thumb_name = self._get_exist_thumb_name(image_name)
+    else:
+      exist_thumb_name = None
+      with open(out_link, 'w') as f:
+        f.write(data['obj'])
+    if exist_thumb_name is not None:
+      thumb_name = exist_thumb_name
+    elif data['hash'] == 'da39a3ee5e6b4b0d3255bfef95601890afd80709':
+      thumb_name, image_name = 'invalid', 'invalid'
+    elif data['maintype'] == 'image':
+      thumb_name, thumb_info = self.gen_thumb(out_link, data['hash'])
+    elif data['type'] in ('application/pdf', 'application/postscript', 'application/ps'):
+      thumb_name = 'document'
+    elif data['type'] in ('audio/ogg', 'audio/mpeg', 'audio/mp3', 'audio/opus'):
+      thumb_name = 'audio'
+    elif data['maintype'] == 'video' and data['subtype'] in ('webm', 'mp4'):
+      thumb_name, thumb_info = self.gen_thumb_from_video(out_link, data['hash']) if cv2_load_result == 'true' else ['video', None]
+    elif data['maintype'] == 'application' and data['subtype'] == 'x-bittorrent':
+      thumb_name = 'torrent'
+    elif data['maintype'] == 'application' and data['subtype'] in ('x-7z-compressed', 'zip', 'x-gzip', 'x-tar', 'rar'):
+      thumb_name = 'archive'
+    else:
+      self.log(self.logger.WARNING, 'Found unknown attach {} in {}. Mimetype local={}'.format(image_name_original, message_id, data['type']))
+      if os.path.isfile(out_link):
+        os.remove(out_link)
+      image_name_original = 'fake.and.gay.txt'
+      thumb_name = 'document'
+      image_name = 'suicide.txt'
+    if len(image_name) > 40 and self._is_censored_attach(message_id, image_name, thumb_name):
+      thumb_name = 'censored'
+    if thumb_info and len(thumb_name) > 41:
+      self.sqlite.execute('INSERT OR REPLACE INTO thumb_info VALUES (?, ?, ?, ?)', (thumb_name, thumb_info[0], thumb_info[1], thumb_info[2]))
+    return image_name, thumb_name, image_name_original
+
+  def _is_censored_attach(self, message_id, image_name, thumb_name):
+    censored_articles = self.sqlite.execute('SELECT article_uid FROM articles WHERE thumblink = "censored" AND imagelink = ?', (image_name,)).fetchall()
+    censored_count = len(censored_articles)
+    if censored_count > 0:
+      attach_iscensored = None
+      for check_article in censored_articles:
+        if os.path.exists(os.path.join("articles", "censored", check_article[0])):
+          attach_iscensored = check_article[0]
+          break
+      if attach_iscensored is not None:
+        # attach has been censored and not restored. Censoring and this attach
+        self.log(self.logger.INFO, 'Message %s contain attach censoring in %s message. %s has been continue censoring' % (message_id, attach_iscensored, image_name))
+        censored_attach_path = os.path.join(self.config['output_directory'], 'img', image_name)
+        if os.path.exists(censored_attach_path):
+          os.remove(censored_attach_path)
+        return True
+      else:
+        # attach has been censored and is now being restored. Restore all thumblink
+        self.log(self.logger.INFO, 'Attach %s restored. Restore %s thumblinks for this attach' % (image_name, censored_count))
+        self.sqlite.execute('UPDATE articles SET thumblink = ? WHERE imagelink = ?', (thumb_name, image_name))
+
+  def _new_message_first_check(self, headers, group_flags, parent_result, message_id):
+    if group_flags & self.cache['flags']['news'] and (not headers['parent'] or headers['parent'] == message_id) \
+        and (headers['public_key'] == '' or not self.check_moder_flags(headers['public_key'], 'overchan-news-add')):
+      self.log(self.logger.INFO, 'censored article {} to {} - flag news is present.'.format(message_id, headers['group_name']))
+    elif group_flags & self.cache['flags']['blocked']:
+      self.log(self.logger.INFO, 'censored article {} to {} - flag blocked is present.'.format(message_id, headers['group_name']))
+    elif group_flags & self.cache['flags']['closed']:
+      self.log(self.logger.INFO, 'censored article {} to {} - flag closed is present.'.format(message_id, headers['group_name']))
+    elif group_flags & self.cache['flags']['moder-thread'] and (not headers['parent'] or headers['parent'] == message_id) \
+        and (headers['public_key'] == '' or not self._get_moder_flags(headers['public_key'])):
+      self.log(self.logger.INFO, 'censored article {} to {} - flag moder-thread is present.'.format(message_id, headers['group_name']))
+    elif group_flags & self.cache['flags']['moder-posts'] and (headers['public_key'] == '' or not self._get_moder_flags(headers['public_key'])):
+      self.log(self.logger.INFO, 'censored article {} to {} - flag moder-posts is present.'.format(message_id, headers['group_name']))
+    elif parent_result and parent_result[0]:
+      self.log(self.logger.INFO, 'censored article {} for closed thread.'.format(message_id))
+    elif parent_result is None and headers['parent'] != message_id and os.path.isfile(os.path.join('articles', 'censored', headers['parent'])):
+      # root post censored. Delete child post
+      self.log(self.logger.INFO, 'Thread starting {} deleted. Delete a {}'.format(headers['parent'], message_id))
+    else:
+      return True
+
+  def _new_message_second_check(self, headers, message, attachments, group_flags, message_id):
+    if (not headers['subject'] or headers['subject'] == 'None') and (message == headers['public_key'] == '') and (headers['parent'] and headers['parent'] != message_id) \
+        and (not headers['sender'] or headers['sender'] == 'Anonymous') and not attachments:
+      self.log(self.logger.INFO, 'censored empty child message  %s' % message_id)
+    elif group_flags & self.cache['flags']['spam-fix'] and len(message) < 5:
+      self.log(self.logger.INFO, 'Spamprotect group %s, censored %s' % (headers['group_name'], message_id))
+    else:
+      return True
+
   def parse_message(self, message_id, fd):
     self.log(self.logger.INFO, 'new message: %s' % message_id)
-    subject = 'None'
-    sent = 0
-    sender = 'Anonymous'
-    email = 'nobody@no.where'
-    parent = ''
-    group_name = ''
-    sage = False
-    signature = None
-    public_key = ''
-    thumb_info = None
-    header_found = False
-    parser = FeedParser()
-    line = fd.readline()
-    while line != '':
-      parser.feed(line)
-      lower_line = line.lower()
-      if lower_line.startswith('subject:'):
-        subject = line.split(' ', 1)[-1][:-1]
-        subject = basicHTMLencode(subject[4:]) if subject.lower().startswith('re: ') else basicHTMLencode(subject)
-      elif lower_line.startswith('date:'):
-        sent = line.split(' ', 1)[1][:-1]
-        sent_tz = parsedate_tz(sent)
-        if sent_tz:
-          offset = 0
-          if sent_tz[-1]:
-            offset = sent_tz[-1]
-          sent = timegm((datetime(*sent_tz[:6]) - timedelta(seconds=offset)).timetuple())
-        else:
-          sent = int(time.time())
-      elif lower_line.startswith('from:'):
-        sender = basicHTMLencode(line.split(' ', 1)[1][:-1].split(' <', 1)[0])
-        try:
-          email = basicHTMLencode(line.split(' ', 1)[1][:-1].split(' <', 1)[1].replace('>', ''))
-        except IndexError:
-          pass
-      elif lower_line.startswith('references:'):
-        parent = line[:-1].split(' ')[1]
-      elif lower_line.startswith('newsgroups:'):
-        group_name = lower_line[:-1].partition(': ')[2].split(';')[0].split(',')[0]
-      elif lower_line.startswith('x-sage:'):
-        sage = True
-      elif lower_line.startswith("x-pubkey-ed25519:"):
-        public_key = lower_line[:-1].split(' ', 1)[1]
-      elif lower_line.startswith("x-signature-ed25519-sha512:"):
-        signature = lower_line[:-1].split(' ', 1)[1]
-      elif line == '\n':
-        header_found = True
-        break
-      line = fd.readline()
-
-    if not header_found:
+    parse = MessageParser(fd)
+    if not parse.headers:
       fd.close()
       to_path = os.path.join('articles', 'invalid')
       self.log(self.logger.WARNING, '{} malformed article: Header not found. Move in {}'.format(message_id, to_path))
-      return self.move_bad_article(message_id, to_path)
-    if signature:
-      if public_key != '':
-        self.log(self.logger.DEBUG, 'got signature with length %i and content \'%s\'' % (len(signature), signature))
-        self.log(self.logger.DEBUG, 'got public_key with length %i and content \'%s\'' % (len(public_key), public_key))
-        if not (len(signature) == 128 and len(public_key) == 64):
-          public_key = ''
-    #parser = FeedParser()
-    if public_key != '':
-      bodyoffset = fd.tell()
-      hasher = sha512()
-      oldline = None
-      for line in fd:
-        if oldline:
-          hasher.update(oldline)
-        oldline = line.replace("\n", "\r\n")
-      hasher.update(oldline.replace("\r\n", ""))
-      fd.seek(bodyoffset)
-      self.log(self.logger.INFO, 'trying to validate signature.. ')
-      try:
-        nacl.signing.VerifyKey(unhexlify(public_key)).verify(hasher.digest(), unhexlify(signature))
-      except Exception as e:
-        public_key = ''
-        self.log(self.logger.INFO, 'failed: %s' % e)
-      else:
-        self.log(self.logger.INFO, 'validated')
-      del hasher
-      del signature
-    parser.feed(fd.read())
-    fd.close()
-    result = parser.close()
-    del parser
-    image_name_original = ''
-    image_name = ''
-    thumb_name = ''
-    message = ''
-    if result.is_multipart():
-      self.log(self.logger.DEBUG, 'message is multipart, length: %i' % len(result.get_payload()))
-      if len(result.get_payload()) == 1 and result.get_payload()[0].get_content_type() == "multipart/mixed":
-        result = result.get_payload()[0]
-      for part in result.get_payload():
-        self.log(self.logger.DEBUG, 'got part == %s' % part.get_content_type())
-
-        if part.get_content_type() == 'text/plain':
-          message += part.get_payload(decode=True)
-          continue
-        deny_extensions = ('.html', '.php', '.phtml', '.php3', '.php4', '.js')
-        file_data = part.get_payload(decode=True)
-        imagehash = sha1(file_data).hexdigest()
-        image_name_original = 'empty_file_name.empty' if part.get_filename() is None or part.get_filename().strip() == '' else basicHTMLencode(part.get_filename().replace('/', '_').replace('"', '_'))
-        image_extension = '.' + image_name_original.split('.')[-1].lower()
-        if len(image_name_original) > 512:
-          image_name_original = image_name_original[:512] + '...'
-        local_mime_type = mimetypes.types_map.get(image_extension, '/')
-        local_mime_maintype, local_mime_subtype = local_mime_type.split('/', 2)
-        image_mime_types = mimetypes.guess_all_extensions(local_mime_type)
-        image_name = imagehash + image_extension
-        # empty attachment
-        if imagehash == 'da39a3ee5e6b4b0d3255bfef95601890afd80709':
-          thumb_name, image_name = 'invalid', 'invalid'
-          del file_data
-          continue
-        # Bad file type, unknown or deny type found
-        elif local_mime_type == '/' or len((set(image_extension) | set(image_mime_types)) & set(deny_extensions)) > 0:
-          self.log(self.logger.WARNING, 'Found bad attach %s in %s. Mimetype local=%s, remote=%s' % (image_name_original, message_id, local_mime_type, part.get_content_type()))
-          image_name_original = 'fake.and.gay.txt'
-          thumb_name = 'document'
-          image_name = 'suicide.txt'
-          del file_data
-          continue
-        out_link = os.path.join(self.config['output_directory'], 'img', image_name)
-        if os.path.isfile(out_link):
-          exist_thumb_name = self._get_exist_thumb_name(image_name)
-        else:
-          exist_thumb_name = None
-          f = open(out_link, 'w')
-          f.write(file_data)
-          f.close()
-        del file_data
-        if exist_thumb_name is not None:
-          thumb_name = exist_thumb_name
-        elif local_mime_maintype == 'image':
-          thumb_name, thumb_info = self.gen_thumb(out_link, imagehash)
-        elif local_mime_type in ('application/pdf', 'application/postscript', 'application/ps'):
-          thumb_name = 'document'
-        elif local_mime_type in ('audio/ogg', 'audio/mpeg', 'audio/mp3', 'audio/opus'):
-          thumb_name = 'audio'
-        elif local_mime_maintype == 'video' and local_mime_subtype in ('webm', 'mp4'):
-          thumb_name, thumb_info = self.gen_thumb_from_video(out_link, imagehash) if cv2_load_result == 'true' else ['video', None]
-        elif local_mime_maintype == 'application' and local_mime_subtype == 'x-bittorrent':
-          thumb_name = 'torrent'
-        elif local_mime_maintype == 'application' and local_mime_subtype in ('x-7z-compressed', 'zip', 'x-gzip', 'x-tar', 'rar'):
-          thumb_name = 'archive'
-        else:
-          image_name_original = image_name = thumb_name = ''
-          message += '\n----' + part.get_content_type() + '----\n'
-          message += 'invalid content type\n'
-          message += '----' + part.get_content_type() + '----\n\n'
-    else:
-      if result.get_content_type().lower() == 'text/plain':
-        message += result.get_payload(decode=True)
-      else:
-        message += '\n-----' + result.get_content_type() + '-----\n'
-        message += 'invalid content type\n'
-        message += '-----' + result.get_content_type() + '-----\n\n'
-    del result
-    message = basicHTMLencode(message)
-
-    if (not subject or subject == 'None') and (message == image_name == public_key == '') and (parent and parent != message_id) and (not sender or sender == 'Anonymous'):
-      self.log(self.logger.INFO, 'censored empty child message  %s' % message_id)
-      self.delete_orphan_attach(image_name, thumb_name)
-      return self.move_bad_article(message_id)
-
-    group_flags = self.sqlite.execute("SELECT flags FROM groups WHERE group_name=?", (group_name,)).fetchone()
-    if group_flags is None:
-      self.log(self.logger.WARNING, 'Message {} in nonexistent group {}'.format(message_id, group_name))
-    else:
-      group_flags = int(group_flags[0])
-      if (group_flags & self.cache['flags']['spam-fix']) != 0 and len(message) < 5:
-        self.log(self.logger.INFO, 'Spamprotect group %s, censored %s' % (group_name, message_id))
-        self.delete_orphan_attach(image_name, thumb_name)
-        return self.move_bad_article(message_id)
-      elif (group_flags & self.cache['flags']['news']) != 0 and (not parent or parent == message_id) \
-          and (public_key == '' or not self.check_moder_flags(public_key, 'overchan-news-add')):
-        self.delete_orphan_attach(image_name, thumb_name)
-        return self.move_bad_article(message_id)
-      elif (group_flags & self.cache['flags']['sage']) != 0:
-        sage = True
-
-    parent_result = None
-    if parent != '' and parent != message_id:
-      parent_result = self.sqlite.execute('SELECT closed FROM articles WHERE article_uid = ?', (parent,)).fetchone()
-      if parent_result and parent_result[0] != 0:
-        self.log(self.logger.INFO, 'censored article %s for closed thread.' % message_id)
-        self.delete_orphan_attach(image_name, thumb_name)
-        return self.move_bad_article(message_id)
-      elif parent_result is None and os.path.isfile(os.path.join("articles", "censored", parent)):
-        # root post censored. Delete child post
-        self.log(self.logger.INFO, 'Thread starting {} deleted. Delete a {}'.format(parent, message_id))
-        self.delete_orphan_attach(image_name, thumb_name)
-        return self.move_bad_article(message_id)
-
-    group_id = None
-    result = self.sqlite.execute('SELECT group_id FROM groups WHERE group_name=? AND (cast(flags as integer) & ?) = 0', (group_name, self.cache['flags']['blocked'])).fetchone()
-    if not result:
-      try:
-        self.sqlite.execute('INSERT INTO groups(group_name, article_count, last_update) VALUES (?,?,?)', (group_name, 1, int(time.time())))
-      except sqlite3.Error:
-        self.log(self.logger.INFO, 'ignoring message for blocked group %s' % group_name)
-      else:
-        self.__flush_board_cache()
-        self.regenerate_all_html()
-        group_id = int(self.sqlite.execute('SELECT group_id FROM groups WHERE group_name=?', (group_name,)).fetchone()[0])
-    else:
-      group_id = int(result[0])
-    if group_id is None:
-      self.log(self.logger.DEBUG, 'no group left which are not blocked. ignoring %s' % message_id)
+      self.move_bad_article(message_id, to_path)
       return False
+    if parse.signature_valid is True:
+      self.log(self.logger.INFO, 'Found valid signature in {}'.format(message_id))
+    elif parse.signature_valid is False:
+      self.log(self.logger.WARNING, 'Found invalid signature in {}'.format(message_id))
+
+    headers = parse.headers
+    group_data = self.sqlite.execute("SELECT group_id, flags FROM groups WHERE group_name=?", (headers['group_name'],)).fetchone()
+    if group_data is None:
+      self.log(self.logger.WARNING, 'Message {} in nonexistent group {}'.format(message_id, headers['group_name']))
+      group_flags = 0
+      group_id = None
+    else:
+      group_flags = int(group_data[1])
+      group_id = int(group_data[0])
+    parent_result = None
+    if headers['parent'] and headers['parent'] != message_id:
+      parent_result = self.sqlite.execute('SELECT closed FROM articles WHERE article_uid = ?', (headers['parent'],)).fetchone()
+
+    if not self._new_message_first_check(headers, group_flags, parent_result, message_id):
+      fd.close()
+      self.move_bad_article(message_id)
+      return False
+
+    parse.parse_body()
+    fd.close()
+    if not self._new_message_second_check(headers, parse.message, len(parse.attachments), group_flags, message_id):
+      self.move_bad_article(message_id)
+      return False
+
+    if group_id is None:
+      self.sqlite.execute('INSERT INTO groups(group_name, article_count, last_update) VALUES (?,?,?)', (headers['group_name'], 1, int(time.time())))
+      self.__flush_board_cache()
+      self.regenerate_all_html()
+      group_id = int(self.sqlite.execute('SELECT group_id FROM groups WHERE group_name=?', (headers['group_name'],)).fetchone()[0])
     self.overchan_generator.regenerate_boards.add(group_id)
 
-    if parent != '' and parent != message_id:
-      last_update = sent
-      self.overchan_generator.regenerate_threads.add(parent)
-      if sage:
+    if group_flags & self.cache['flags']['sage']:
+      headers['sage'] = True
+
+    if headers['parent'] and headers['parent'] != message_id:
+      last_update = headers['sent']
+      self.overchan_generator.regenerate_threads.add(headers['parent'])
+      if headers['sage']:
         # sage mark
-        last_update = sent - 10
+        last_update = headers['sent'] - 10
       else:
         if parent_result is not None:
-          if self.config['bump_limit'] == 0 or self.sqlite.execute('SELECT count(article_uid) FROM articles WHERE parent = ? AND parent != article_uid ', (parent,)).fetchone()[0] < self.config['bump_limit']:
-            self.sqlite.execute('UPDATE articles SET last_update=? WHERE article_uid=?', (sent, parent))
+          if self.config['bump_limit'] == 0 or self.sqlite.execute('SELECT count(article_uid) FROM articles WHERE parent = ? AND parent != article_uid ', (headers['parent'],)).fetchone()[0] < self.config['bump_limit']:
+            self.sqlite.execute('UPDATE articles SET last_update=? WHERE article_uid=?', (headers['sent'], headers['parent']))
           else:
-            last_update = sent - 10
+            last_update = headers['sent'] - 10
         else:
-          self.log(self.logger.INFO, 'missing parent %s for post %s' %  (parent, message_id))
-          if parent in self.missing_parents:
-            if sent > self.missing_parents[parent]:
-              self.missing_parents[parent] = sent
+          self.log(self.logger.INFO, 'missing parent %s for post %s' %  (headers['parent'], message_id))
+          if headers['parent'] in self.missing_parents:
+            if headers['sent'] > self.missing_parents[headers['parent']]:
+              self.missing_parents[headers['parent']] = headers['sent']
           else:
-            self.missing_parents[parent] = sent
+            self.missing_parents[headers['parent']] = headers['sent']
     else:
       # root post
       if not message_id in self.missing_parents:
-        last_update = sent
+        last_update = headers['sent']
       else:
-        if self.missing_parents[message_id] > sent:
+        if self.missing_parents[message_id] > headers['sent']:
           # obviously the case. still we check for invalid dates here
           last_update = self.missing_parents[message_id]
         else:
-          last_update = sent
+          last_update = headers['sent']
         del self.missing_parents[message_id]
         self.log(self.logger.INFO, 'found a missing parent: %s' % message_id)
         if len(self.missing_parents) > 0:
@@ -1070,50 +976,34 @@ class main(threading.Thread):
       self.log(self.logger.INFO, 'post has been censored and is now being restored: %s' % message_id)
       self.sqlite.execute('DELETE FROM articles WHERE article_uid=?', (message_id,))
 
-    if len(image_name) > 40:
-      censored_articles = self.sqlite.execute('SELECT article_uid FROM articles WHERE thumblink = "censored" AND imagelink = ?', (image_name,)).fetchall()
-      censored_count = len(censored_articles)
-      if censored_count > 0:
-        attach_iscensored = None
-        for check_article in censored_articles:
-          if os.path.exists(os.path.join("articles", "censored", check_article[0])):
-            attach_iscensored = check_article[0]
-            break
-        if attach_iscensored is not None:
-          # attach has been censored and not restored. Censoring and this attach
-          self.log(self.logger.INFO, 'Message %s contain attach censoring in %s message. %s has been continue censoring' % (message_id, attach_iscensored, image_name))
-          thumb_name = 'censored'
-          censored_attach_path = os.path.join(self.config['output_directory'], 'img', image_name)
-          if os.path.exists(censored_attach_path):
-            os.remove(censored_attach_path)
-        else:
-          # attach has been censored and is now being restored. Restore all thumblink
-          self.log(self.logger.INFO, 'Attach %s restored. Restore %s thumblinks for this attach' % (image_name, censored_count))
-          self.sqlite.execute('UPDATE articles SET thumblink = ? WHERE imagelink = ?', (thumb_name, image_name))
+    if parse.attachments:
+      if len(parse.attachments) > 1:
+        self.log(self.logger.WARNING, '{} contain {} attachments - use first only'.format(message_id, len(parse.attachments)))
+      image_name, thumb_name, image_name_original = self._attach_processing(parse.attachments[0], message_id)
+      del parse.attachments[:]
+    else:
+      image_name, thumb_name, image_name_original = '', '', ''
 
-    if thumb_info and len(thumb_name) > 41:
-      self.sqlite.execute('INSERT OR REPLACE INTO thumb_info VALUES (?, ?, ?, ?)', (thumb_name, thumb_info[0], thumb_info[1], thumb_info[2]))
-
-    if image_name == '' and thumb_name == '' and self.config['replace_root_nope'] and (parent == '' or parent == message_id):
+    if image_name == '' and thumb_name == '' and self.config['replace_root_nope'] and (headers['parent'] == '' or headers['parent'] == message_id):
       # Get random image for root post
-      result = self.sqlite.execute('SELECT imagelink, thumblink FROM articles WHERE group_id = ? AND length(thumblink) > 40 ORDER BY RANDOM() LIMIT 1', (group_id,)).fetchone()
+      result = self.sqlite.fetchone('SELECT imagelink, thumblink FROM articles WHERE group_id = ? AND length(thumblink) > 40 AND imagename != "pic unrelated" ORDER BY RANDOM() LIMIT 1', (group_id,))
       if result:
         image_name, thumb_name = result
         image_name_original = 'pic unrelated'
 
     insert_list = [
         ('article_uid',  message_id),
-        ('sender',       trydecode(sender)),
-        ('email',        trydecode(email)),
-        ('subject',      trydecode(subject)),
-        ('sent',         sent),
-        ('parent',       parent),
-        ('message',      trydecode(message)),
+        ('sender',       trydecode(headers['sender'])),
+        ('email',        trydecode(headers['email'])),
+        ('subject',      trydecode(headers['subject'])),
+        ('sent',         headers['sent']),
+        ('parent',       headers['parent']),
+        ('message',      trydecode(parse.message)),
         ('imagename',    trydecode(image_name_original)),
         ('imagelink',    image_name),
         ('thumblink',    thumb_name),
         ('last_update',  last_update),
-        ('public_key',   public_key),
+        ('public_key',   headers['public_key']),
         ('received',     int(time.time())),
         ('article_hash', sha1(message_id).hexdigest()),
         ('group_id',     'dummy')
@@ -1131,16 +1021,15 @@ class main(threading.Thread):
         return False
     return True
 
+  def _get_moder_flags(self, pubkey):
+    result = self.censordb.execute('SELECT flags from keys WHERE key=?', (pubkey,)).fetchone()
+    return int(result[0]) if result else 0
+
   def check_moder_flags(self, full_pubkey_hex, *args):
-    try:
-      result = self.censordb.execute('SELECT flags from keys WHERE key=?', (full_pubkey_hex,)).fetchone()
-    except sqlite3.Error:
-      return False
-    else:
-      flags = int(result[0]) if result is not None else 0
-      for flag_name in args:
-        if flags & self.cache['moder_flags'][flag_name] == 0:
-          return False
+    flags = self._get_moder_flags(full_pubkey_hex)
+    for flag_name in args:
+      if flags & self.cache['moder_flags'][flag_name] == 0:
+        return False
     return True
 
   def cache_init(self):
