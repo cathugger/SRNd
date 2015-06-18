@@ -323,6 +323,9 @@ class main(threading.Thread):
     valid = self.is_allow_message_id(message_id)
     if valid is False:
       return False
+    if not os.path.exists(os.path.join("articles", message_id)):
+      # it's no longer there
+      return False
     f = open(os.path.join("articles", message_id), 'r')
     if valid is True:
       try:
