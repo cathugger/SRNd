@@ -7,7 +7,7 @@
 #start_param reject_debug=False
 #start_param uid_host=web.censor.i.did.not.read.the.config
 #start_param add_admin=9ba37a305385d4f16dad182f35021b2076946e56ada87b88734e860a923ec890
-#start_param sync_on_startup=True
+#start_param sync_on_startup=False
 #start_param SRNd_info=info
 #start_param control_newsgroup=ctl
 #start_param threads_per_board=200
