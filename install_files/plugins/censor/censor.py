@@ -230,9 +230,8 @@ class main(threading.Thread):
             self.handle_line(line, key_id, timestamp)
           db_commit = True
         elif source == "control":
-          # it's from ourself
-          timestamp = int(time.time())
-          self.handle_line(data, None, timestamp)
+          # don't do shit
+          pass
         else:
           self.log(self.logger.WARNING, 'unknown source: %s' % source)
       except Queue.Empty:
