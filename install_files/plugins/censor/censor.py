@@ -67,6 +67,14 @@ class main(threading.Thread):
     if self.ignore_old < 0: self.ignore_old = 0
     self.ignore_old *= 3600 * 24
     self.SRNd = args['srnd']
+    if 'control_newsgroup' in args:
+      self.ctl_newsgroup = args['control_newsgroup']
+    else:
+      self.ctl_newsgroup = 'ctl'
+    if 'threads_per_board' in args:
+      self.threads_per_board = int(args['threads_per_board'])
+    else:
+      self.threads_per_board = 200
     self.log(self.logger.DEBUG, 'initializing censor_httpd..')
     args['censor'] = self
     self.httpd = censor_httpd.censor_httpd("censor_httpd", self.logger, args)
@@ -315,6 +323,9 @@ class main(threading.Thread):
         f.close()
       return True
     public_key = None
+    newsgroups = None
+    references = None
+    outer_sent = None
     line = f.readline()
     while len(line) != 0:
       if len(line) == 1:
@@ -323,7 +334,30 @@ class main(threading.Thread):
         public_key = line.lower()[:-1].split(' ', 1)[1]
       elif line.lower().startswith('x-signature-ed25519-sha512:'):
         signature = line.lower()[:-1].split(' ', 1)[1]
+      elif line.lower().startswith('newsgroups:'):
+        newsgroups = line.lower()[:-1].split(' ', 1)[1].split(',')
+      elif line.lower().startswith('references:'):
+        references = line.lower()[:-1].split(' ', 1)[1].split(',')
+      elif line.lower().startswith('date:'):
+        outer_sent = line.split(' ', 1)[1][:-1]
+        outer_sent_tz = parsedate_tz(outer_sent)
+        if outer_sent_tz:
+          offset = 0
+          if outer_sent_tz[-1]: offset = outer_sent_tz[-1]
+          outer_sent = timegm((datetime(*outer_sent_tz[:6]) - timedelta(seconds=offset)).timetuple())
+        else:
+          outer_sent = int(time.time())
+
       line = f.readline()
+    # is this article for expiration
+    if newsgroups and self.ctl_newsgroup not in newsgroups:
+      # yas it is
+      # we don't need anything more from this article, close the file
+      f.close()
+      # set sent time if not set
+      outer_send = outersend or int(time.time())
+      # do the expiration
+      return self.handle_expiration(message_id, newsgroups, references)
     hasher = sha512()
     bodyoffset = f.tell()
     oldline = None
@@ -365,6 +399,28 @@ class main(threading.Thread):
     self.key_cache[public_key] = key_id
     return key_id
 
+  def handle_expiration(self, message_id, newsgroups, references):
+    """
+    handle content expiration
+    :param message_id: the new messasge's nntp id
+    :param newsgroups: the newsgroups this message is in
+    :param references: the messages this message references or None if it doesn't
+    """
+    if references is None:
+      # this is a new thread
+      # for each newsgroup
+      for newsgroup in newsgroups:
+        # does this group exist?
+        group = self.overchandb.execute("SELECT group_id FROM groups WHERE group_name = ?", (newsgroup,)).fetchone()
+        if group:
+          # yas it does exist
+          # get the group id
+          group_id = group[0]
+          
+          # get the posts that we want to expire in the newsgroup
+          for row in self.overchandb.execute("WITH active_board_threads(article_uid) AS ( SELECT article_uid FROM articles WHERE group_id = ? AND parent == '' ORDER BY sent DESC LIMIT ? ) SELECT COUNT(article_uid) FROM articles WHERE group_id = ? AND ( ( parent == '' AND article_uid NOT IN active_board_threads ) OR parent NOT IN active_board_threads )", (group_id, self.threads_per_board, group_id)).fetchall():
+            self.delete_article(row[0], 'expire')
+      
   def parse_article(self, article_fd, message_id, key_id=None):
     self.log(self.logger.DEBUG, "parsing %s.." % message_id)
     is_replay = False
@@ -568,6 +624,16 @@ class main(threading.Thread):
             os.unlink(os.path.join("groups", str(group[0]), str(group[1])))
           except Exception as e:
             self.log(self.logger.WARNING, "could not delete %s: %s" % (os.path.join("groups", str(group[0]), str(group[1])), e))
+        if command == 'expire':
+          self.log(self.logger.INFO, "expire %s" % message_id)
+          # if we are expiring then let's get rid of it to save disk and such
+          path = os.path.join('articles', 'censored', message_id)
+          try:
+            if os.stat(path).st_size > 0:
+              f = open(path, 'w')
+              f.close()
+          except:
+            pass
     elif not os.path.exists(censore_path):
       f = open(censore_path, 'w')
       f.close()

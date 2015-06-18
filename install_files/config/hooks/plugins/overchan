@@ -30,5 +30,6 @@
 #start_param sqlite_synchronous=True
 #start_param site_url=False
 #start_param local_dest=False
+#start_param threads_per_page=10
 
 overchan.*

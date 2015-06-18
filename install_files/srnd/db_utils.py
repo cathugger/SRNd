@@ -3,6 +3,10 @@
 import sqlite3
 import os
 
+_info = sqlite3.sqlite_version_info
+if _info[0] <= 3 and _info[1] <= 8 and _info[2] <= 2:
+  raise Exception("you need sqlite 3.8.3 or higher because expiration uses the WITH clause")
+
 class SQLiteConnector(object):
   def __init__(self, database, **kwargs):
     self._conn = sqlite3.connect(database, **kwargs)
