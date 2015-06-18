@@ -519,7 +519,7 @@ class main(threading.Thread):
     try:
       if key_id is None:
         # ths means censor executed the command on itself
-        self.log(self.logger.INFO, "censor executed %s own its own" % command)
+        self.log(self.logger.INFO, "censor executed %s own its own" % line)
       else:
         self.censordb.execute('INSERT INTO log (accepted, command_id, data, key_id, reason_id, comment, timestamp, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', \
                               (accepted, command_id, data.decode('UTF-8'), key_id, reason_id, basicHTMLencode(comment).decode('UTF-8'), int(time.time()), source))
