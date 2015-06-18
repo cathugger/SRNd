@@ -232,7 +232,7 @@ class main(threading.Thread):
         elif source == "control":
           # it's from ourself
           timestamp = int(time.time())
-          self.handle_line(line, None, timestamp)
+          self.handle_line(data, None, timestamp)
         else:
           self.log(self.logger.WARNING, 'unknown source: %s' % source)
       except Queue.Empty:
@@ -324,6 +324,7 @@ class main(threading.Thread):
     if valid is False:
       return False
     if not os.path.exists(os.path.join("articles", message_id)):
+      self.log(self.logger.WARNING, "%s is missing" % message_id)
       # it's no longer there
       return False
     f = open(os.path.join("articles", message_id), 'r')
@@ -417,7 +418,7 @@ class main(threading.Thread):
     :param newsgroups: the newsgroups this message is in
     :param references: the messages this message references or None if it doesn't
     """
-    if references is None:
+    if True: # references is None:
       now = int(time.time())
       # this is a new thread
       # for each newsgroup
