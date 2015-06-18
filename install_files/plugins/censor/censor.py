@@ -364,8 +364,6 @@ class main(threading.Thread):
       # yas it is
       # we don't need anything more from this article, close the file
       f.close()
-      # set sent time if not set
-      outer_send = outersend or int(time.time())
       # do the expiration
       return self.handle_expiration(message_id, newsgroups, references)
     hasher = sha512()
