@@ -429,13 +429,13 @@ class main(threading.Thread):
           # yas it does exist
           # get the group id
           group_id = group[0]
-          # expire all the children of expired root posts in our newsgroup
-          for row in self.overchandb.execute("WITH active_board_threads(article_uid) AS ( SELECT article_uid FROM articles WHERE group_id = ? AND parent == '' ORDER BY sent DESC LIMIT ? ) SELECT article_uid FROM articles WHERE group_id = ? AND parent NOT IN active_board_threads AND parent != ''", (group_id, self.threads_per_board, group_id)).fetchall():
-            # expire replies of all expired root posts
-            self.handle_line('overchan-expire %s' % row[0], None, now)
           # get the root posts that we want to expire in the newsgroup
           for row in self.overchandb.execute("WITH active_board_threads(article_uid) AS ( SELECT article_uid FROM articles WHERE group_id = ? AND parent == '' ORDER BY sent DESC LIMIT ? ) SELECT article_uid FROM articles WHERE group_id = ? AND parent == '' AND article_uid NOT IN active_board_threads", (group_id, self.threads_per_board, group_id)).fetchall():
-            # issue local overchan-expire to all expired root posts
+            # get all children for this thread
+            for child_row in self.overchandb.execute("SELECT article_uid FROM articles WHERE parent = ?", (row[0],)).fetchall():
+              # issue local overchan-expire to all children that are too old
+              self.handle_line('overchan-expire %s' % child_row[0], None, now)
+            # issue local overchan-expire to root post
             self.handle_line('overchan-expire %s' % row[0], None, now)
             
     return True
