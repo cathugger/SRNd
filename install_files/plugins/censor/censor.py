@@ -478,9 +478,9 @@ class main(threading.Thread):
   def redistribute_command(self, group, line, comment, timestamp):
     # TODO add universal redistributor? Add SRNd queue? Currents methods thread-safe?
     for hook in self.SRNd.get_allow_hooks(group):
-      self.log(self.logger.DEBUG, "redistribute %s to %s" % (group, hook))
       if hook.startswith('plugin-'):
         if hook in self.SRNd.plugins:
+          self.log(self.logger.DEBUG, "redistribute %s to %s" % (group, hook))
           self.SRNd.plugins[hook].add_article(line, source="control", timestamp=timestamp)
         else:
           self.log(self.logger.ERROR, 'unknown plugin hook detected. wtf? {}'.format(hook))
