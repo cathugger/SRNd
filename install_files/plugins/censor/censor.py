@@ -82,7 +82,8 @@ class main(threading.Thread):
     self.ALL_FLAGS = '8191'
     self.queue = Queue.Queue()
     self.command_mapper = dict()
-    self.command_mapper['delete'] = self.handle_delete
+    self.command_mapper['overchan-expire'] = \
+    self.command_mapper['delete'] = \
     self.command_mapper['overchan-delete-attachment'] = self.handle_delete
     self.command_mapper['overchan-sticky'] = \
     self.command_mapper['overchan-close'] = self.handle_sticky_close
@@ -228,6 +229,10 @@ class main(threading.Thread):
           for line in data.split("\n"):
             self.handle_line(line, key_id, timestamp)
           db_commit = True
+        elif source == "control":
+          # it's from ourself
+          timestamp = int(time.time())
+          self.handle_line(line, None, timestamp)
         else:
           self.log(self.logger.WARNING, 'unknown source: %s' % source)
       except Queue.Empty:
@@ -242,12 +247,17 @@ class main(threading.Thread):
     self.log(self.logger.INFO, 'bye')
 
   def allowed(self, key_id, command, is_replay, is_local):
+    if key_id is None and command == 'overchan-expire' and is_local:
+      return 1, 5
     accepted, reason_id = self.command_reason(command, is_replay, is_local)
     if not self.allowed_key(key_id, command):
       return 0, 1
     return accepted, reason_id
 
   def allowed_key(self, key_id, command):
+    # allow expiration from ourself
+    if key_id is None and command == 'overchan-expire':
+      return True
     if key_id in self.allowed_cache:
       if command in self.allowed_cache[key_id]:
         return self.allowed_cache[key_id][command]
@@ -407,6 +417,7 @@ class main(threading.Thread):
     :param references: the messages this message references or None if it doesn't
     """
     if references is None:
+      now = int(time.time())
       # this is a new thread
       # for each newsgroup
       for newsgroup in newsgroups:
@@ -416,11 +427,16 @@ class main(threading.Thread):
           # yas it does exist
           # get the group id
           group_id = group[0]
-          
-          # get the posts that we want to expire in the newsgroup
-          for row in self.overchandb.execute("WITH active_board_threads(article_uid) AS ( SELECT article_uid FROM articles WHERE group_id = ? AND parent == '' ORDER BY sent DESC LIMIT ? ) SELECT COUNT(article_uid) FROM articles WHERE group_id = ? AND ( ( parent == '' AND article_uid NOT IN active_board_threads ) OR parent NOT IN active_board_threads )", (group_id, self.threads_per_board, group_id)).fetchall():
-            self.delete_article(row[0], 'expire')
-      
+          # expire all the children of expired root posts in our newsgroup
+          for row in self.overchandb.execute("WITH active_board_threads(article_uid) AS ( SELECT article_uid FROM articles WHERE group_id = ? AND parent == '' ORDER BY sent DESC LIMIT ? ) SELECT article_uid FROM articles WHERE group_id = ? AND parent NOT IN active_board_threads AND parent != ''", (group_id, self.threads_per_board, group_id)).fetchall():
+            # expire replies of all expired root posts
+            self.handle_line('overchan-expire %s' % row[0], None, now)
+          # get the root posts that we want to expire in the newsgroup
+          for row in self.overchandb.execute("WITH active_board_threads(article_uid) AS ( SELECT article_uid FROM articles WHERE group_id = ? AND parent == '' ORDER BY sent DESC LIMIT ? ) SELECT article_uid FROM articles WHERE group_id = ? AND parent == '' AND article_uid NOT IN active_board_threads", (group_id, self.threads_per_board, group_id)).fetchall():
+            # issue local overchan-expire to all expired root posts
+            self.handle_line('overchan-expire %s' % row[0], None, now)
+            
+    return True
   def parse_article(self, article_fd, message_id, key_id=None):
     self.log(self.logger.DEBUG, "parsing %s.." % message_id)
     is_replay = False
@@ -483,11 +499,12 @@ class main(threading.Thread):
       self.log(self.logger.WARNING, 'got unknown command: "{}", source: "{}"'.format(line, source))
       return
     accepted, reason_id = self.allowed(key_id, command, is_replay, is_local)
-    if self.command_cache[command][0] != -1:
-      command_id = self.command_cache[command][0]
-    else:
-      self.log(self.logger.ERROR, "command %s not found in command_cache. FIXME!" % command)
-      return
+    if key_id is not None:
+      if self.command_cache[command][0] != -1:
+        command_id = self.command_cache[command][0]
+      else:
+        self.log(self.logger.ERROR, "command %s not found in command_cache. FIXME!" % command)
+        return
     if accepted == 1:
       data, groups = self.command_mapper[command](line)
       if groups:
@@ -497,8 +514,12 @@ class main(threading.Thread):
       data = line.lower().split(" ", 1)[-1].split(" ", 1)[0]
       self.log(self.logger.DEBUG, 'not authorized for "{}": {}. source: {}'.format(command, key_id, source))
     try:
-      self.censordb.execute('INSERT INTO log (accepted, command_id, data, key_id, reason_id, comment, timestamp, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', \
-        (accepted, command_id, data.decode('UTF-8'), key_id, reason_id, basicHTMLencode(comment).decode('UTF-8'), int(time.time()), source))
+      if key_id is None:
+        # ths means censor executed the command on itself
+        self.log(self.logger.INFO, "censor executed %s own its own" % command)
+      else:
+        self.censordb.execute('INSERT INTO log (accepted, command_id, data, key_id, reason_id, comment, timestamp, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', \
+                              (accepted, command_id, data.decode('UTF-8'), key_id, reason_id, basicHTMLencode(comment).decode('UTF-8'), int(time.time()), source))
     except sqlite3.Error:
       pass
 
@@ -624,16 +645,15 @@ class main(threading.Thread):
             os.unlink(os.path.join("groups", str(group[0]), str(group[1])))
           except Exception as e:
             self.log(self.logger.WARNING, "could not delete %s: %s" % (os.path.join("groups", str(group[0]), str(group[1])), e))
-        if command == 'expire':
-          self.log(self.logger.INFO, "expire %s" % message_id)
-          # if we are expiring then let's get rid of it to save disk and such
-          path = os.path.join('articles', 'censored', message_id)
+        if command == 'overchan-expire':
+          # expire this article by blanking the article
           try:
-            if os.stat(path).st_size > 0:
-              f = open(path, 'w')
-              f.close()
+            if os.stat(censore_path).st_size > 0:
+              f = open(censore_path, 'w')
+            f.close()
           except:
             pass
+
     elif not os.path.exists(censore_path):
       f = open(censore_path, 'w')
       f.close()

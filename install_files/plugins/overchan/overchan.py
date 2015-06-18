@@ -633,6 +633,8 @@ class main(threading.Thread):
           self.log(self.logger.DEBUG, 'message has been restored: %s. ignoring delete' % message_id)
         else:
           self.delete_messages.add(message_id)
+      elif line.lower().startswith("overchan-expire "):
+        self.delete_messages.add(line.split(" ")[1])
       elif line.lower().startswith("overchan-sticky "):
         message_id = line.split(" ")[1]
         self.log(self.logger.INFO, 'sticky processing message_id %s, %s' % (message_id, self.sticky_processing(message_id)))
