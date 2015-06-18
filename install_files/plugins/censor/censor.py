@@ -98,7 +98,7 @@ class main(threading.Thread):
     self.httpd.shutdown()
     self.running = False
 
-  def add_article(self, message_id, source="article"):
+  def add_article(self, message_id, source="article", timestamp=None):
     #print "should add article:", message_id
     self.queue.put((source, message_id))
     #self.log('this plugin does not handle any article. remove hook parts from {0}'.format(os.path.join('config', 'plugins', self.name.split('-', 1)[1])), 0)
