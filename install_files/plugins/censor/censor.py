@@ -476,6 +476,7 @@ class main(threading.Thread):
       self.handle_line(line, key_id, sent, is_replay, message_id)
 
   def redistribute_command(self, group, line, comment, timestamp):
+    self.log(self.logger.DEBUG, "redistribute to %s" % group)
     # TODO add universal redistributor? Add SRNd queue? Currents methods thread-safe?
     for hook in self.SRNd.get_allow_hooks(group):
       if hook.startswith('plugin-'):
