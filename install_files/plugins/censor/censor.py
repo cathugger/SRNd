@@ -419,6 +419,7 @@ class main(threading.Thread):
     :param references: the messages this message references or None if it doesn't
     """
     if True: # references is None:
+      self.log(self.logger.INFO, "handle expiration policy for %s" % message_id)
       now = int(time.time())
       # this is a new thread
       # for each newsgroup
