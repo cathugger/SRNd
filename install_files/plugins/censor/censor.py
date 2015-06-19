@@ -430,7 +430,7 @@ class main(threading.Thread):
           # get the group id
           group_id = group[0]
           # get the root posts that we want to expire in the newsgroup
-          for row in self.overchandb.execute("WITH board_threads(article_uid) AS ( SELECT DISTINCT article_uid FROM articles WHERE group_id = ?), parent_roots(article_uid) AS ( SELECT DISTINCT parent FROM articles WHERE article_uid IN board_threads AND parent != '' ), roots(article_uid) AS ( SELECT DISTINCT article_uid FROM articles WHERE parent = '' AND article_uid IN board_threads) SELECT article_uid FROM articles WHERE group_id = ? AND article_uid NOT IN ( SELECT article_uid FROM articles WHERE ( article_uid IN parent_roots OR article_uid IN roots ) AND parent = '' ORDER BY sent DESC LIMIT ? )", (group_id, group_id, self.threads_per_board)).fetchall():
+          for row in self.overchandb.execute("SELECT article_uid FROM articles WHERE article_uid NOT IN ( SELECT article_uid FROM articles WHERE parent = '' AND group_id = ? ORDER BY last_update DESC LIMIT ? ) AND group_id = ? AND parent = ''", (group_id, self.threads_per_board, group_id)).fetchall():
             # get all children for this thread
             for child_row in self.overchandb.execute("SELECT article_uid FROM articles WHERE parent = ?", (row[0],)).fetchall():
               # issue local overchan-expire to all children that are too old

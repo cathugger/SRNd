@@ -754,7 +754,7 @@ class main(threading.Thread):
     except OSError:
       pass
     return thumb_data
-
+  
   def gen_thumb(self, target, imagehash):
     return self._create_thumb(target, os.path.join(self.config['output_directory'], 'thumbs'), imagehash)
 
