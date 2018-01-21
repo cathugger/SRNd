@@ -10,7 +10,20 @@ SRNd comes with some plugins:
 
 Usually these plugins run behind an nginx reverse proxy. For details see docs/plugin_overchan.txt or docs/plugin_paste.
 
-Start SRNd with ./main.pyx
+
+To install deps:
+
+$ python3 -m venv v && ./v/bin/pip install -r requirements.txt
+
+To run:
+
+$ ./v/bin/python main.pyx
+
+To configure:
+
+TODO
+
+
 For questions feel free to join #srnd or #anonet @ irc2p or one of these irc servers: http://anonet2.biz/#urc (most of them are only available via Tor hidden service).
 
 If you value SRNd or want to support further developement please consider a small donation:
