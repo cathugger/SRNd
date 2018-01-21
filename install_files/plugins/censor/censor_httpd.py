@@ -1480,7 +1480,7 @@ class censor_httpd(threading.Thread):
     help_lang = args.get('help', 'en')
     self.httpd.log = self.log
     self.httpd.logger = self.logger
-    self.httpd.rnd = open("/dev/urandom", "rb")
+    self.httpd.rnd = open("/dev/urandom", "r")
     self.httpd.sessions = dict()
     self.httpd.uid_host = self.uid_host
     self.httpd.censor = args['censor']
