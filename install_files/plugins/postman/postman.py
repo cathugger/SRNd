@@ -104,8 +104,11 @@ class postman(BaseHTTPRequestHandler):
       self.send_header('Set-Cookie', 'sid=%s; path=/incoming' % cookie)
     self.send_header('Content-type', 'text/html')
     self.end_headers()
-    self.wfile.write(self.origin.template_redirect.format(redirect_duration, redirect_target, message))
+    self.write_data(self.origin.template_redirect.format(redirect_duration, redirect_target, message))
 
+  def write_data(self, data):
+    self.wfile.write(data.encode('utf-8'))
+    
   def log_request(self, *code):
     return
 
@@ -165,12 +168,12 @@ class postman(BaseHTTPRequestHandler):
     self.send_response(200)
     self.send_header('Content-type', 'text/html')
     self.end_headers()
-    self.wfile.write('<html><body>')
+    self.write_data('<html><body>')
     for y in range(0, 100):
       #self.wfile.write('<img src="/img/%s.png" style="width: 100px;" />' % ''.join(random.choice(self.origin.alphabet) for x in range(16)))
-      self.wfile.write('<iframe src="/incoming/%s"></iframe>' % ''.join(random.choice(self.origin.alphabet) for x in range(16)))
+      self.write_data('<iframe src="/incoming/%s"></iframe>' % ''.join(random.choice(self.origin.alphabet) for x in range(16)))
       #time.sleep(0.1)
-    self.wfile.write('</body></html>')
+    self.write_data('</body></html>')
 
   def get_cookie(self, cookie_name):
     cookie = self.headers.get('Cookie')
@@ -228,9 +231,9 @@ class postman(BaseHTTPRequestHandler):
       if data['file_b64']:
         # we can have empty file_b64 here whether captcha was entered wrong first time
         self.origin.temp_file_obj[data['file_name']] = [data.pop('file_b64'), int(time.time())]
-      self.wfile.write(self.origin.t_engine['verify_fast'].substitute(data))
+      self.write_data(self.origin.t_engine['verify_fast'].substitute(data))
     else:
-      self.wfile.write(self.origin.t_engine['verify_slow'].substitute(data))
+      self.write_data(self.origin.t_engine['verify_slow'].substitute(data))
     return self.origin.captcha.cache_bump()
 
   def _extract_base_headers(self, post_vars):
