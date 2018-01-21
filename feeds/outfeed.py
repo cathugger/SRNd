@@ -1,7 +1,7 @@
 #!/usr/bin/python
 
 import os
-import queue
+import Queue
 import socket
 import time
 from hashlib import sha512
@@ -18,8 +18,8 @@ class OutFeed(feed.BaseFeed):
     self.config = config
     feed.BaseFeed.__init__(self, kill_me, logger, self.config['debug'], 'outfeed-{}-{}'.format(*self.config['server']))
     self.sync_on_startup = self.config['sync_on_startup']
-    self.queue = queue.LifoQueue()
-    self.ctl_queue = queue.Queue()
+    self.queue = Queue.LifoQueue()
+    self.ctl_queue = Queue.Queue()
     self.polltimeout = 500 # 1 * 1000
     self.cooldown_period = 60
     self.cooldown_counter = 0
@@ -49,7 +49,7 @@ class OutFeed(feed.BaseFeed):
       socket_ = sockssocket.socksocket(socket.AF_INET, socket.SOCK_STREAM)
       socket_.setproxy(proxy_types[self.config['proxy']['proxy_type']], self.config['proxy']['proxy_ip'], self.config['proxy']['proxy_port'], rdns=True)
     else:
-      self.log(self.logger.ERROR, "unknown proxy type {}, must be one of {}.".format(self.config['proxy']['proxy_type'], ', '.join(list(proxy_types.keys()))))
+      self.log(self.logger.ERROR, "unknown proxy type {}, must be one of {}.".format(self.config['proxy']['proxy_type'], ', '.join(proxy_types.keys())))
       self.running = False
     return socket_
 

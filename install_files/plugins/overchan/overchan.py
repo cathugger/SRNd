@@ -9,10 +9,10 @@ import traceback
 import math
 import mimetypes
 mimetypes.init()
-import queue
+import Queue
 from hashlib import sha1
 
-from PIL import Image
+import Image
 
 from srnd.utils import basicHTMLencode, css_minifer, trydecode, valid_group_name, overchan_thread_unlink
 from overchan_generator import OverchanGeneratorStatic
@@ -55,7 +55,7 @@ class main(threading.Thread):
     if not os.path.exists(self.config['template_directory']):
       self.die('error: template directory \'{}\' does not exist'.format(self.config['template_directory']))
 
-    error = ['{} file not found in {}'.format(x, os.path.join(self.config['template_directory'], x)) for x in self.config['csss'] + list(self.config['thumbs'].values()) \
+    error = ['{} file not found in {}'.format(x, os.path.join(self.config['template_directory'], x)) for x in self.config['csss'] + self.config['thumbs'].values() \
              if not os.path.exists(os.path.join(self.config['template_directory'], x))]
     if len(error) > 0:
       self.die('\n'.join(error))
@@ -125,7 +125,7 @@ class main(threading.Thread):
       else:
         cfg_new[target] = args[target]
     if add_default:
-      cfg_new = dict(list(cfg_def.items()) + list(cfg_new.items()))
+      cfg_new = dict(cfg_def.items() + cfg_new.items())
 
     # move thumbnails in cfg_new['thumbs']
     cfg_new['thumbs'] = dict([[target[0], cfg_new.pop(target[1])] for target in thumbnail_files if target[1] in cfg_new])
@@ -186,7 +186,7 @@ class main(threading.Thread):
     except IOError as e:
       self.die('error: can\'t load PIL library, err %s' %  e)
       return False
-    self.queue = queue.Queue()
+    self.queue = Queue.Queue()
     return True
 
   def gen_template_thumbs(self, sources):
@@ -253,7 +253,7 @@ class main(threading.Thread):
         ))
     self.copy_out(([(self.config['censor_css'], 'censor.css'),] + [(x, x if self.config['csss'][0] != x else 'styles.css') for x in self.config['csss']]), True)
     self.config['csss'][0] = 'styles.css'
-    self.gen_template_thumbs(list(self.config['thumbs'].values()))
+    self.gen_template_thumbs(self.config['thumbs'].values())
 
     self.delete_messages = set()
     self.missing_parents = dict()
@@ -673,7 +673,7 @@ class main(threading.Thread):
 
         if self.queue.qsize() > self.config['sleep_threshold']:
           time.sleep(self.config['sleep_time'])
-      except queue.Empty:
+      except Queue.Empty:
         if bump_db:
           self.sqlite.commit()
           bump_db = False
@@ -1078,7 +1078,7 @@ class main(threading.Thread):
       else:
         board_link = '%s-1.html' % current_group_name
       if group_row[1] != group_id or selflink:
-        boardlist.append(' <a href="{0}">{1}</a>&nbsp;/'.format(board_link, current_group_name_encoded))
+        boardlist.append(u' <a href="{0}">{1}</a>&nbsp;/'.format(board_link, current_group_name_encoded))
       else:
         boardlist.append(' ' + current_group_name_encoded + '&nbsp;/')
       if group_row[1] == group_id:
@@ -1098,4 +1098,4 @@ class main(threading.Thread):
     return ''.join(boardlist), full_board_name_unquoted, board_name_unquoted, board_name, board_description, flags
 
 if __name__ == '__main__':
-  print("[%s] %s. %s" % ("overchan", "this plugin can't run as standalone version.", "bye"))
+  print "[%s] %s. %s" % ("overchan", "this plugin can't run as standalone version.", "bye")

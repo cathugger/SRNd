@@ -174,11 +174,11 @@ class SRNd(threading.Thread):
         os.chroot('.')
       except OSError as e:
         if e.errno == 1:
-          print("[error] current user account does not have CAP_SYS_CHROOT.")
-          print("        You have three options:")
-          print("         - run SRNd as root")
-          print("         - assign CAP_SYS_CHROOT to the user you intend to use")
-          print("         - disable chroot in {0} by setting chroot=False".format(os.path.join(self.config['data_dir'], 'config', 'SRNd.conf')))
+          print "[error] current user account does not have CAP_SYS_CHROOT."
+          print "        You have three options:"
+          print "         - run SRNd as root"
+          print "         - assign CAP_SYS_CHROOT to the user you intend to use"
+          print "         - disable chroot in {0} by setting chroot=False".format(os.path.join(self.config['data_dir'], 'config', 'SRNd.conf'))
           exit(3)
         else:
           raise e
@@ -190,11 +190,11 @@ class SRNd(threading.Thread):
         os.setuid(self.config['uid'])
       except OSError as e:
         if e.errno == 1:
-          print("[error] current user account does not have CAP_SETUID/CAP_SETGID: ", e)
-          print("        You have three options:")
-          print("         - run SRNd as root")
-          print("         - assign CAP_SETUID and CAP_SETGID to the user you intend to use")
-          print("         - disable setuid in {0} by setting setuid=".format(os.path.join(self.config['data_dir'], 'config', 'SRNd.conf')))
+          print "[error] current user account does not have CAP_SETUID/CAP_SETGID: ", e
+          print "        You have three options:"
+          print "         - run SRNd as root"
+          print "         - assign CAP_SETUID and CAP_SETGID to the user you intend to use"
+          print "         - disable setuid in {0} by setting setuid=".format(os.path.join(self.config['data_dir'], 'config', 'SRNd.conf'))
           exit(4)
         else:
           raise e
@@ -339,7 +339,7 @@ class SRNd(threading.Thread):
     return False if need rewrite config file
     """
     no_change = True
-    for key, value in [xx for xx in config.items()]:
+    for key, value in [xx for xx in config.iteritems()]:
       if key not in def_config:
         # Unknown key, del? del!
         del config[key]
@@ -363,7 +363,7 @@ class SRNd(threading.Thread):
           config[key] = def_config[key][0]
           no_change = False
     # add missing key
-    for key, value in def_config.items():
+    for key, value in def_config.iteritems():
       if key not in config:
         config[key] = value[0]
         no_change = False
@@ -449,7 +449,7 @@ class SRNd(threading.Thread):
       exit(3)
     if not no_change:
       # create human readable config - sort from position in def_config
-      config_list = sorted([('='.join((key, str(value))), def_config[key][1]) for key, value in config.items()], key=lambda line_: line_[1])
+      config_list = sorted([('='.join((key, str(value))), def_config[key][1]) for key, value in config.iteritems()], key=lambda line_: line_[1])
       # remove positions
       config_list = [line[0] for line in config_list]
       self._write_srnd_config(config_list, config['data_dir'], uid, gid)
@@ -1090,9 +1090,9 @@ class SRNd(threading.Thread):
     try: self.ctl_socket_clients[fd][0].shutdown(socket.SHUT_RDWR)
     except: pass
     try: self.ctl_socket_clients[fd][1].close()
-    except Exception as e: print("close of fdopened file failed: %s" % e)
+    except Exception as e: print "close of fdopened file failed: %s" % e
     try: self.ctl_socket_clients[fd][0].close()
-    except Exception as e: print("close of socket failed: %s" % e)
+    except Exception as e: print "close of socket failed: %s" % e
     self.poller.unregister(fd)
     try: self.logger.remove_target(self.ctl_socket_clients[fd][1])
     except: pass

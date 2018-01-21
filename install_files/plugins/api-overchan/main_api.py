@@ -128,7 +128,7 @@ class MainAPIHandler(object):
       if self.cmd_cache[cmd][hashkey][0] + self.config['cache_life'] < curent_time:
         self.cmd_cache[cmd].pop(hashkey)
     while len(self.cmd_cache[cmd]) >= self.config['cache_max']:
-      self.cmd_cache[cmd].pop(random.choice(list(self.cmd_cache[cmd].keys())))
+      self.cmd_cache[cmd].pop(random.choice(self.cmd_cache[cmd].keys()))
 
   def info(self):
     return 'API {0} allows request: {1}.\nAPI {0} cached replies: {2}.'.format(self.version, ', '.join([x for x in self.requests]), ', '.join([x for x in self.cmd_cache]))

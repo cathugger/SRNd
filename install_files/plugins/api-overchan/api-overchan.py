@@ -4,9 +4,9 @@ import os
 import sqlite3
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, HTTPServer
-from urllib.parse import unquote
-from urllib.parse import urlparse, parse_qs
+from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer
+from urllib import unquote
+from urlparse import urlparse, parse_qs
 
 import api
 
@@ -33,7 +33,7 @@ class OverchanAPI(BaseHTTPRequestHandler):
     path = unquote(self.path)
     data = parse_qs(urlparse(path).query)
     ver, cmd = os.path.split(urlparse(path).path)
-    return cmd.encode('ascii', 'ignore'), os.path.split(ver)[-1].encode('ascii', 'ignore'), {x: str(''.join(data[x]), 'utf-8') for x in data}
+    return cmd.encode('ascii', 'ignore'), os.path.split(ver)[-1].encode('ascii', 'ignore'), {x: unicode(''.join(data[x]), 'utf-8') for x in data}
 
   def write_result(self, data):
     self.send_response(200)
@@ -121,7 +121,7 @@ class main(threading.Thread):
       else:
         cfg_new[target] = args[target]
     if add_default:
-      cfg_new = dict(list(cfg_def.items()) + list(cfg_new.items()))
+      cfg_new = dict(cfg_def.items() + cfg_new.items())
 
     return cfg_new
 
@@ -150,4 +150,4 @@ class main(threading.Thread):
     return data[1]
 
 if __name__ == '__main__':
-  print("[%s] %s. %s" % ("api-overchan", "this plugin can't run as standalone version.", "bye"))
+  print "[%s] %s. %s" % ("api-overchan", "this plugin can't run as standalone version.", "bye")

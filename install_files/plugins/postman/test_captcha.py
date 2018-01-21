@@ -17,7 +17,7 @@ if __name__ == '__main__':
     CRITICAL = 'CRITICAL'
   def _log(lvl, msg):
     if lvl != 'WARNING':
-      print('[{}] {}'.format(lvl, msg))
+      print '[{}] {}'.format(lvl, msg)
 
   def get_info(target, cookie=''):
     result = list(target._get_captcha(cookie)[1:])
@@ -37,7 +37,7 @@ if __name__ == '__main__':
     else:
       assert testme.captcha_verify(*data), 'Error captcha_verify 2'
     assert not testme.captcha_verify(*data), 'Error captcha_verify - check_whitelist 3'
-  print('Origin captcha tests ok: ', time.time() - start_time)
+  print 'Origin captcha tests ok: ', time.time() - start_time
 
   start_time = time.time()
   config['diff_mode'] = 2
@@ -52,7 +52,7 @@ if __name__ == '__main__':
     else:
       assert testme.captcha_verify(*data), 'Error captcha_verify 5'
     assert not testme.captcha_verify(*data), 'Error captcha_verify - check_whitelist 6'
-  print('New captcha tests ok: ', time.time() - start_time)
+  print 'New captcha tests ok: ', time.time() - start_time
 
 
 

@@ -1,7 +1,7 @@
 #!/usr/bin/python
 
 import base64
-import io
+import cStringIO
 import os
 import random
 import re
@@ -11,11 +11,11 @@ import string
 import threading
 import time
 import traceback
-from http.server import BaseHTTPRequestHandler
-from http.server import HTTPServer as HTTPD
+from BaseHTTPServer import BaseHTTPRequestHandler
+from BaseHTTPServer import HTTPServer as HTTPD
 
 try:
-  from socketserver import ThreadingMixIn
+  from SocketServer import ThreadingMixIn
   class ThreadedHTTPServer(ThreadingMixIn, HTTPD):
     """
     multithreaded http server
@@ -29,7 +29,7 @@ from binascii import hexlify
 from cgi import FieldStorage
 from datetime import datetime
 from hashlib import sha1, sha256, sha512
-from urllib.parse import unquote
+from urllib import unquote
 
 import nacl.signing
 
@@ -259,7 +259,7 @@ class postman(BaseHTTPRequestHandler):
           pass
         if data['file_name']:
           data['file_ct'] = post_vars['file'].type.replace('"', '&quot;')
-          f = io.StringIO()
+          f = cStringIO.StringIO()
           base64.encode(post_vars['file'].file, f)
           data['file_b64'] = f.getvalue()
           f.close()
@@ -269,20 +269,20 @@ class postman(BaseHTTPRequestHandler):
   def _custom_headers_to_article(custom_headers):
     """return headers to insert into the article. Also, bump first letter in key"""
     form_ = '\n{}: {}'
-    return ''.join(form_.format(key.capitalize(), str_reaper(value)) for key, value in list(custom_headers.items()))
+    return ''.join(form_.format(key.capitalize(), str_reaper(value)) for key, value in custom_headers.items())
 
   @staticmethod
   def _custom_headers_to_html(custom_headers):
     """return headers to insert into the captcha page"""
     form_ = '\n        <input type="hidden" name="{}" value="{}" />'
-    return ''.join(form_.format(key, value.replace('"', '&quot;')) for key, value in list(custom_headers.items()))
+    return ''.join(form_.format(key, value.replace('"', '&quot;')) for key, value in custom_headers.items())
 
   def _get_custom_headers(self, post_vars, frontend):
     """extract custom headers. If header empty or missing - use default value if default value not empty. Return header: value dict"""
     custom_headers = dict()
     if 'custom' not in self.origin.frontends[frontend]:
       return custom_headers
-    for key, def_val in list(self.origin.frontends[frontend]['custom'].items()):
+    for key, def_val in self.origin.frontends[frontend]['custom'].items():
       value = post_vars.getvalue(key, def_val).split('\n')[0].strip()
       if not value:
         value = def_val
@@ -466,7 +466,7 @@ class postman(BaseHTTPRequestHandler):
 
     custom_headers = self._get_custom_headers(post_vars, frontend)
     if custom_headers:
-      head_info = ' Custom headers: {}'.format(', '.join(list(custom_headers.keys())))
+      head_info = ' Custom headers: {}'.format(', '.join(custom_headers.keys()))
       custom_headers = self._custom_headers_to_article(custom_headers)
     else:
       head_info = ''
@@ -702,7 +702,7 @@ class main(threading.Thread):
     self._sanitize_frontends(self.httpd.frontends)
 
     if len(self.httpd.frontends) > 0:
-      self.log(self.logger.INFO, 'added %i frontends: %s' % (len(self.httpd.frontends), ', '.join(list(self.httpd.frontends.keys()))))
+      self.log(self.logger.INFO, 'added %i frontends: %s' % (len(self.httpd.frontends), ', '.join(self.httpd.frontends.keys())))
     else:
       self.log(self.logger.WARNING, 'no valid frontends found in %s.' % args['frontend_directory'])
       self.log(self.logger.WARNING, 'terminating..')
@@ -1022,7 +1022,7 @@ class main(threading.Thread):
     # .. and random
     if need_removed > 0:
       for x in range(need_removed):
-        self.httpd.dest_cache.pop(random.choice(list(self.httpd.dest_cache.keys())))
+        self.httpd.dest_cache.pop(random.choice(self.httpd.dest_cache.keys()))
 
   def get_db_last_update(self):
     db_last_update = self.httpd.postmandb.execute("SELECT changed_at FROM modifications WHERE table_name = 'userkey'").fetchone()
@@ -1070,9 +1070,9 @@ if __name__ == '__main__':
   try:
     time.sleep(3600)
   except KeyboardInterrupt as e:
-    print()
+    print
     poster.shutdown()
   except Exception as e:
-    print()
-    print("Exception:", e)
+    print
+    print "Exception:", e
     raise e

@@ -77,7 +77,7 @@ try:
     else:
       time.sleep(3600)
 except KeyboardInterrupt:
-  print()
+  print
   pass
 log(logger.INFO, 'shutting down..')
 srnd.shutdown()

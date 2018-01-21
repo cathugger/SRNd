@@ -110,7 +110,7 @@ class OverchanMarkup(object):
       return rematch.group(0)
     message_id, parent_id, group_id = row[0]
     if self._group_id is not None and group_id != self._group_id and self._get_board_data is not None:
-      another_board = ' [%s]' % self._get_board_data(int(group_id), 'board')[:20]
+      another_board = u' [%s]' % self._get_board_data(int(group_id), 'board')[:20]
     else:
       another_board = ''
     if self.fake_id:
@@ -119,49 +119,49 @@ class OverchanMarkup(object):
       article_name = rematch.group(2)
     if parent_id == "":
       # article is root post
-      return '<a onclick="return highlight(\'{0}\');" href="thread-{0}.html">{1}{2}{3}</a>'.format(rematch.group(2), rematch.group(1), article_name, another_board)
+      return u'<a onclick="return highlight(\'{0}\');" href="thread-{0}.html">{1}{2}{3}</a>'.format(rematch.group(2), rematch.group(1), article_name, another_board)
     # article has a parent
     # FIXME: cache results somehow?
     parent = sha1(parent_id).hexdigest()[:10]
-    return '<a onclick="return highlight(\'{0}\');" href="thread-{1}.html#{0}">{2}{3}{4}</a>'.format(rematch.group(2), parent, rematch.group(1), article_name, another_board)
+    return u'<a onclick="return highlight(\'{0}\');" href="thread-{1}.html#{0}">{2}{3}{4}</a>'.format(rematch.group(2), parent, rematch.group(1), article_name, another_board)
 
   @staticmethod
   def _regex_quoteit(rematch):
-    return '<span class="quote">%s</span>' % rematch.group(0).rstrip("\r")
+    return u'<span class="quote">%s</span>' % rematch.group(0).rstrip("\r")
 
   @staticmethod
   def _regex_clickit(rematch):
-    return '<a href="%s%s">%s%s</a>' % (rematch.group(1), rematch.group(2), rematch.group(1), rematch.group(2))
+    return u'<a href="%s%s">%s%s</a>' % (rematch.group(1), rematch.group(2), rematch.group(1), rematch.group(2))
 
   @staticmethod
   def _regex_codeit(text):
-    return '<pre class="code">%s</pre>' % text
+    return u'<pre class="code">%s</pre>' % text
 
   @staticmethod
   def _regex_sjisit(text):
-    return '<pre class="aa">%s</pre>' % text
+    return u'<pre class="aa">%s</pre>' % text
 
   @staticmethod
   def _regex_spoilit(rematch):
-    return '<span class="spoiler">%s</span>' % rematch.group(1)
+    return u'<span class="spoiler">%s</span>' % rematch.group(1)
 
   @staticmethod
   def _regex_largespoilit(rematch):
-    return '<details class="details">%s</details>' % rematch.group(1)
+    return u'<details class="details">%s</details>' % rematch.group(1)
 
   @staticmethod
   def _regex_boldit(rematch):
-    return '<b>%s</b>' % rematch.group(1)
+    return u'<b>%s</b>' % rematch.group(1)
 
   @staticmethod
   def _regex_italit(rematch):
-    return '<i>%s</i>' % rematch.group(1)
+    return u'<i>%s</i>' % rematch.group(1)
 
   @staticmethod
   def _regex_strikeit(rematch):
-    return '<strike>%s</strike>' % rematch.group(1)
+    return u'<strike>%s</strike>' % rematch.group(1)
 
   @staticmethod
   def _regex_underlineit(rematch):
-    return '<span style="border-bottom: 1px solid">%s</span>' % rematch.group(1)
+    return u'<span style="border-bottom: 1px solid">%s</span>' % rematch.group(1)
 

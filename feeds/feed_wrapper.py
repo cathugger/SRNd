@@ -1,6 +1,6 @@
 #!/usr/bin/python
 
-import queue
+import Queue
 import time
 import threading
 
@@ -38,7 +38,7 @@ class MultiFeed(object):
     status_ = dict()
     for state in [feed.get_status(target) for feed in self._feeds]:
       status_[state] = status_.get(state, 0) + 1
-    return '|'.join('{}({})'.format(k, v) for k, v in list(status_.items()))
+    return '|'.join('{}({})'.format(k, v) for k, v in status_.items())
 
 class MultiInFeed(MultiFeed):
 
@@ -146,7 +146,7 @@ class MultiOutFeed(MultiFeed):
     self.logger = logger
     self._kill_me = kill_me
     self._trackdb_busy = False
-    self.trackdb_queue = queue.Queue()
+    self.trackdb_queue = Queue.Queue()
     self._feeds_count = config['multiconn']
     for target in range(self._feeds_count):
       self._feeds.append(
