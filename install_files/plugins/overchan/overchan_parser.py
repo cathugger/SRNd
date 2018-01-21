@@ -102,6 +102,8 @@ class MessageParser(object):
   def _read_filedata(part):
     data = dict()
     data['obj'] = part.get_payload(decode=True)
+    if data['obj'] == None:
+        data['obj'] = ''
     data['hash'] = sha1(data['obj']).hexdigest()
     data['name'] = 'empty_file_name' if part.get_filename() is None or part.get_filename().strip() == '' else basicHTMLencode(part.get_filename())
     data['ext'] = os.path.splitext(data['name'])[1].lower()

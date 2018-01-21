@@ -155,6 +155,8 @@ class BaseFeed(threading.Thread):
       to_send = '.\r\n'
     elif isinstance(data, str):
       to_send = '%s\r\n' % data if not data.startswith('.') else '.%s\r\n' % data
+    elif isinstance(data, unicode):
+        to_send = '%s\r\n' % data.encode('utf-8') if not data.startswith('.') else '.%s\r\n' % data.encode('utf-8')
     elif isinstance(data, (list, tuple, set)):
       to_send = '\r\n'.join(line if not line.startswith('.') else '.%s' % line for line in data) + '\r\n'
     else:

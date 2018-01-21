@@ -23,7 +23,7 @@ def trydecode(msg):
   for char_type in ('UTF-8', 'KOI8-R', 'cp1252', 'cp1251'):
     try:
       return msg.decode(char_type)
-    except UnicodeDecodeError:
+    except (UnicodeDecodeError, LookupError):
       pass
   return msg.decode('UTF-8', errors='replace')
 
