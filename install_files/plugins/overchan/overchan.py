@@ -180,6 +180,8 @@ class main(threading.Thread):
         thumb_name = 'nope_loading_PIL.jpg'
       something = something.resize((x, y), Image.ANTIALIAS)
       out = os.path.join(self.config['temp_directory'], thumb_name)
+      if not os.path.exists(self.config['temp_directory']):
+        os.mkdir(self.config['temp_directory'])
       something.save(out, optimize=True)
       del something
       os.remove(out)
@@ -205,8 +207,8 @@ class main(threading.Thread):
   def copy_out(self, sources, css=False):
     for source, target in sources:
       try:
-        i = open(os.path.join(self.config['template_directory'], source), 'r')
-        o = open(os.path.join(self.config['output_directory'], target), 'w')
+        i = open(os.path.join(self.config['template_directory'], source), 'rb')
+        o = open(os.path.join(self.config['output_directory'], target), 'wb')
         if css and self.config['minify_css']:
           read_css = i.read()
           old_size = len(read_css)

@@ -1,3 +1,4 @@
 pynacl
 Pillow
 pygments
+opencv-python
