@@ -145,7 +145,7 @@ class OverchanGeneratorInit(object):
             local_dest=self.config['local_dest']
         )
     else:
-      i2paddresshelper = u''
+      i2paddresshelper = ''
     f = codecs.open(os.path.join(self.config['template_directory'], 'menu.tmpl'), "r", "utf-8")
     t_engine['menu'] = string.Template(
         string.Template(f.read()).safe_substitute(
@@ -155,7 +155,7 @@ class OverchanGeneratorInit(object):
         )
     )
     f.close()
-    recent_link = u'<a href="${group_name}-recent.html" target="main">(${postcount})</a>' if self.config['enable_recent'] else u''
+    recent_link = '<a href="${group_name}-recent.html" target="main">(${postcount})</a>' if self.config['enable_recent'] else ''
     with codecs.open(os.path.join(self.config['template_directory'], 'menu_entry.tmpl'), "r", "utf-8") as f:
       t_engine['menu_entry'] = string.Template(
           string.Template(f.read()).safe_substitute(recent_link=recent_link)
@@ -322,7 +322,7 @@ class OverchanGeneratorTools(OverchanGeneratorInit):
       return ''
     pagelist = list()
     pagelist.append('Pages: ')
-    for page in xrange(1, count + 1):
+    for page in range(1, count + 1):
       if page != current:
         pagelist.append('<a href="{0}-{1}.html">[{1}]</a> '.format(board_name_unquoted, page))
       else:
@@ -429,7 +429,7 @@ class OverchanGeneratorTools(OverchanGeneratorInit):
   def _board_root_post_iter(self, board_data, group_id, pages, threads_per_page, cache_target='board'):
     if group_id not in self._page_stamp[cache_target]:
       self._page_stamp[cache_target][group_id] = dict()
-    for page in xrange(1, pages + 1):
+    for page in range(1, pages + 1):
       page_data = board_data[threads_per_page*(page-1):threads_per_page*(page-1)+threads_per_page]
       first_last_parent = sha1(page_data[0][0] + page_data[-1][0]).hexdigest()[:10] if len(page_data) > 0 else None
       if self._page_stamp[cache_target][group_id].get(page, '') != first_last_parent or len(self.regenerate_threads & set(x[0] for x in page_data)) > 0:
@@ -897,7 +897,7 @@ class OverchanGeneratorStatic(OverchanGeneratorTools):
         data['parenthash'] = row[10][:10]
       else:
         data = self._get_preparse_post(row[:9], row[10], -1, 15, 2000, 0, sha1(row[9]).hexdigest())
-      data['frontend'] = u'{} => {}'.format(data['frontend'], self.get_board_data(row[11], 'board')[:20])
+      data['frontend'] = '{} => {}'.format(data['frontend'], self.get_board_data(row[11], 'board')[:20])
       nopic = '' if row[7] != '' else 'no'
       top_list.append(self.t_engine['message_'+ nopic +'pic_closed'].substitute(data))
 

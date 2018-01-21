@@ -11,13 +11,13 @@ import string
 import threading
 import time
 import json
-import urlparse
+import urllib.parse
 
-from BaseHTTPServer import BaseHTTPRequestHandler
-from BaseHTTPServer import HTTPServer as HTTPD
+from http.server import BaseHTTPRequestHandler
+from http.server import HTTPServer as HTTPD
 
 try:
-  from SocketServer import ThreadingMixIn
+  from socketserver import ThreadingMixIn
   class ThreadedHTTPServer(ThreadingMixIn, HTTPD):
     """
     multithreaded http server
@@ -32,7 +32,7 @@ from binascii import hexlify, unhexlify
 from cgi import FieldStorage
 from datetime import datetime, timedelta
 from hashlib import sha1, sha512
-from urllib import unquote, urlencode
+from urllib.parse import unquote, urlencode
 
 from srnd.utils import basicHTMLencode, basicHTMLencodeNoStrip
 
@@ -136,7 +136,7 @@ class censor(BaseHTTPRequestHandler):
           page = 1
         self.send_log(page)
       elif path.startswith('/message_log'):
-        data = dict(urlparse.parse_qsl(urlparse.urlsplit(unquote(path)).query))
+        data = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(unquote(path)).query))
         self.send_messagelog(data, path[12:])
       elif path.startswith('/stats'):
         self.send_stats()
@@ -153,7 +153,7 @@ class censor(BaseHTTPRequestHandler):
       elif path.startswith('/restore?'):
         self.handle_restore(path[9:])
       elif path.startswith('/info'):
-        data = urlparse.parse_qs(urlparse.urlparse(unquote(path)).query)
+        data = urllib.parse.parse_qs(urllib.parse.urlparse(unquote(path)).query)
         data = {x: ''.join(data[x]).encode('ascii', 'ignore') for x in data}
         self.send_info(data)
       elif path.startswith('/notimplementedyet'):
@@ -543,11 +543,11 @@ class censor(BaseHTTPRequestHandler):
 
   @staticmethod
   def _pagination_construct(backward=None, forward=None):
-    link_ = u'<a href="{}">{}</a>'
-    titles = (u'previous', u'next')
+    link_ = '<a href="{}">{}</a>'
+    titles = ('previous', 'next')
     backward = link_.format(backward, titles[0]) if backward else titles[0]
     forward = link_.format(forward, titles[1]) if forward else titles[1]
-    return u'<div style="float:right;">{}&nbsp;{}</div>'.format(backward, forward)
+    return '<div style="float:right;">{}&nbsp;{}</div>'.format(backward, forward)
 
   def send_log(self, page=1, pagecount=100):
     log_body = dict()
@@ -692,7 +692,7 @@ class censor(BaseHTTPRequestHandler):
       forward = 'message_log?{}'.format(urlencode(data2))
     message_log['pagination'] = self._pagination_construct(backward, forward)
     message_log['navigation'] = self.__get_navigation('message_log', add_after=message_log['pagination'])
-    message_log['target'] = u'{}{}{}'.format(self.root_path, 'message_log', raw_data.decode('UTF-8', errors='replace'))
+    message_log['target'] = '{}{}{}'.format(self.root_path, 'message_log', raw_data.decode('UTF-8', errors='replace'))
     self._substitute_and_send(self.origin.t_engine_message_log, message_log, 'send_messagelog')
 
   def _messagelog_iterator(self, count, find_me, db_target, page):
@@ -704,7 +704,7 @@ class censor(BaseHTTPRequestHandler):
       else:
         query = 'SELECT article_uid, parent, sender, subject, message, sent, group_name FROM articles, groups WHERE groups.group_id = articles.group_id ORDER BY articles.sent DESC LIMIT ?, ?'
     else:
-      params = (u'%{}%'.format(find_me), (page - 1) * count, count)
+      params = ('%{}%'.format(find_me), (page - 1) * count, count)
       if db_target == 'pastes':
         query = 'SELECT article_uid, "", sender, subject, body, sent, case when hidden = 0 then lang else "[private]" || lang end FROM pastes WHERE body LIKE ? ORDER BY sent DESC LIMIT ?, ?'
       else:
@@ -1093,8 +1093,8 @@ class censor(BaseHTTPRequestHandler):
   def __write_nntp_article(self, f):
     attachment = re.compile('^[cC]ontent-[tT]ype: ([a-zA-Z0-9/]+).*name="([^"]+)')
     attachment_details = None
-    title_ = u'" title="{}" />\n'
-    img_ = u'\n<img src="data:{};base64,\n'
+    title_ = '" title="{}" />\n'
+    img_ = '\n<img src="data:{};base64,\n'
     base64_ = False
     writing_base64 = False
     for line in f:
@@ -1631,7 +1631,7 @@ class censor_httpd(threading.Thread):
     # TODO: nesting, indentation?
     for data_row in [x for x in data]:
       if isinstance(data[data_row], list):
-        data[data_row] = u'<br />'.join(data[data_row])
+        data[data_row] = '<br />'.join(data[data_row])
     return data
 
   def shutdown(self):
@@ -1660,5 +1660,5 @@ class censor_httpd(threading.Thread):
     self.log(self.logger.INFO, 'bye')
 
 if __name__ == '__main__':
-  print "[%s] %s" % ("censor", "this plugin can't run as standalone version. yet.")
+  print("[%s] %s" % ("censor", "this plugin can't run as standalone version. yet."))
   exit(1)

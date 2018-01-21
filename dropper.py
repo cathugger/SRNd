@@ -149,7 +149,7 @@ class dropper(threading.Thread):
     desthash = ''
     article_path = ''
     # FIXME*3 read Path from config
-    for index in xrange(0, len(header)):
+    for index in range(0, len(header)):
       for key in self.reqs:
         if header[index].lower().startswith(key + ':'):
           if key == 'path':

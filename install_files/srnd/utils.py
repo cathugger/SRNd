@@ -16,7 +16,7 @@ def basicHTMLencodeNoStrip(inputString):
 
 def chrootRandom(n):
   """/dev/random emulator. Slow"""
-  return ''.join([chr(random.randrange(0, 255)) for _ in xrange(n)])
+  return ''.join([chr(random.randrange(0, 255)) for _ in range(n)])
 
 def trydecode(msg):
   """Guess the encoding roulette"""

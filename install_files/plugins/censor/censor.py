@@ -1,7 +1,7 @@
 #!/usr/bin/python
 
 import os
-import Queue
+import queue
 import sqlite3
 import threading
 import time
@@ -80,7 +80,7 @@ class main(threading.Thread):
     self.httpd = censor_httpd.censor_httpd("censor_httpd", self.logger, args)
     self.DATABASE_VERSION = 12
     self.ALL_FLAGS = '8191'
-    self.queue = Queue.Queue()
+    self.queue = queue.Queue()
     self.command_mapper = dict()
     self.command_mapper['overchan-expire'] = \
     self.command_mapper['delete'] = \
@@ -234,7 +234,7 @@ class main(threading.Thread):
           pass
         else:
           self.log(self.logger.WARNING, 'unknown source: %s' % source)
-      except Queue.Empty:
+      except queue.Empty:
         if db_commit:
           self.censordb.commit()
           db_commit = False
@@ -676,4 +676,4 @@ class main(threading.Thread):
     return message_id, groups
 
 if __name__ == '__main__':
-  print "[%s] %s. %s" % ("censor", "this plugin can't run as standalone version.", "bye")
+  print("[%s] %s. %s" % ("censor", "this plugin can't run as standalone version.", "bye"))

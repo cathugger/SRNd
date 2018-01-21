@@ -2,13 +2,11 @@ import time
 import string
 import random
 import os
-import cStringIO
+import io
+import base64
 from hashlib import sha256
 
-import Image
-import ImageFilter
-import ImageDraw
-import ImageFont
+from PIL import Image, ImageFilter, ImageDraw, ImageFont
 
 from srnd.utils import chrootRandom
 
@@ -32,7 +30,11 @@ class Captcha(object):
     self.cache_bump = self._captcha.cache_bump
 
   def _get_solution_hash(self, guess, expires, cookie):
-    return sha256(sha256(self._sercret + cookie).digest() + sha256(guess).digest() + sha256(str(expires)).digest()).hexdigest()
+    guess = guess.encode('utf-8')
+    secret = self._sercret.encode('utf-8')
+    cookie = cookie.encode('utf-8')
+    expires = '{}'.format(expires).encode('utf-8')
+    return sha256(sha256(secret + cookie).digest() + sha256(guess).digest() + sha256(expires).digest()).hexdigest()
 
   def _get_guess(self, str_set):
     return ''.join(random.choice(str_set) for x in range(self._captcha_len + random.randint(-self._captcha_randomize, self._captcha_randomize)))
@@ -58,11 +60,11 @@ class Captcha(object):
 
   @staticmethod
   def _img_to_b64(img):
-    img_to_str = cStringIO.StringIO()
+    img_to_str = io.BytesIO()
     img.save(img_to_str, 'PNG')
     content = img_to_str.getvalue()
     img_to_str.close()
-    return content.encode("base64").replace("\n", "")
+    return base64.b64encode(content).replace(b'\n', b'')
 
   def get_captcha(self, cookie=''):
     """return captcha image as base64, captcha expire as int, solution_hash as str"""
@@ -111,8 +113,8 @@ class OriginCaptcha(object):
     img = Image.new("RGB", (w, h))
     for _ in range(10):
       offset = (random.uniform(0, 1), random.uniform(0, 1))
-      for j in xrange(-1, int(img.size[1] / tile.size[1]) + 1):
-        for i in xrange(-1, int(img.size[0] / tile.size[0]) + 1):
+      for j in range(-1, int(img.size[1] / tile.size[1]) + 1):
+        for i in range(-1, int(img.size[0] / tile.size[0]) + 1):
           dest = (int((offset[0] + i) * tile.size[0]),
                   int((offset[1] + j) * tile.size[1]))
           img.paste(tile, dest)
@@ -169,7 +171,7 @@ class NewCaptcha(object):
         300 + random.randint(4, 50),
         100 + random.randint(4, 50)
     ]
-    for x in xrange(self.plazma_cache_size):
+    for x in range(self.plazma_cache_size):
       self.plazma_cache['plazma'][x] = self.__plazma(self.plazma_cache['size'][0], self.plazma_cache['size'][1])
     self.plazma_cache['reusage'] = random.randint(2, 5) * self.plazma_cache_size
 
@@ -221,7 +223,7 @@ class NewCaptcha(object):
 
     for xy in [(0, 0), (width-1, 0), (0, height-1), (width-1, height-1)]:
       rgb = []
-      for _ in xrange(3):
+      for _ in range(3):
         rgb.append(int(random.random()*256))
       pix[xy[0], xy[1]] = (rgb[0], rgb[1], rgb[2])
 
@@ -232,7 +234,7 @@ class NewCaptcha(object):
     if (abs(x1 - x2) <= 1) and (abs(y1 - y2) <= 1):
       return
     rgb = []
-    for i in xrange(3):
+    for i in range(3):
       rgb.append((pix[x1, y1][i] + pix[x1, y2][i])/2)
       rgb.append((pix[x2, y1][i] + pix[x2, y2][i])/2)
       rgb.append((pix[x1, y1][i] + pix[x2, y1][i])/2)

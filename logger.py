@@ -1,6 +1,6 @@
 #!/usr/bin/python
 import json
-import Queue
+import queue
 import string
 import sys
 import threading
@@ -39,7 +39,7 @@ class logger(threading.Thread):
 
   def __init__(self, log_targets=None):
     threading.Thread.__init__(self)
-    self.queue = Queue.Queue()
+    self.queue = queue.Queue()
     self.running = False
     self.VERBOSE =  0
     self.DEBUG =    1
@@ -172,12 +172,12 @@ class logger(threading.Thread):
       try:
         source, message, loglevel = self.queue.get(block=True, timeout=3)
         self.write(source, message, loglevel)
-      except Queue.Empty:
+      except queue.Empty:
         if not self.running:
           self.shut_down = True
           break
     self.write(self.name, 'shutting down', self.INFO)
 
 if __name__ == '__main__':
-  print "can't run as standalone"
+  print("can't run as standalone")
   exit(1)

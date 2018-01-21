@@ -51,10 +51,10 @@ class FeedsManager(object):
     self._out[name].start()
 
   def list_infeed(self):
-    return self._in.keys()
+    return list(self._in.keys())
 
   def list_outfeed(self):
-    return self._out.keys()
+    return list(self._out.keys())
 
   def shutdown_infeed(self, name):
     return self._shutdown(self._in, name)
@@ -77,9 +77,9 @@ class FeedsManager(object):
     wait_count = 50
     c_count = 0
     wait_time = 0.4
-    for target in self._in.values():
+    for target in list(self._in.values()):
       target.shutdown()
-    for target in self._out.values():
+    for target in list(self._out.values()):
       target.shutdown()
     while (self._in or self._out) and c_count < wait_count:
       c_count += 1
@@ -158,7 +158,7 @@ class FeedsManager(object):
 
   def already_wait(self, name, message_id):
     """Maybe other infeed already waiting or receiving this message?"""
-    for key, val in self._in.iteritems():
+    for key, val in self._in.items():
       if name != key and val.i_wait(message_id):
         return True
     return False

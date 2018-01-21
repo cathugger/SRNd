@@ -6,7 +6,7 @@ import threading
 import time
 import traceback
 import string
-import Queue
+import queue
 from calendar import timegm
 from datetime import datetime, timedelta
 from email.utils import parsedate_tz
@@ -41,12 +41,12 @@ class main(threading.Thread):
     self.sync_on_startup = self.config['sync_on_startup']
     self._check_errors()
     self.log(self.logger.INFO, 'initializing as plugin..')
-    self.queue = Queue.Queue()
+    self.queue = queue.Queue()
     # needed for working inside a chroot to recognize latin1 charset
-    try:
-      guess_lexer("svmmsjj".encode('latin1'), encoding='utf-8')
-    except ClassNotFound:
-      pass
+    #try:
+    #  guess_lexer(u'svmmsjj'.encode('latin1'), encoding='utf-8')
+    #except ClassNotFound:
+    #  pass
     self.formatter = HtmlFormatter(linenos=True, cssclass="source", anchorlinenos=True, lineanchors='line', full=False, cssfile="./styles.css", noclobber_cssfile=True)
     self.recognized_extenstions = ('sh', 'py', 'pyx', 'pl', 'hs', 'haskell', 'js', 'php', 'html', 'c', 'cs')
     self.t_engine = self._load_templates()
@@ -80,7 +80,7 @@ class main(threading.Thread):
       else:
         cfg_new[target] = args[target]
     if add_default:
-      cfg_new = dict(cfg_def.items() + cfg_new.items())
+      cfg_new = dict(list(cfg_def.items()) + list(cfg_new.items()))
 
     if 'debug' in cfg_new and cfg_new['debug'] < 0 or cfg_new['debug'] > 5:
       cfg_new['debug'] = self.logger.INFO
@@ -198,7 +198,7 @@ class main(threading.Thread):
           self.log(self.logger.WARNING, 'got article with unknown source: %s' % ret[0])
         if self.queue.qsize() > self.config['sleep_threshold']:
           time.sleep(self.config['sleep_time'])
-      except Queue.Empty as e:
+      except queue.Empty as e:
         if got_control:
           self.sqlite.execute('VACUUM;')
           self.sqlite.commit()
@@ -325,7 +325,7 @@ class main(threading.Thread):
   def recreate_index(self):
     self.log(self.logger.INFO, 'generating %s' % os.path.join(self.config['output_directory'], 'index.html'))
     paste_recent = list()
-    index_row = u'<tr><td><a href="{}.html">{}</a></td><td>{}</td><td>{}</td><td>{}</td></tr>'
+    index_row = '<tr><td><a href="{}.html">{}</a></td><td>{}</td><td>{}</td><td>{}</td></tr>'
     for row in self.sqlite.execute('SELECT hash, subject, sender, sent, lang FROM pastes WHERE hidden = 0 ORDER by sent DESC LIMIT ?', (self.config['max_recent'],)).fetchall():
       paste_recent.append(index_row.format(row[0][:10], row[1], row[2], datetime.utcfromtimestamp(row[3]).strftime('%Y/%m/%d %H:%M UTC'), row[4]))
     with codecs.open(os.path.join(self.config['output_directory'], 'index.html'), 'w', 'UTF-8') as f:
@@ -365,4 +365,4 @@ class main(threading.Thread):
 
 
 if __name__ == '__main__':
-  print "[%s] %s. %s" % ("paste", "this plugin can't run as standalone version.", "bye")
+  print("[%s] %s. %s" % ("paste", "this plugin can't run as standalone version.", "bye"))

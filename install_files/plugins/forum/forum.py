@@ -19,7 +19,7 @@ if __name__ == '__main__':
   import signal
   import fcntl
 else:
-  import Queue
+  import queue
 
 import Image
 import nacl.signing
@@ -181,7 +181,7 @@ class main(threading.Thread):
     except IOError as e:
       self.die('error: can\'t load PIL library')
       return False
-    self.queue = Queue.Queue()
+    self.queue = queue.Queue()
     return True
 
   def init_standalone(self):
@@ -497,7 +497,7 @@ class main(threading.Thread):
 
         if self.queue.qsize() > self.sleep_threshold:
           time.sleep(self.sleep_time)
-      except Queue.Empty as e:
+      except queue.Empty as e:
         if len(self.regenerate_boards) > 0:
           do_sleep = len(self.regenerate_boards) > self.sleep_threshold
           if do_sleep:
@@ -862,7 +862,7 @@ class main(threading.Thread):
       boardlist.append(self.t_engine_boards_list.substitute(mapper))
 
     f = codecs.open(os.path.join(self.output_directory, 'boards.html'), 'w', 'UTF-8')
-    f.write(self.t_engine_boards.substitute(title="foobar test", boards_list=u"".join(boardlist)))
+    f.write(self.t_engine_boards.substitute(title="foobar test", boards_list="".join(boardlist)))
     f.close()
     
   def generate_board(self, board_id):
@@ -892,7 +892,7 @@ class main(threading.Thread):
       current_board_link=('%s.html' % board_name),
       current_board_name=board_name,
       new_thread_link='new_thread.html',
-      threads_list=u"".join(threadlist)
+      threads_list="".join(threadlist)
     ))
     f.close()
     
@@ -951,7 +951,7 @@ class main(threading.Thread):
       if current_quote_level != 0:
         lines[-1] += '</div>'*(last_quote_level-current_quote_level)
 
-      mapper['message'] = u'\n'.join(lines)
+      mapper['message'] = '\n'.join(lines)
       if child_post[8] == '':
         mapper['imagelink'] = ''
       else:
@@ -974,7 +974,7 @@ class main(threading.Thread):
       current_thread_link='thread-%s.html' % root_sha,
       current_thread_subject=root_post[2],
       reply_link='reply.html',
-      posts_list=u"".join(postlist)
+      posts_list="".join(postlist)
     ))
     f.close()
 
@@ -1098,15 +1098,15 @@ if __name__ == '__main__':
   overchan = main('overchan', args)
   while True:
     try:
-      print "signal.pause()"
+      print("signal.pause()")
       signal.pause()
     except KeyboardInterrupt as e:
-      print
+      print()
       self.sqlite.close()
       self.log('bye', 2)
       exit(0)
     except Exception as e:
-      print "Exception:", e  
+      print("Exception:", e)  
       self.sqlite.close()
       self.log('bye', 2)
       exit(0)

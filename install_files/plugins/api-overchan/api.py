@@ -18,7 +18,7 @@ class API_1(MainAPIHandler):
     else:
       rows = self.overchandb.execute('SELECT {} FROM groups, articles WHERE sent > ? AND group_name = ? AND groups.group_id = articles.group_id \
            ORDER BY sent DESC LIMIT ?'.format(', '.join(params)), (after_time, group, limits)).fetchall()
-    return [dict(zip(params, row)) for row in rows]
+    return [dict(list(zip(params, row))) for row in rows]
   _handle_lasts.keys = {'time': 0, 'limit': 100, 'group': None}
 
   def _handle_lastsroot(self, requ):
@@ -35,7 +35,7 @@ class API_1(MainAPIHandler):
     else:
       rows = self.overchandb.execute('SELECT {} FROM groups, articles WHERE articles.last_update > ? AND group_name = ? AND groups.group_id = articles.group_id \
            AND (articles.parent = "" OR articles.parent = articles.article_uid) ORDER BY articles.last_update DESC LIMIT ?'.format(req), (after_time, group, limits)).fetchall()
-    return [dict(zip(params, row)) for row in rows]
+    return [dict(list(zip(params, row))) for row in rows]
   _handle_lastsroot.keys = _handle_lasts.keys
 
   def _handle_boardlist(self, _):
@@ -49,7 +49,7 @@ class API_1(MainAPIHandler):
     """group info. group - groupname"""
     params = ('ph_name', 'ph_shortname', 'link', 'tag', 'description', 'flags', 'article_count', 'last_update')
     row = self.overchandb.execute('SELECT {} FROM groups WHERE group_name = ? LIMIT 1'.format(', '.join(params)), (requ['group'],)).fetchone()
-    return dict(zip(params, row)) if row else {}
+    return dict(list(zip(params, row))) if row else {}
   _handle_boardinfo.keys = {'group': None}
   _handle_boardinfo.requ = ('group',)
 
@@ -57,7 +57,7 @@ class API_1(MainAPIHandler):
     """send post data. id - full post hash"""
     params = ('article_uid', 'parent', 'sender', 'subject', 'sent', 'message', 'imagename', 'imagelink', 'thumblink', 'public_key', 'last_update', 'closed', 'sticky')
     row = self.overchandb.execute('SELECT {} FROM articles WHERE article_hash = ? LIMIT 1'.format(', '.join(params)), (requ['id'],)).fetchone()
-    return dict(zip(params, row)) if row else {}
+    return dict(list(zip(params, row))) if row else {}
   _handle_post.keys = {'id': None}
   _handle_post.requ = ('id',)
 
@@ -121,7 +121,7 @@ class API_1(MainAPIHandler):
     if 'article_uid' in root_post:
       for row in self.overchandb.execute('SELECT * FROM (SELECT {} FROM articles WHERE parent = ? AND article_uid != parent AND sent > ? ORDER BY sent DESC LIMIT ?) ORDER BY sent ASC'.format(', '.join(params)), \
                                          (root_post['article_uid'], after_time, limits)).fetchall():
-        childs.append(dict(zip(params, row)))
+        childs.append(dict(list(zip(params, row))))
     if only_childs:
       return childs
     else:
