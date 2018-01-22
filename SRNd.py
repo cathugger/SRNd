@@ -935,7 +935,7 @@ class SRNd(threading.Thread):
 
   def _load_outfeed_db(self, targets=None):
     for target in self.feeds.list_outfeed():
-      if self.feeds.sync_outfeed(target) and targets is None or target in targets:
+      if self.feeds.sync_outfeed(target) and ((targets is None) or (target in targets)):
         self.feed_db[target] = self._trackdb_reder('{0}.trackdb'.format(target))
 
   def internal_ctl(self, args):
@@ -1153,6 +1153,8 @@ class SRNd(threading.Thread):
         proxy['proxy_port'] = int(proxy['proxy_port'])
       except ValueError:
         proxy = None
+    else:
+      proxy = None
     config['proxy'] = proxy
 
     config['sync_on_startup'] = 'sync_on_startup' in config and config['sync_on_startup'].lower() in ('true', 'yes', '1')
