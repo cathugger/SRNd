@@ -396,7 +396,7 @@ class InFeed(feed.BaseFeed):
         if all_articles:
           self._send_header_XOVER(all_articles)
         else:
-          self.send('423 No articles in that range')
+          self.send('420 No articles in that range')
     elif commands[0] == 'NEWGROUPS':
       # not implemented yet, return all groups
       self._response_LIST_ACTIVE([])
@@ -465,7 +465,7 @@ class InFeed(feed.BaseFeed):
       # article number range
       min_id, _, max_id = cmd[0].partition('-')
       if not min_id.isdigit() or (max_id and not max_id.isdigit()):
-        self.send('423 invalid id')
+        self.send('420 invalid id')
         min_id = None
     if min_id is None:
       pass
