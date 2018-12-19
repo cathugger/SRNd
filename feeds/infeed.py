@@ -500,7 +500,7 @@ class InFeed(feed.BaseFeed):
           head, _, value = line.partition(' ')
           head = head.lower()
           if head in self._OVERVIEW_FMT:
-            data[self._OVERVIEW_FMT.index(head) + 1] = value
+            data[self._OVERVIEW_FMT.index(head) + 1] = value.replace("\t", " ")
       a, _ = self.sendM('\t'.join(data), 'XOVER')
       sending += a
       if self.con_broken:
