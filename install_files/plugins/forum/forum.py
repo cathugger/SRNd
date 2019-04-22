@@ -22,7 +22,7 @@ if __name__ == '__main__':
 else:
   import Queue
 
-import Image
+from PIL import Image
 import nacl.signing
 
 class main(threading.Thread):

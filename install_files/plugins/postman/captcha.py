@@ -7,10 +7,7 @@ import os
 import cStringIO
 from hashlib import sha256
 
-import Image
-import ImageFilter
-import ImageDraw
-import ImageFont
+from PIL import Image, ImageFilter, ImageDraw, ImageFont
 
 from srnd.utils import chrootRandom
 

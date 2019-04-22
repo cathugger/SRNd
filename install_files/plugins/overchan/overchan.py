@@ -13,7 +13,7 @@ mimetypes.init()
 import Queue
 from hashlib import sha1
 
-import Image
+from PIL import Image
 
 from srnd.utils import basicHTMLencode, css_minifer, trydecode, valid_group_name, overchan_thread_unlink
 from overchan_generator import OverchanGeneratorStatic
