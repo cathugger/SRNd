@@ -493,33 +493,45 @@ class postman(BaseHTTPRequestHandler):
         base64.encode(post_vars['file'].file, f)
       f.write('--{0}--\n'.format(boundary))
     f.close()
+
     if signature:
+      # XXX this has been modified to be compatible with srndv2
       hasher = sha512()
-      f = open(link, 'r')
-      oldline = None
-      for line in f:
-        if oldline:
+
+      with open(link, 'r') as f:
+        oldline = None
+        for line in f:
+          if oldline:
+            hasher.update(oldline)
+          oldline = line.replace('\r', '')
+        if oldline and len(oldline) > 0:
+          if not '\n' in oldline:
+            # last line without trailing newline
+            oldline = oldline + '\n'
           hasher.update(oldline)
-        oldline = line.replace("\n", "\r\n")
-      #f.close()
-      oldline = oldline.replace("\r\n", "")
-      hasher.update(oldline)
+
       signature = hexlify(keypair.sign(hasher.digest()).signature)
       pubkey = hexlify(keypair.verify_key.encode())
+
       signed = open(link[:-1], 'w')
-      f = open(link, 'r')
-      link = link[:-1]
       signed.write(self.origin.template_message_signed.format(sender, date, group, subject, message_uid, reply, uid_host, pubkey, signature, sage, i2p_desthash, custom_headers))
-      f.seek(0)
-      for line in f:
-        signed.write(line)
-      f.close()
+      with open(link, 'r') as f:
+        for line in f:
+          signed.write(line)
       signed.close()
-      # FIXME unlink f() a.k.a. incoming/tmp/*_
+
+      try:
+        os.unlink(link)
+      except Exception as e:
+        self.origin.log(self.origin.logger.WARNING, "failed to unlink %s" % (link))
+
+      link = link[:-1]
+
       del hasher
       del keypair
       del pubkey
       del signature
+
     try:
       if len(comment) > 40 and self.origin.spamprot_base64.match(comment):
         os.rename(link, os.path.join('incoming', 'spam', message_uid))

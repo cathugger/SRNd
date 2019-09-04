@@ -81,13 +81,19 @@ class MessageParser(object):
 
   def _check_signature(self):
     bodyoffset = self._fd.tell()
+
     hasher = sha512()
     oldline = None
     for line in self._fd:
       if oldline:
         hasher.update(oldline)
-      oldline = line.replace("\n", "\r\n")
-    hasher.update(oldline.replace("\r\n", ""))
+      oldline = line.replace('\r', '')
+    if oldline and len(oldline) > 0:
+      if not '\n' in oldline:
+        # last line without trailing newline
+        oldline = oldline + '\n'
+      hasher.update(oldline)
+
     self._fd.seek(bodyoffset)
     try:
       nacl.signing.VerifyKey(unhexlify(self.headers['public_key'])).verify(hasher.digest(), unhexlify(self._signature))

@@ -690,13 +690,19 @@ class main(threading.Thread):
     #parser = FeedParser()
     if public_key != '':
       bodyoffset = fd.tell()
+
       hasher = sha512()
       oldline = None
       for line in fd:
         if oldline:
           hasher.update(oldline)
-        oldline = line.replace("\n", "\r\n")
-      hasher.update(oldline.replace("\r\n", ""))
+        oldline = line.replace('\r', '')
+      if oldline and len(oldline) > 0:
+        if not '\n' in oldline:
+          # last line without trailing newline
+          oldline = oldline + '\n'
+        hasher.update(oldline)
+
       fd.seek(bodyoffset)
       try:
         self.log(self.logger.INFO, 'trying to validate signature.. ')

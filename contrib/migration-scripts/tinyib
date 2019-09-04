@@ -150,17 +150,22 @@ class tinyib_importer(object):
       i.close()
       f.write('--{0}--\n'.format(boundary))
     f.close()
+
     if keypair:
       hasher = sha512()
-      f = open(link, 'r')
-      oldline = None
-      for line in f:
-        if oldline:
+
+      with open(link, 'r') as f:
+        oldline = None
+        for line in f:
+          if oldline:
+            hasher.update(oldline)
+          oldline = line.replace('\r', '')
+        if oldline and len(oldline) > 0:
+          if not '\n' in oldline:
+            # last line without trailing newline
+            oldline = oldline + '\n'
           hasher.update(oldline)
-        oldline = line.replace("\n", "\r\n")
-      f.close()
-      oldline = oldline.replace("\r\n", "")
-      hasher.update(oldline)
+
       signature = hexlify(keypair.sign(hasher.digest()).signature)
       pubkey = hexlify(keypair.verify_key.encode())
       signed = open(link[:-1], 'w')

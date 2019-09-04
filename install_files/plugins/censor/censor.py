@@ -369,14 +369,22 @@ class main(threading.Thread):
       f.close()
       # do the expiration
       return self.handle_expiration(message_id, newsgroups, references)
-    hasher = sha512()
+
     bodyoffset = f.tell()
+
+    hasher = sha512()
+
     oldline = None
     for line in f:
       if oldline:
         hasher.update(oldline)
-      oldline = line.replace("\n", "\r\n")
-    hasher.update(oldline.replace("\r\n", ""))
+      oldline = line.replace('\r', '')
+    if oldline and len(oldline) > 0:
+      if not '\n' in oldline:
+        # last line without trailing newline
+        oldline = oldline + '\n'
+      hasher.update(oldline)
+
     try:
       nacl.signing.VerifyKey(unhexlify(public_key)).verify(hasher.digest(), unhexlify(signature))
       self.log(self.logger.DEBUG, "found valid signature: %s" % message_id)
@@ -391,8 +399,11 @@ class main(threading.Thread):
       f.close()
       self.censordb.execute('INSERT INTO signature_cache (message_uid, valid, received) VALUES (?, ?, ?)', (message_id, 0, current_time))
       return True
+
     self.parse_article(f, message_id, self.get_key_id(public_key))
+
     f.close()
+
     return True
 
   def get_key_id(self, public_key):

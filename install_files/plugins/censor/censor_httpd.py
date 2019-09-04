@@ -1369,13 +1369,11 @@ class censor(BaseHTTPRequestHandler):
 
     article = self.origin.template_message_control_inner.format(sender, now, newsgroups, subject, uid_message_id, self.origin.uid_host, "\n".join(lines))
     #print "'%s'" % article
+
     hasher = sha512()
-    old_line = None
     for line in article.split("\n")[:-1]:
-      if old_line:
-        hasher.update(old_line)
-      old_line = '%s\r\n' % line
-    hasher.update(old_line.replace("\r\n", ""))
+      hasher.update(line.replace('\r', '') + '\n')
+
     keypair = nacl.signing.SigningKey(unhexlify(secret))
     signature = hexlify(keypair.sign(hasher.digest()).signature)
     signed = self.origin.template_message_control_outer.format(sender, now, newsgroups, subject, uid_message_id, self.origin.uid_host, pubkey, signature, article)

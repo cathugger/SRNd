@@ -44,10 +44,10 @@ def valid_group_name(name):
 def generate_pubkey_short_utf_8(full_pubkey_hex, length=6):
   pub_short = ''
   for x in range(0, length / 2):
-    pub_short += '&#%i;' % (9600 + int(full_pubkey_hex[x*2:x*2+2], 16))
+    pub_short += '&#%i;' % (0x2590 + int(full_pubkey_hex[x*2:x*2+2], 16))
   length -= length / 2
   for x in range(0, length):
-    pub_short += '&#%i;' % (9600 + int(full_pubkey_hex[-(length*2):][x*2:x*2+2], 16))
+    pub_short += '&#%i;' % (0x2590 + int(full_pubkey_hex[-(length*2):][x*2:x*2+2], 16))
   return pub_short
 
 def html_minifer(templates, ignored=None):
