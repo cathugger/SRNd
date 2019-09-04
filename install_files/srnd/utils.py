@@ -25,7 +25,7 @@ def trydecode(msg):
       return msg.decode(char_type)
     except:
       pass
-  return msg.decode('UTF-8', errors='replace')
+  return unicode(msg, errors='replace')
 
 def str_reaper(msg, max_len=78):
   """accurately truncate the string"""
