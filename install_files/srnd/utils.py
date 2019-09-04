@@ -20,6 +20,8 @@ def chrootRandom(n):
 
 def trydecode(msg):
   """Guess the encoding roulette"""
+  if isinstance(msg, unicode):
+    return msg
   for char_type in ('UTF-8', 'KOI8-R', 'cp1252', 'cp1251'):
     try:
       return msg.decode(char_type)
