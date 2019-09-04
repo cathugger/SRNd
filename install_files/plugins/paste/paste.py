@@ -276,10 +276,13 @@ class main(threading.Thread):
     if not body_found or not body:
       self.log(self.logger.ERROR, 'empty NNTP message \'%s\'. wtf?' % message_id)
       return False
+
+    body = '\n'.join(body)
+
     if not lang:
       lang = self._detect_lang_name(subject, body)
 
-    body = '\n'.join(body).decode('UTF-8')
+    body = body.decode('UTF-8')
     self.generate_paste(hash_message_uid[:10], body, subject, sender, sent, lang, ishidden)
     self.sqlite.execute('INSERT INTO pastes VALUES (?,?,?,?,?,?,?,?,?,?,?)', (message_id, hash_message_uid, sender, email, subject, sent, body, '', int(time.time()), lang, ishidden))
     self.sqlite.commit()
