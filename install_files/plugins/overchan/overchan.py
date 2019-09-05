@@ -253,6 +253,7 @@ class main(threading.Thread):
         ('playbutton.png', os.path.join('img', 'playbutton.png'))
         ))
     self.copy_out(([(self.config['censor_css'], 'censor.css'),] + [(x, x if self.config['csss'][0] != x else 'styles.css') for x in self.config['csss']]), True)
+    self.copy_out((('overchan.js', 'overchan.js')))
     self.config['csss'][0] = 'styles.css'
     self.gen_template_thumbs(self.config['thumbs'].values())
 
